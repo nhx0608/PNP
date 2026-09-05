@@ -45,3 +45,46 @@
 - **MVP（评测必需）**：通用规范全部端点 + Session Core（idle/busy 状态机、lane 串行、abort 传播、超时）+ 轨迹归一化（Message/Part + step-finish）+ SSE 总线 + 启动器（--engine/AGENT_ENGINE、自检）+ 模型代理层 + 至少 2 个引擎适配器（首选 opencode 原生 serve API 与 通用 ACP 适配器接入 pi/Hermes/dsh/Goose 之一；或 pi RPC 原生）+ 资产注入（Office skills/MCP、AGENTS.md）+ 本地回归评测（10 用例）+ INSTRUCTION.md + Windows 一键部署脚本。
 - **v2（架构分）**：第 3/4 个引擎（Goose、dsh/Hermes 原生）、Capability manifest/探测/CTS Core、统一事件 schema + OTLP 导出、策略编译（allow/deny/ask）、资产编译器、引擎记分卡与按任务类型推荐引擎、USR 与引擎切换（冷启动+摘要）。
 - **展望（创新分）**：Conductor 元编排与 Workflow DSL、polyfill Room/Team、统一记忆层、自进化门禁、云托管引擎（Managed Agents）。
+
+## 5. 实现复杂度预算（2026-09-05 追加，与第 1 节同级的硬约束）
+
+团队明确要求："时间紧张，也要考虑实现的复杂性，不能设计得太复杂；越完善全面越好，但整体实现方式要轻量。"这条不是风格偏好，而是可证伪的工程约束：
+
+**尺子：一个抽象只有在 MVP 内就存在至少两个真实实现时才成立，否则它是负债。**
+用这把尺子量任何"Provider / Driver / Adapter / Manager / Federation"类抽象；量不过的，写成一个函数或直接内联。
+
+预算（超出即视为过度设计，需在文档中说明为何值得）：
+- **MVP 核心代码 ≤ 5000 行 TypeScript**（不含 engine-packs 与测试）。
+- **Gateway Core 模块数 ≤ 6**（session / run / message / event / workspace / policy）。Engine 侧 ≤ 3（registry / host / driver）。
+- **MVP 只实现 2 个 Driver**：Generic ACP Driver（一套代码覆盖多引擎）+ 1 个原生 Driver（HTTP 或 stdio，由第一周实测结果决定）。其余 Driver 在接口留位置，v2 再写。
+- **存储只用 JSONL 文件 + 内存**。赛题明确"会话可以只存在内存"；轨迹落盘是为了给评委看，不是为了做数据库。不引入 SQLite/Postgres/Redis/Temporal/K8s。
+- **可观测 MVP 只做 JSONL 轨迹 + 一个零依赖静态 HTML 查看器**。OTel 导出留接口，v2 接。
+- **错误码 ≤ 8 个**，其余细节进 `error.detail`。
+- **Capability Pack MVP 只做 2 个**（office、windows），覆盖 10 个用例中的 8 个。
+- **每个"设计中存在但 MVP 不实现"的能力，必须在文档里显式标注 `[v2]` 或 `[展望]`，且系统在它缺席时功能完整。**
+
+对应地，以下能力赛题明确"可选不实现"，MVP 一律不写实现（只在数据结构上留字段）：跨引擎 session 同步、持久化数据库、多 Agent Team/Room、自进化、热切换引擎。
+
+## 6. 交付目标（2026-09-05 明确）
+
+最终产出是仓库中的 **`docs/architecture.md`**（团队已有的三份基线文档 `competition-baseline.md` / `gateway-api-baseline.md` / `evaluation-cases.md` 是它的输入）。团队已有一份 GPT 撰写的参考方案（见 `design/reference-gpt-pnp-agent-fabric.md`，含主控的逐条对照分析）：**保留它的骨架与命名**（五层分层、Engine Pack 声明式接入、Canonical + Raw 双事件、固定完成语义、Conformance Kit E01–E20），**注入调研发现的四条决定性风险应对**（prompt_async 阻塞语义自实现、取消三层兜底、模型代理的工具调用缓冲、引擎选型的实证前置），**并把组件数量砍掉约一半**。
+
+## 7. 赛题原文核对修正（2026-09-05，以任务书与调测指南原文为准，优先级高于本文其余各节）
+
+团队提供了赛题任务书与调测指南原文，核对后发现此前的基线整理有六处偏差，已回写仓库 `docs/`。以下是对架构有决定性影响的部分：
+
+1. **引擎切换必须通过环境变量**。任务书"重要提示"逐字要求"必须通过环境变量实现引擎切换"，`AGENT_ENGINE=opencode|pi|hermes`。命令行 `--engine` 只是通用网关规范附带的等价形式，可以提供但不能作为唯一入口，且两者并存时必须写明优先级（评测方按环境变量启动，若被命令行默认值覆盖会直接跑错引擎）。
+
+2. **反问与权限接口必须真实实现，只有策略可以简化**。任务书原文："执行过程需要人工交互的，需要实现接口供裁判模型自动提交交互，否则将导致作品无法完成自动评测。"此前基线写成"允许简化为默认不询问/默认允许"是**错误**的——可简化的是默认策略，`/question` 与 `/permission` 的事件推送、查询、回复三条链路必须可用，因为裁判模型要靠它们把交互提交回来。这一条把这两个端点从"可选"提升为 **[MVP] 必做**。
+
+3. **每个引擎内置一个默认 agent 是被任务书明确认可的形态**。原文："可以不实现多agent机制，可以每个引擎内置一个默认agent，会话基于该agent创建。"这为 Engine Pack 的最简实现背书：Session 直接建在默认 agent 上，不需要 agent 管理层。
+
+4. **主模型可能是 appid 鉴权**。原文："限定使用内部部署模型资源，提供测试环境的 appid，赛题组协助申请资源。"模型接入层不能假定标准 `Authorization: Bearer`，要能容纳自定义鉴权头/appid 参数。ModelProxy 的配置模型需要预留这一维度。
+
+5. **Windows GUI 自动化是一个完整任务类别，不是边缘用例**。任务书正文的示例用例 `office_002`（"打开 Outlook 客户端"，二级分类"软件交互"）与已知用例 `office_028`（**WeLink** 发消息给指定工号）共同说明：隐藏用例中很可能还有多条桌面客户端操作任务。因此 GUI 能力注入的优先级应与 Office 文件处理**同级**，并且网关必须以**交互式桌面会话**身份运行（Session 0 隔离会让服务方式启动的进程完全无法操作 UI）。
+
+6. **MyAgent 就是任务书背景点名的内部 AI 应用员工助手**，是赛题所说"真实业务系统"的原型，这解释了第二套规范路径里为何保留 `/opencode/` 命名。
+
+7. **评测环境路径与产物名是硬约束**。工作目录 `D:\test_data`，部分用例写到 `D:\test_data_备份`；多条用例在 query 里指定了确切的输出文件名（如 `openclaw.pptx`、`华为2025手机-sheet.xlsx`、`task_违约风险分析.md`）。Workspace 管理必须正确处理 Windows 绝对路径与反斜杠，本地回归框架应按这些文件名做存在性与结构校验。
+
+8. **两条高危用例**：`office_103`（递归删除，作用域错误不可逆）与 `office_028`（外部消息，重试必须幂等）。权限策略即使配成默认允许，也要在轨迹中留下完整记录；重试逻辑对有外部副作用的操作必须幂等。
