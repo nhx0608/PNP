@@ -17,6 +17,12 @@ function controlWrite(child: ChildProcessWithoutNullStreams, value: unknown): Pr
   return new Promise((resolve, reject) => child.stdin.write(`${JSON.stringify(value)}\n`, (error) => error ? reject(error) : resolve()));
 }
 function alive(pid: number): boolean { try { process.kill(pid, 0); return true; } catch (e) { return !(e instanceof Error && "code" in e && e.code === "ESRCH"); } }
+export function supervisorEngineExit(event: unknown): { code: number | null; signal: string | null } | undefined {
+  if (event === null || typeof event !== "object" || Array.isArray(event)) return undefined;
+  const value = event as { type?: unknown; code?: unknown };
+  if (value.type !== "exit" || (value.code !== null && typeof value.code !== "number")) return undefined;
+  return { code: value.code as number | null, signal: null };
+}
 
 export class LocalProcessHost implements ProcessHost {
   private readonly directory: string;
@@ -40,6 +46,7 @@ export class LocalProcessHost implements ProcessHost {
     let bufferedBytes = 0;
     let child: ChildProcessWithoutNullStreams | undefined;
     let exitValue: { code: number | null; signal: string | null } | undefined;
+    let reportedExit: { code: number | null; signal: string | null } | undefined;
     let evidence = false;
     let stopPromise: Promise<StopEvidence> | undefined;
     let launching = true;
@@ -54,6 +61,11 @@ export class LocalProcessHost implements ProcessHost {
         if (bufferedBytes > 256 * 1024) throw new PnpError("HOST_BACKPRESSURE", "Consumer did not subscribe to process output.", 502);
         buffered.push(frame);
       } else for (const listener of listeners) listener(frame);
+    };
+    const reportExit = (value: { code: number | null; signal: string | null }) => {
+      if (reportedExit !== undefined) return;
+      reportedExit = value;
+      for (const listener of exitListeners) listener(value);
     };
     const terminate = (): Promise<StopEvidence> => {
       stopPromise ??= (async () => {
@@ -104,7 +116,8 @@ export class LocalProcessHost implements ProcessHost {
       exitValue = { code, signal: sig };
       exited.resolve(exitValue);
       ready.reject(new PnpError("HOST_EXITED", "Process exited during startup.", 502));
-      for (const listener of exitListeners) listener(exitValue);
+      if (process.platform === "win32") reportExit({ code: null, signal: "HOST_FAILURE" });
+      else reportExit(exitValue);
     });
     child.stdout.on("data", (chunk: Buffer) => {
       try {
@@ -113,7 +126,11 @@ export class LocalProcessHost implements ProcessHost {
           const event = JSON.parse(frame) as { type: string; data?: string; quiescent?: boolean };
           if (event.type === "ready") { launching = false; ready.resolve(); }
           else if (event.type === "stdout") for (const line of engineDecoder.push(Buffer.from(event.data!, "base64"))) dispatch(line);
-          else if (event.type === "exit") evidence = event.quiescent === true;
+          else if (event.type === "exit") {
+            evidence = event.quiescent === true;
+            const engineExit = supervisorEngineExit(event);
+            if (engineExit !== undefined) reportExit(engineExit);
+          }
           else if (event.type === "error") ready.reject(new PnpError("HOST_FAILURE", "Windows supervisor failed.", 503));
           // stderr is consumed without persisting credentials. Adapters emit sanitized diagnostic events.
         }
@@ -141,7 +158,7 @@ export class LocalProcessHost implements ProcessHost {
         else await new Promise<void>((resolve, reject) => running.stdin.write(`${frame}\n`, (error) => error ? reject(error) : resolve()));
       },
       onFrame: (listener) => { listeners.add(listener); const frames = buffered.splice(0); bufferedBytes = 0; for (const frame of frames) listener(frame); return () => { listeners.delete(listener); }; },
-      onExit: (listener) => { exitListeners.add(listener); if (exitValue !== undefined) listener(exitValue); return () => { exitListeners.delete(listener); }; },
+      onExit: (listener) => { exitListeners.add(listener); if (reportedExit !== undefined) listener(reportedExit); return () => { exitListeners.delete(listener); }; },
       terminate,
     };
   }

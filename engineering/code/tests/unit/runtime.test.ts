@@ -4,6 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { JsonlDecoder } from "../../src/runtime/jsonl.ts";
+import { supervisorEngineExit } from "../../src/runtime/process-host.ts";
+import { OwnedResourceScope } from "../../src/runtime/resource-scope.ts";
 import { Redactor } from "../../src/security/redaction.ts";
 import { acquireInstanceLock } from "../../src/runtime/instance-lock.ts";
 import { bounded } from "../../src/runtime/deadline.ts";
@@ -56,4 +58,30 @@ test("lexical containment does not allow prefix lookalikes", () => {
 });
 test("Windows-specific host rejects unsupported platforms", async () => {
   assert.equal((await new WindowsJobHost().reconcile({})).quiescent, false);
+});
+test("Windows supervisor exit frames preserve the real engine exit code", () => {
+  assert.deepEqual(supervisorEngineExit({ type: "exit", code: 7, quiescent: true }), { code: 7, signal: null });
+  assert.equal(supervisorEngineExit({ type: "ready", code: 0 }), undefined);
+  assert.equal(supervisorEngineExit({ type: "exit", code: "0" }), undefined);
+});
+test("Windows Job host reports the owned engine exit instead of the supervisor exit", {
+  skip: process.platform !== "win32",
+}, async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "pnp-win-host-"));
+  const scope = new OwnedResourceScope();
+  try {
+    const hosted = await new WindowsJobHost(directory).start({
+      executable: process.execPath,
+      args: ["-e", "setTimeout(() => process.exit(7), 50)"],
+      cwd: directory,
+      env: {},
+      sessionId: "windows-host-test",
+      ownerToken: "windows-host-test",
+    }, new AbortController().signal, scope);
+    const exit = await new Promise<{ code: number | null; signal: string | null }>((resolve) => hosted.onExit(resolve));
+    assert.deepEqual(exit, { code: 7, signal: null });
+    assert.equal((await scope.stop(5_000)).quiescent, true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

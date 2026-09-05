@@ -8,27 +8,57 @@ import { Redactor } from "../security/redaction.ts";
 
 /** Questions and approvals are run-scoped; permission answers cannot override policy denial. */
 export class InteractionBroker {
-  private readonly pending = new Map<string, { kind: "permission" | "question"; resolve(value: InteractionResponse): void }>();
+  private readonly liveRuns = new Set<string>();
+  private readonly pending = new Map<string, {
+    runId: string;
+    kind: "permission" | "question";
+    state: "waiting" | "replying";
+    resolve(value: InteractionResponse): void;
+    settlement?: Promise<void>;
+  }>();
   private readonly store: StateStore;
   private readonly journal: EventJournal;
   private readonly timeoutMs: number;
   constructor(store: StateStore, journal: EventJournal, timeoutMs = 120_000) {
     this.store = store; this.journal = journal; this.timeoutMs = timeoutMs;
   }
+  beginRun(runId: string): void {
+    if (this.liveRuns.has(runId)) throw new PnpError("INTERACTION_RUN_EXISTS", "Run interaction scope already exists.", 500);
+    this.liveRuns.add(runId);
+  }
+  async endRun(runId: string): Promise<void> {
+    this.liveRuns.delete(runId); // Close admission synchronously before waiting for claimed replies.
+    const claimed: Promise<void>[] = [];
+    for (const [id, waiter] of this.pending) {
+      if (waiter.runId !== runId) continue;
+      if (waiter.state === "replying") {
+        if (waiter.settlement !== undefined) claimed.push(waiter.settlement);
+        continue;
+      }
+      this.pending.delete(id);
+      waiter.resolve({ decision: "deny" });
+    }
+    await Promise.all(claimed);
+    await this.store.call("expireInteractions", { runId });
+  }
   async request(input: {
     sessionId: string; runId: string; request: InteractionRequest; policy: AuthorizationDecision;
     signal: AbortSignal; redactor: Redactor;
   }): Promise<InteractionResponse> {
     const { request, policy, signal } = input;
-    if (signal.aborted) return { decision: "deny" };
+    if (signal.aborted || !this.liveRuns.has(input.runId)) return { decision: "deny" };
     const id = `interaction_${randomUUID()}`;
     const payload = input.redactor.json(request.payload);
     await this.store.call("createInteraction", {
       id, sessionId: input.sessionId, runId: input.runId, kind: request.kind, payload,
       operation: request.operation, state: "pending", createdAt: new Date().toISOString(),
     });
+    if (signal.aborted || !this.liveRuns.has(input.runId)) {
+      await this.store.call("expireInteractions", { runId: input.runId });
+      return { decision: "deny" };
+    }
     const choice = deferred<InteractionResponse>();
-    this.pending.set(id, { kind: request.kind, resolve: choice.resolve });
+    this.pending.set(id, { runId: input.runId, kind: request.kind, state: "waiting", resolve: choice.resolve });
     const onAbort = () => choice.resolve({ decision: "deny" });
     signal.addEventListener("abort", onAbort, { once: true });
     try {
@@ -51,7 +81,8 @@ export class InteractionBroker {
       let answer: InteractionResponse;
       try { answer = await bounded(choice.promise, this.timeoutMs); }
       catch { answer = { decision: "deny" }; }
-      await this.store.call("resolveInteraction", { id, response: answer as unknown as Json });
+      const waiter = this.pending.get(id);
+      if (waiter?.state === "waiting") await this.settle(id, waiter, answer);
       return answer;
     } finally {
       signal.removeEventListener("abort", onAbort);
@@ -68,10 +99,25 @@ export class InteractionBroker {
   async reply(id: string, kind: "permission" | "question", response: InteractionResponse): Promise<void> {
     const waiter = this.pending.get(id);
     if (waiter === undefined || waiter.kind !== kind) throw new PnpError("NOT_FOUND", "No pending interaction.", 404);
+    if (!this.liveRuns.has(waiter.runId) || waiter.state !== "waiting") {
+      throw new PnpError("INTERACTION_RESOLVED", "Interaction has already been resolved.", 409);
+    }
     if (kind === "question" && response.decision === "allow") throw new PnpError("VALIDATION_ERROR", "Question requires an answer.", 400);
-    const changed = await this.store.call("resolveInteraction", { id, response: response as unknown as Json });
-    if (!changed) throw new PnpError("INTERACTION_RESOLVED", "Interaction has already been resolved.", 409);
-    this.pending.delete(id);
-    waiter.resolve(response);
+    await this.settle(id, waiter, response);
+  }
+  private settle(id: string, waiter: NonNullable<ReturnType<InteractionBroker["pending"]["get"]>>,
+    response: InteractionResponse): Promise<void> {
+    waiter.state = "replying"; // Claim before the first await so concurrent replies cannot both win.
+    const settlement = this.store.call("resolveInteraction", { id, response: response as unknown as Json }).then((changed) => {
+      if (!changed) throw new PnpError("INTERACTION_RESOLVED", "Interaction has already been resolved.", 409);
+      this.pending.delete(id);
+      waiter.resolve(response);
+    }).catch((error: unknown) => {
+      this.pending.delete(id);
+      waiter.resolve({ decision: "deny" });
+      throw error;
+    });
+    waiter.settlement = settlement;
+    return settlement;
   }
 }

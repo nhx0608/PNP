@@ -53,6 +53,31 @@ export class GatewayCore {
   private draining = false;
   private healthy = true;
 
+  private observeFailure(error: unknown): PnpError {
+    const failure = asPnpError(error);
+    if (failure.code.startsWith("STORAGE_")) this.healthy = false;
+    return failure;
+  }
+
+  private async disposeSessionResources(id: string, operation: "terminate" | "close"): Promise<boolean> {
+    let quiescent = true;
+    const channel = this.channels.get(id);
+    if (channel !== undefined) {
+      try { quiescent = (await bounded(channel[operation](), this.options.cancelGraceMs)).quiescent; }
+      catch { quiescent = false; }
+      finally { this.channels.delete(id); }
+    }
+    const scope = this.scopes.get(id);
+    if (scope !== undefined) {
+      let scopeQuiescent = false;
+      try { scopeQuiescent = (await scope.stop(this.options.cancelGraceMs)).quiescent; }
+      catch { scopeQuiescent = false; }
+      if (scopeQuiescent) this.scopes.delete(id);
+      quiescent = scopeQuiescent && quiescent;
+    }
+    return quiescent;
+  }
+
   constructor(store: StateStore, engine: EnginePack, integration: IntegrationProvider, options: CoreOptions) {
     this.store = store;
     this.engine = engine;
@@ -156,13 +181,24 @@ export class GatewayCore {
       if (session.status !== "idle" || session.recovery === "blocked" || session.lifecycle !== "active") {
         throw new PnpError("SESSION_UNAVAILABLE", "Session cannot accept execution.", 409);
       }
-      integration = await bounded(this.integration.prepare({ session, request, signal: ctx.controller.signal }), this.options.openTimeoutMs);
+      const preparing = this.integration.prepare({ session, request, signal: ctx.controller.signal });
+      try { integration = await bounded(preparing, this.options.openTimeoutMs); }
+      catch (error) {
+        // A provider may ignore cancellation and resolve after the caller has timed out. Observe and release it.
+        void preparing.then(async (late) => {
+          if (this.integration.release === undefined) return;
+          try { await bounded(this.integration.release(late), this.options.cancelGraceMs); }
+          catch { this.healthy = false; }
+        }, () => undefined);
+        throw error;
+      }
       const secrets = [...Object.values(integration.model.headers), ...integration.tools.flatMap((t) => Object.values(t.env))];
       redactor = new Redactor(secrets);
       if (ctx.controller.signal.aborted) throw new PnpError("EXECUTION_CANCELLED", "Cancelled before execution.", 409);
       const run: Run = { id: ctx.runId, sessionId, state: "running", requestHash: hash, startedAt: new Date().toISOString(),
         ...(idempotencyKey === undefined ? {} : { idempotencyKey }) };
       await this.store.call("startRun", { run, message: makeMessage("user", redactor.text(request.parts.map((p) => p.text).join("\n"))) });
+      this.interactions.beginRun(run.id);
       started = true;
       await this.journal.publish("session.status", { sessionID: sessionId, runID: run.id, status: { type: "busy" } });
       channel = this.channels.get(sessionId);
@@ -270,8 +306,7 @@ export class GatewayCore {
         try { result = await bounded(execution, this.options.cancelGraceMs); } catch { /* Keep receiving available events. */ }
         quiescent = result?.quiescent === true;
         if (!quiescent) {
-          quiescent = (await bounded(channel.terminate(), this.options.cancelGraceMs)).quiescent;
-          this.channels.delete(sessionId);
+          quiescent = await this.disposeSessionResources(sessionId, "terminate");
         }
         nativeStopReason = result?.nativeStopReason;
         state = first.reason === "deadline" ? "failed" : "cancelled";
@@ -299,7 +334,7 @@ export class GatewayCore {
         throw new PnpError("ENGINE_PROTOCOL_ERROR", "Engine ended with unresolved tool states.", 502);
       }
     } catch (error) {
-      failure = asPnpError(error);
+      failure = this.observeFailure(error);
       state = "failed";
       finish = "error";
       if (ctx.reason !== undefined) {
@@ -310,13 +345,12 @@ export class GatewayCore {
       discardOpening = true;
       ctx.controller.abort(ctx.reason ?? "failure");
       if (channel !== undefined) {
-        try { quiescent = (await bounded(channel.terminate(), this.options.cancelGraceMs)).quiescent; }
-        catch { quiescent = false; }
-        this.channels.delete(sessionId);
+        quiescent = await this.disposeSessionResources(sessionId, "terminate");
       } else if (opening !== undefined) {
         const evidence = await scope!.stop(this.options.cancelGraceMs);
         // Unsettled startup can still return a resource; retain the execution fence.
         quiescent = openSettled && evidence.quiescent;
+        if (quiescent) this.scopes.delete(sessionId);
       }
       acceptingEvents = false;
       await eventTail.catch(() => undefined);
@@ -326,6 +360,8 @@ export class GatewayCore {
       if (!quiescent) { state = "interrupted"; finish = "interrupted"; this.healthy = false; }
       try {
         if (started) {
+          ctx.controller.abort(ctx.reason ?? "settled");
+          await this.interactions.endRun(ctx.runId);
           // Record an observation, not a fabricated tool response or success.
           for (const [callId, tool] of tools) {
             if (tool.finished) continue;
@@ -343,7 +379,6 @@ export class GatewayCore {
           await this.store.call("finishRun", { runId: ctx.runId, state, message, quiescent, taskOutcome,
             ...(nativeStopReason === undefined ? {} : { nativeStopReason }),
             ...(failure === undefined ? {} : { errorCode: failure.code }) });
-          await this.store.call("expireInteractions", { runId: ctx.runId });
           if (failure !== undefined) await this.journal.publish("session.error", { sessionID: sessionId, runID: ctx.runId,
             error: { message: failure.message, code: failure.code } });
           if (quiescent) {
@@ -351,10 +386,15 @@ export class GatewayCore {
             await this.journal.publish("session.idle", { sessionID: sessionId, runID: ctx.runId });
           }
         }
+      } catch (error) { this.healthy = false; failure = this.observeFailure(error); }
+      try {
         if (integration !== undefined && this.integration.release !== undefined) {
           await bounded(this.integration.release(integration), this.options.cancelGraceMs);
         }
-      } catch (error) { this.healthy = false; failure = asPnpError(error); }
+      } catch (error) {
+        this.healthy = false;
+        if (failure === undefined) failure = this.observeFailure(error);
+      }
       this.active.delete(sessionId);
       this.reserved = !quiescent;
       ctx.done.resolve();
@@ -374,9 +414,13 @@ export class GatewayCore {
     current.stop.resolve(reason);
   }
   async abort(id: string): Promise<void> {
-    await this.getSession(id);
+    const session = await this.getSession(id);
     const current = this.active.get(id);
-    if (current === undefined) return;
+    if (current === undefined) {
+      if (session.status === "idle" && session.recovery !== "blocked") return;
+      this.healthy = false;
+      throw new PnpError("EXECUTION_UNCERTAIN", "Execution stop is unverified.", 503);
+    }
     this.requestStop(id, "user");
     await bounded(current.done.promise, this.options.openTimeoutMs + this.options.cancelGraceMs * 4 + 15_000);
     if (!this.healthy) throw new PnpError("EXECUTION_UNCERTAIN", "Execution stop is unverified.", 503);
@@ -388,11 +432,7 @@ export class GatewayCore {
       const session = await this.getSession(id);
       if (session.engineId !== this.engineId || session.channelId !== this.channelId) throw new PnpError("ENGINE_SESSION_MISMATCH", "Use the session's engine channel to delete it.", 409);
       await this.abort(id);
-      const channel = this.channels.get(id);
-      if (channel !== undefined) {
-        if (!(await bounded(channel.close(), this.options.cancelGraceMs)).quiescent) throw new PnpError("EXECUTION_UNCERTAIN", "Cannot delete active resources.", 503);
-        this.channels.delete(id);
-      }
+      if (!(await this.disposeSessionResources(id, "close"))) throw new PnpError("EXECUTION_UNCERTAIN", "Cannot delete active resources.", 503);
       await this.store.call("beginDelete", { sessionId: id });
       const directory = this.nativeDirectory(id);
       if (this.engine.purge !== undefined) await bounded(this.engine.purge({ session, nativeDataDirectory: directory }), this.options.openTimeoutMs);
@@ -403,7 +443,6 @@ export class GatewayCore {
         if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
       }
       await this.store.call("deleteSession", { sessionId: id });
-      this.scopes.delete(id);
     } finally { this.deleting.delete(id); }
   }
   async close(): Promise<void> {
@@ -412,12 +451,8 @@ export class GatewayCore {
     await Promise.all([...this.active.values()].map((ctx) => bounded(ctx.done.promise,
       this.options.openTimeoutMs + this.options.cancelGraceMs * 4 + 15_000)));
     let clean = true;
-    for (const channel of this.channels.values()) {
-      try { clean = (await bounded(channel.close(), this.options.cancelGraceMs)).quiescent && clean; }
-      catch { clean = false; }
-    }
-    for (const scope of this.scopes.values()) clean = (await scope.stop(this.options.cancelGraceMs)).quiescent && clean;
-    this.channels.clear();
+    const sessions = new Set([...this.channels.keys(), ...this.scopes.keys()]);
+    for (const id of sessions) clean = await this.disposeSessionResources(id, "close") && clean;
     if (!this.healthy || !clean) throw new PnpError("EXECUTION_UNCERTAIN", "Resource cleanup requires verification.", 503);
   }
 }

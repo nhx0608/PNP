@@ -78,6 +78,47 @@ test("question reply is stored and resumes the waiting adapter", async () => {
     await assert.rejects(f.core.interactions.reply(pending.id, "question", { decision: "answer", answers: [["A"]] }), { code: "NOT_FOUND" });
   } finally { await f.clean(); }
 });
+test("run completion closes unanswered interactions before a late reply", async () => {
+  const pack = new MockPack({ delayMs: 100 }); const open = pack.open.bind(pack);
+  let interaction: Promise<unknown> | undefined;
+  pack.open = async (input) => { const channel = await open(input); const run = channel.run.bind(channel);
+    channel.run = async (runInput) => {
+      interaction = runInput.services.interact({ kind: "question", operation: "choose", payload: { questions: [] } });
+      return run(runInput);
+    }; return channel; };
+  const provider = new MockIntegration(); const prepare = provider.prepare.bind(provider);
+  provider.prepare = async (input) => ({ ...(await prepare(input)), authorize: async () => ({ effect: "ask", reasonCode: "ASK" }) });
+  const f = await create(pack, provider);
+  try {
+    const running = f.core.run(f.session.id, request);
+    await waitFor(async () => (await f.core.interactions.list("question")).length === 1);
+    const pending = (await f.core.interactions.list("question"))[0]!;
+    await running;
+    assert.deepEqual(await interaction, { decision: "deny" });
+    assert.deepEqual(await f.core.interactions.list("question"), []);
+    await assert.rejects(f.core.interactions.reply(pending.id, "question", { decision: "answer", answers: [["late"]] }), { code: "NOT_FOUND" });
+  } finally { await f.clean(); }
+});
+test("concurrent interaction replies have exactly one persisted winner", async () => {
+  const pack = new MockPack(); const open = pack.open.bind(pack);
+  pack.open = async (input) => { const channel = await open(input); const run = channel.run.bind(channel);
+    channel.run = async (runInput) => { await runInput.services.interact({ kind: "question", operation: "choose", payload: { questions: [] } }); return run(runInput); }; return channel; };
+  const provider = new MockIntegration(); const prepare = provider.prepare.bind(provider);
+  provider.prepare = async (input) => ({ ...(await prepare(input)), authorize: async () => ({ effect: "ask", reasonCode: "ASK" }) });
+  const f = await create(pack, provider);
+  try {
+    const running = f.core.run(f.session.id, request);
+    await waitFor(async () => (await f.core.interactions.list("question")).length === 1);
+    const pending = (await f.core.interactions.list("question"))[0]!;
+    const replies = await Promise.allSettled([
+      f.core.interactions.reply(pending.id, "question", { decision: "answer", answers: [["A"]] }),
+      f.core.interactions.reply(pending.id, "question", { decision: "answer", answers: [["B"]] }),
+    ]);
+    assert.equal(replies.filter((reply) => reply.status === "fulfilled").length, 1);
+    assert.equal(replies.filter((reply) => reply.status === "rejected").length, 1);
+    await running;
+  } finally { await f.clean(); }
+});
 test("organization deny is final and exposes no overridable pending approval", async () => {
   const pack = new MockPack(); const open = pack.open.bind(pack); let observed: unknown;
   pack.open = async (input) => { const channel = await open(input); const run = channel.run.bind(channel);
@@ -103,6 +144,85 @@ test("resource scope closes registered resources and rejects later acquisition",
   assert.equal((await scope.stop(50)).quiescent, true);
   await scope.stop(50); assert.equal(calls, 1);
   assert.throws(() => scope.register("y", async () => ({ quiescent: true, method: "not-running" })), { code: "RESOURCE_SCOPE_CLOSED" });
+});
+test("engine failure stops all resources registered by the session scope exactly once", async () => {
+  const pack = new MockPack({ fail: true });
+  const open = pack.open.bind(pack);
+  let stopped = 0;
+  pack.open = async (input) => {
+    input.resources.register("extra", async () => { stopped++; return { quiescent: true, method: "not-running" }; });
+    return open(input);
+  };
+  const f = await create(pack);
+  try {
+    await assert.rejects(f.core.run(f.session.id, request));
+    assert.equal(stopped, 1);
+  } finally { await f.clean(); }
+});
+test("session deletion stops all resources registered by its channel", async () => {
+  const pack = new MockPack();
+  const open = pack.open.bind(pack);
+  let stopped = 0;
+  pack.open = async (input) => {
+    input.resources.register("extra", async () => { stopped++; return { quiescent: true, method: "not-running" }; });
+    return open(input);
+  };
+  const f = await create(pack);
+  try {
+    await f.core.run(f.session.id, request);
+    await f.core.deleteSession(f.session.id);
+    assert.equal(stopped, 1);
+  } finally { await f.clean(); }
+});
+test("blocked persisted execution cannot return a successful abort without an active run", async () => {
+  const f = await create();
+  try {
+    await f.store.call("startRun", { run: { id: "stale-abort", sessionId: f.session.id, state: "running", requestHash: "x", startedAt: new Date().toISOString() },
+      message: { id: "stale-abort-user", role: "user", content: "x", created_at: new Date().toISOString() } });
+    await f.core.initialize();
+    await assert.rejects(f.core.abort(f.session.id), { code: "EXECUTION_UNCERTAIN" });
+  } finally { await f.clean(true); }
+});
+test("a late integration context is observed and released after prepare timeout", async () => {
+  const provider = new MockIntegration();
+  const prepare = provider.prepare.bind(provider);
+  let released = 0;
+  provider.prepare = async (input) => { await sleep(60); return prepare(input); };
+  provider.release = async () => { released++; };
+  const f = await create(new MockPack(), provider, { openTimeoutMs: 15 });
+  try {
+    await assert.rejects(f.core.run(f.session.id, request));
+    await waitFor(async () => released === 1);
+  } finally { await f.clean(); }
+});
+test("integration release still runs when terminal persistence becomes unavailable", async () => {
+  const provider = new MockIntegration();
+  let released = 0;
+  provider.release = async () => { released++; };
+  const f = await create(new MockPack({ delayMs: 100 }), provider);
+  try {
+    const running = f.core.run(f.session.id, request).catch((error: unknown) => error);
+    await waitFor(async () => (await f.core.getSession(f.session.id)).status === "busy");
+    await f.store.close();
+    await running;
+    assert.equal(released, 1);
+    assert.equal(f.core.readiness, false);
+  } finally { await f.clean(true); }
+});
+test("start-run storage failure permanently removes gateway readiness", async () => {
+  const provider = new MockIntegration();
+  const prepare = provider.prepare.bind(provider);
+  let storeToClose: StateStore | undefined;
+  provider.prepare = async (input) => {
+    await storeToClose!.close();
+    return prepare(input);
+  };
+  const f = await create(new MockPack(), provider);
+  storeToClose = f.store;
+  try {
+    await assert.rejects(f.core.run(f.session.id, request), { code: "STORAGE_UNAVAILABLE" });
+    assert.equal(f.core.readiness, false);
+  } finally { await f.clean(true); }
 });
 test("streaming known secret prefixes are held until they can be redacted", () => {
   const redactor = new Redactor(["secret-long-key"]);

@@ -15,7 +15,7 @@ export function buildApp(core: GatewayCore) {
   });
   const closeStreams = new Set<() => void>();
   app.setErrorHandler((error, _request, reply) => {
-    if ("validation" in error && error.validation) {
+    if (typeof error === "object" && error !== null && "validation" in error && error.validation) {
       return reply.code(400).send({ code: "VALIDATION_ERROR", message: "Invalid request." });
     }
     const safe = asPnpError(error);
