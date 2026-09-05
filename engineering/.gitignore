@@ -1,0 +1,15 @@
+code/node_modules/
+code/dist/
+code/data/
+code/runtime/
+code/logs/
+**/.env
+**/.env.local
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.pem
+**/*.key
+**/*.pfx
+**/*.p12
+private/

@@ -1,0 +1,4 @@
+PASS: TypeScript 5.8.3, exit code 0.
+Command (environment-specific declaration path):
+tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --noUncheckedIndexedAccess --allowImportingTsExtensions --skipLibCheck --types node --typeRoots /opt/nvm/versions/node/v22.16.0/lib/node_modules/ts-node/node_modules/@types src/contracts/index.ts src/contracts/host.ts src/core/gateway-core.ts src/runtime/process-host.ts src/runtime/windows-host.ts src/storage/worker.ts src/registry/index.ts src/integration/configured/provider.ts src/assets/resolver.ts tests/unit/config-assets.test.ts tests/unit/contracts.test.ts
+Scope: selected dependency-free source graph, not full npm build.

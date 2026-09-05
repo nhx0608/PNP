@@ -1,0 +1,33 @@
+{
+  "name": "pnp-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.19.0 <25"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/main.js",
+    "test": "node scripts/test.mjs unit",
+    "test:contract": "node scripts/test.mjs contract",
+    "check:boundaries": "node scripts/check-boundaries.mjs",
+    "check": "npm run typecheck && npm test && npm run test:contract && npm run check:boundaries",
+    "doctor": "node scripts/doctor.mjs",
+    "release:check": "node scripts/release-check.mjs",
+    "dependencies:freeze": "node scripts/freeze-dependencies.mjs",
+    "foundation:check": "node scripts/foundation-check.mjs",
+    "recover": "node scripts/recover.mjs",
+    "diagnostics": "node scripts/export-diagnostics.mjs"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.4.0",
+    "@sinclair/typebox": "0.34.41",
+    "fastify": "5.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.0.0",
+    "typescript": "5.8.3"
+  }
+}

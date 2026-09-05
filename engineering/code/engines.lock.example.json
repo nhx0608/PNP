@@ -1,0 +1,13 @@
+{
+  "formatVersion": 1,
+  "engines": [
+    {
+      "engineId": "opencode",
+      "channelId": "acp",
+      "version": "REQUIRED_EXACT_TESTED_VERSION",
+      "source": "REQUIRED_OFFICIAL_SOURCE",
+      "sha256": "REQUIRED_INSTALLER_DIGEST",
+      "protocolVersion": "REQUIRED_TESTED_PROTOCOL"
+    }
+  ]
+}

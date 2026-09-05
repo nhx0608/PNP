@@ -1,0 +1,300 @@
+TAP version 13
+# (node:2563) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: engine selection requires explicit input and rejects conflicting selectors
+ok 1 - engine selection requires explicit input and rejects conflicting selectors
+  ---
+  duration_ms: 24.890577
+  type: 'test'
+  ...
+# Subtest: assets are content-addressed and cannot leave an approved root
+ok 2 - assets are content-addressed and cannot leave an approved root
+  ---
+  duration_ms: 36.631653
+  type: 'test'
+  ...
+# Subtest: model profiles reject unapproved models, credentials in URL, and insecure remote transport
+ok 3 - model profiles reject unapproved models, credentials in URL, and insecure remote transport
+  ---
+  duration_ms: 0.926353
+  type: 'test'
+  ...
+# (node:2564) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2564) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2564) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: late channel after startup timeout is terminated and execution remains fenced
+ok 4 - late channel after startup timeout is terminated and execution remains fenced
+  ---
+  duration_ms: 250.094965
+  type: 'test'
+  ...
+# (node:2564) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2564) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: cancelled tool has gateway observation without a fabricated tool result
+ok 5 - cancelled tool has gateway observation without a fabricated tool result
+  ---
+  duration_ms: 65.011804
+  type: 'test'
+  ...
+# (node:2564) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2564) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: channel mismatch rejects reuse even when the engine id matches
+ok 6 - channel mismatch rejects reuse even when the engine id matches
+  ---
+  duration_ms: 58.000698
+  type: 'test'
+  ...
+# (node:2564) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2564) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: question reply is stored and resumes the waiting adapter
+ok 7 - question reply is stored and resumes the waiting adapter
+  ---
+  duration_ms: 85.110885
+  type: 'test'
+  ...
+# (node:2564) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2564) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: organization deny is final and exposes no overridable pending approval
+ok 8 - organization deny is final and exposes no overridable pending approval
+  ---
+  duration_ms: 71.738017
+  type: 'test'
+  ...
+# (node:2564) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2564) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: deletion purges native data but retains workspace files
+ok 9 - deletion purges native data but retains workspace files
+  ---
+  duration_ms: 73.254284
+  type: 'test'
+  ...
+# Subtest: resource scope closes registered resources and rejects later acquisition
+ok 10 - resource scope closes registered resources and rejects later acquisition
+  ---
+  duration_ms: 0.501339
+  type: 'test'
+  ...
+# Subtest: streaming known secret prefixes are held until they can be redacted
+ok 11 - streaming known secret prefixes are held until they can be redacted
+  ---
+  duration_ms: 0.182947
+  type: 'test'
+  ...
+# Subtest: host environment does not inherit arbitrary parent credentials
+ok 12 - host environment does not inherit arbitrary parent credentials
+  ---
+  duration_ms: 0.208486
+  type: 'test'
+  ...
+# Subtest: real local process transport buffers early output and terminates owned group
+ok 13 - real local process transport buffers early output and terminates owned group
+  ---
+  duration_ms: 33.766825
+  type: 'test'
+  ...
+# (node:2564) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2564) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: runtime recovery fences admission until interrupted ownership is reconciled
+ok 14 - runtime recovery fences admission until interrupted ownership is reconciled
+  ---
+  duration_ms: 63.848783
+  type: 'test'
+  ...
+# (node:2564) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2564) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: the same shared ProcessHost is injected into each native session open
+ok 15 - the same shared ProcessHost is injected into each native session open
+  ---
+  duration_ms: 74.925724
+  type: 'test'
+  ...
+# (node:2565) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2565) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2565) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: normal execution commits final message before idle is visible
+ok 16 - normal execution commits final message before idle is visible
+  ---
+  duration_ms: 184.700352
+  type: 'test'
+  ...
+# (node:2565) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2565) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: one global slot and per-session busy cannot run two prompts
+ok 17 - one global slot and per-session busy cannot run two prompts
+  ---
+  duration_ms: 190.604396
+  type: 'test'
+  ...
+# (node:2565) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2565) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: idempotency reuses completed result but rejects a different payload
+ok 18 - idempotency reuses completed result but rejects a different payload
+  ---
+  duration_ms: 75.09194
+  type: 'test'
+  ...
+# (node:2565) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2565) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: abort never produces a normal stop marker
+ok 19 - abort never produces a normal stop marker
+  ---
+  duration_ms: 68.268354
+  type: 'test'
+  ...
+# (node:2565) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2565) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: deadline settles the HTTP-facing run and does not fabricate success
+ok 20 - deadline settles the HTTP-facing run and does not fabricate success
+  ---
+  duration_ms: 120.239734
+  type: 'test'
+  ...
+# (node:2565) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2565) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: failed engine leaves a queryable error trajectory
+ok 21 - failed engine leaves a queryable error trajectory
+  ---
+  duration_ms: 64.534521
+  type: 'test'
+  ...
+# (node:2565) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2565) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: unproven process termination blocks readiness and the session
+ok 22 - unproven process termination blocks readiness and the session
+  ---
+  duration_ms: 149.613973
+  type: 'test'
+  ...
+# (node:2565) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2565) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: two session channels preserve distinct native histories
+ok 23 - two session channels preserve distinct native histories
+  ---
+  duration_ms: 99.454843
+  type: 'test'
+  ...
+# (node:2565) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2565) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (node:2565) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2565) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: SQLite and native session survive a clean process lifecycle
+ok 24 - SQLite and native session survive a clean process lifecycle
+  ---
+  duration_ms: 134.328415
+  type: 'test'
+  ...
+# (node:2565) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2565) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: recovery records interruption and does not automatically clear busy
+ok 25 - recovery records interruption and does not automatically clear busy
+  ---
+  duration_ms: 51.34467
+  type: 'test'
+  ...
+# (node:2565) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2565) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: session deletion removes gateway history
+ok 26 - session deletion removes gateway history
+  ---
+  duration_ms: 64.855557
+  type: 'test'
+  ...
+# (node:2565) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2565) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: unknown session fails without invoking a harness
+ok 27 - unknown session fails without invoking a harness
+  ---
+  duration_ms: 55.005153
+  type: 'test'
+  ...
+# (node:2565) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:2565) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# Subtest: cached native channel receives freshly resolved integration for every run
+ok 28 - cached native channel receives freshly resolved integration for every run
+  ---
+  duration_ms: 80.767534
+  type: 'test'
+  ...
+# (node:2598) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: JSONL preserves unicode separators and splits only on LF
+ok 29 - JSONL preserves unicode separators and splits only on LF
+  ---
+  duration_ms: 1.313539
+  type: 'test'
+  ...
+# Subtest: JSONL handles split UTF-8 multibyte text
+ok 30 - JSONL handles split UTF-8 multibyte text
+  ---
+  duration_ms: 0.39661
+  type: 'test'
+  ...
+# Subtest: JSONL rejects unbounded and truncated records
+ok 31 - JSONL rejects unbounded and truncated records
+  ---
+  duration_ms: 0.421758
+  type: 'test'
+  ...
+# Subtest: redaction covers structured secrets and raw output
+ok 32 - redaction covers structured secrets and raw output
+  ---
+  duration_ms: 0.659449
+  type: 'test'
+  ...
+# Subtest: data-directory lock rejects concurrent ownership
+ok 33 - data-directory lock rejects concurrent ownership
+  ---
+  duration_ms: 6.380851
+  type: 'test'
+  ...
+# Subtest: deadline ends a never-resolving operation
+ok 34 - deadline ends a never-resolving operation
+  ---
+  duration_ms: 5.754593
+  type: 'test'
+  ...
+# Subtest: lexical containment does not allow prefix lookalikes
+ok 35 - lexical containment does not allow prefix lookalikes
+  ---
+  duration_ms: 0.31099
+  type: 'test'
+  ...
+# Subtest: Windows-specific host rejects unsupported platforms
+ok 36 - Windows-specific host rejects unsupported platforms
+  ---
+  duration_ms: 0.299704
+  type: 'test'
+  ...
+1..36
+# tests 36
+# suites 0
+# pass 36
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1466.174415

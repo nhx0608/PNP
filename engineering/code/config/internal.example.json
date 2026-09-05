@@ -1,0 +1,12 @@
+{
+  "modelProfileId": "competition",
+  "providerId": "internal",
+  "modelId": "CONFIGURED_MODEL_ID",
+  "endpointEnv": "MODEL_BASE_URL",
+  "headerEnvironment": {
+    "Authorization": "MODEL_AUTH_HEADER",
+    "X-App-Id": "MODEL_APP_ID"
+  },
+  "employeeCliEnv": "EMPLOYEE_ASSISTANT_CLI",
+  "policy": "deny-unless-authorized"
+}

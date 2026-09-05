@@ -25,6 +25,18 @@ see [docs/research/](./docs/research/README.md) for the index, or jump to:
 - [Architecture review](./docs/architecture-review.md) — review of the v2 design proposal against the
   research corpus: 5 blocking gaps, 1 conclusion to correct, 3 simplifications, with a prioritised change list
 
+## Engineering delivery
+
+The canonical final engineering package is under [engineering/](./engineering/README.md). Its primary entry points are:
+
+- [Agent development rules](./engineering/AGENTS.md)
+- [Deployment and evaluation instructions](./engineering/INSTRUCTION.md)
+- [Final specifications](./engineering/docs/spec/)
+- [Team ownership and collaboration](./engineering/docs/team/)
+- [Role prompts](./engineering/prompts/)
+- [Common framework source](./engineering/code/)
+- [Verification scope and evidence](./engineering/verification/)
+
 ## Current direction
 
 - Self-developed Agent Gateway / Engine Fabric
@@ -38,4 +50,4 @@ Candidate Harnesses currently under evaluation include OpenCode, Pi, Hermes, Goo
 
 ## Repository status
 
-The repository currently contains the competition baseline and architecture inputs. Implementation will be added incrementally.
+The repository contains the preserved competition and architecture inputs plus the canonical engineering baseline. Real OpenCode, Hermes, Pi, and internal-network integrations remain assigned implementation work and are not represented as completed by the common framework.

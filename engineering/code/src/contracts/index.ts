@@ -1,0 +1,205 @@
+import type { ProcessHost } from "./host.ts";
+/** PNP public implementation boundary. Breaking changes require a contract version change. */
+export const CONTRACT_VERSION = "1.0.0";
+export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+export type RunState = "running" | "cancelling" | "completed" | "failed" | "cancelled" | "interrupted";
+export type TerminalState = Exclude<RunState, "running" | "cancelling">;
+export type StopReason = "user" | "deadline" | "shutdown";
+export type MessageFinish = "stop" | "tool-calls" | "length" | "error" | "content-filter" | "unknown" | "cancelled" | "interrupted";
+export interface ModelSelection { providerID: string; modelID: string }
+export interface PromptRequest {
+  parts: { type: "text"; text: string }[];
+  model: ModelSelection;
+  agent?: string;
+}
+export interface NativeSessionRef {
+  nativeId: string;
+  channelId: string;
+  engineVersion: string;
+  protocolVersion?: string;
+  /** An opaque non-secret identifier, not a credential or bearer token. */
+  resumeToken?: string;
+}
+export interface Session {
+  id: string;
+  title: string;
+  directory: string;
+  engineId: string;
+  channelId: string;
+  lifecycle: "active" | "deleting";
+  status: "idle" | "busy";
+  recovery: "ready" | "needs-native-resume" | "blocked";
+  native?: NativeSessionRef;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface Run {
+  id: string;
+  sessionId: string;
+  state: RunState;
+  requestHash: string;
+  idempotencyKey?: string;
+  startedAt: string;
+  finishedAt?: string;
+  errorCode?: string;
+  nativeStopReason?: string;
+  taskOutcome?: "unknown" | "succeeded" | "failed";
+}
+export interface Message {
+  id: string;
+  role: "user" | "assistant" | "tool";
+  content: string;
+  created_at: string;
+  tool_call_id?: string;
+  tool_name?: string;
+  tool_calls?: { id: string; name: string; arguments: Json }[];
+  info?: { role: "assistant"; finish: MessageFinish; nativeFinish?: string };
+  parts?: Json[];
+}
+export interface PublicEvent {
+  sequence: number;
+  type: string;
+  properties: { [key: string]: Json };
+}
+export type DriverEvent =
+  | { type: "text.delta"; text: string; nativeType?: string }
+  | { type: "tool.started"; callId: string; name: string; input: Json }
+  | { type: "tool.updated"; callId: string; title: string }
+  | { type: "tool.finished"; callId: string; name: string; output: Json; failed: boolean }
+  | { type: "usage"; inputTokens?: number; outputTokens?: number; source: "provider" | "engine" | "estimate" }
+  | { type: "native"; namespace: string; eventName: string; payload: Json };
+export interface EventSink {
+  /** Await delivery; rejection stops the current execution. Detached emits are forbidden. */
+  emit(event: DriverEvent): Promise<void>;
+}
+export interface Capability {
+  id: string;
+  available: boolean;
+  configuration: "none" | "session" | "run";
+  control: "none" | "tool" | "extension";
+  observation: "none" | "native" | "canonical";
+  evidence: "declared" | "probed" | "verified";
+  parameterSchema?: Json;
+}
+export interface EngineCapabilities {
+  sessionResume: boolean;
+  streaming: boolean;
+  cancellation: boolean;
+  nativeDelete: boolean;
+  extensions: Capability[];
+}
+export interface EngineDescriptor {
+  id: string;
+  channelId: string;
+  transport: "acp" | "pi-rpc" | "test";
+  contractVersion: typeof CONTRACT_VERSION;
+  developmentOnly: boolean;
+  implementationProvided: boolean;
+}
+export interface StopEvidence {
+  /** Describes owned execution resources. It does not undo external business side effects. */
+  quiescent: boolean;
+  method: "protocol" | "process-tree" | "not-running";
+}
+export interface EngineResult {
+  state: "completed" | "failed" | "cancelled";
+  quiescent: true;
+  finalText: string;
+  finish: Exclude<MessageFinish, "tool-calls" | "interrupted">;
+  nativeStopReason: string;
+  taskOutcome: "unknown" | "succeeded" | "failed";
+}
+export interface InteractionRequest {
+  kind: "permission" | "question";
+  operation: string;
+  payload: Json;
+}
+export interface InteractionResponse {
+  decision: "allow" | "deny" | "answer";
+  answers?: string[][];
+}
+export interface AuthorizationDecision {
+  effect: "allow" | "deny" | "ask";
+  reasonCode: string;
+}
+export interface DriverServices {
+  events: EventSink;
+  interact(request: InteractionRequest): Promise<InteractionResponse>;
+}
+export interface ResolvedModel {
+  selection: ModelSelection;
+  protocol: "openai-chat" | "anthropic-messages" | "custom" | "test";
+  endpoint?: string;
+  /** Never persist or log resolved model configuration. */
+  headers: Readonly<Record<string, string>>;
+  caFile?: string;
+}
+export interface ToolBinding {
+  id: string;
+  transport: "mcp-stdio" | "cli" | "native";
+  /** Executable and arguments come from trusted configuration, never a user prompt. */
+  command: string;
+  args: readonly string[];
+  env: Readonly<Record<string, string>>;
+  sideEffect: "read" | "write" | "external";
+  inputSchema?: Json;
+  timeoutMs?: number;
+}
+export interface AssetBinding {
+  id: string;
+  kind: "instruction" | "skill" | "native-extension";
+  path: string;
+  sha256: string;
+  required: boolean;
+  parameters?: Json;
+}
+export interface IntegrationContext {
+  model: ResolvedModel;
+  tools: readonly ToolBinding[];
+  assets: readonly AssetBinding[];
+  /** Policy does not execute an Agent loop. Deny cannot be overridden by a user reply. */
+  authorize(request: InteractionRequest): Promise<AuthorizationDecision>;
+}
+export interface IntegrationProvider {
+  readonly id: string;
+  readonly developmentOnly: boolean;
+  prepare(input: { session: Session; request: PromptRequest; signal: AbortSignal }): Promise<IntegrationContext>;
+  /** Releases per-run credentials, temporary configuration and scoped resources. */
+  release?(context: IntegrationContext): Promise<void>;
+}
+export interface ResourceScope {
+  /** Register before acquiring a resource. A closed scope rejects further acquisition. */
+  register(id: string, stop: () => Promise<StopEvidence>): void;
+  readonly closed: boolean;
+}
+export interface EngineOpenInput {
+  /** Shared host with the gateway ownership directory; adapters must not construct their own host. */
+  host: ProcessHost;
+  session: Session;
+  nativeDataDirectory: string;
+  integration: IntegrationContext;
+  resources: ResourceScope;
+  signal: AbortSignal;
+}
+export interface EngineSessionChannel {
+  readonly native: NativeSessionRef;
+  readonly capabilities: EngineCapabilities;
+  run(input: {
+    runId: string;
+    request: PromptRequest;
+    integration: IntegrationContext;
+    services: DriverServices;
+    signal: AbortSignal;
+  }): Promise<EngineResult>;
+  /** Request ACK is not completion evidence. */
+  cancel(reason: StopReason): Promise<void>;
+  terminate(): Promise<StopEvidence>;
+  /** Preserves native history; only owned execution resources are closed. */
+  close(): Promise<StopEvidence>;
+}
+export interface EnginePack {
+  readonly descriptor: EngineDescriptor;
+  open(input: EngineOpenInput): Promise<EngineSessionChannel>;
+  /** Removes engine-owned history only; it must not modify the user's workspace. */
+  purge?(input: { session: Session; nativeDataDirectory: string }): Promise<void>;
+}

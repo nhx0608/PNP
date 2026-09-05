@@ -1,0 +1,3 @@
+Command: npm view fastify@5.11.0 version --fetch-retries=0 --fetch-timeout=10000
+Result: EAI_AGAIN, getaddrinfo registry.npmjs.org
+No dependency lockfile was generated.

@@ -111,3 +111,24 @@ dist
 
 # TernJS port file
 .tern-port
+
+# PNP engineering runtime and private material
+engineering/code/node_modules/
+engineering/code/dist/
+engineering/code/data/
+engineering/code/runtime/
+engineering/code/logs/
+engineering/**/*.env
+engineering/**/*.env.local
+engineering/**/*.db
+engineering/**/*.db-wal
+engineering/**/*.db-shm
+engineering/**/*.pem
+engineering/**/*.key
+engineering/**/*.pfx
+engineering/**/*.p12
+engineering/private/
+
+# Tracked delivery evidence directory whose name matches a generic rule above
+!engineering/verification/logs/
+!engineering/verification/logs/**

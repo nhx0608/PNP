@@ -1,0 +1,19 @@
+{
+  "releasable": false,
+  "failures": [
+    "Windows evidence must be verified in the target environment.",
+    "Node version does not match toolchain.json.",
+    "Missing package-lock.json.",
+    "Missing exact engine version lock.",
+    "Repository commit is unavailable.",
+    "opencode: implementation absent.",
+    "opencode: exact installer lock is incomplete.",
+    "opencode: internal acceptance evidence absent.",
+    "pi: implementation absent.",
+    "pi: exact installer lock is incomplete.",
+    "pi: internal acceptance evidence absent.",
+    "hermes: implementation absent.",
+    "hermes: exact installer lock is incomplete.",
+    "hermes: internal acceptance evidence absent."
+  ]
+}

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+data/
+runtime/
+logs/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.db
+*.db-wal
+*.db-shm
+*.log

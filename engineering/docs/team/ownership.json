@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "shared": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    "code/src/contracts/**",
+    "code/src/core/**",
+    "code/src/gateway/**",
+    "code/src/runtime/**",
+    "code/src/storage/**",
+    "code/src/security/**",
+    "code/src/assets/**",
+    "code/src/registry/**",
+    "code/src/main.ts",
+    "code/package*.json",
+    "code/scripts/**",
+    "docs/spec/**"
+  ],
+  "A": [
+    "code/src/drivers/acp/**",
+    "code/src/engines/opencode/**",
+    "code/src/engines/hermes/**",
+    "code/tests/adapters/acp/**",
+    "code/config/engines/opencode.json",
+    "code/config/engines/hermes.json",
+    "docs/engines/opencode.md",
+    "docs/engines/hermes.md"
+  ],
+  "B": [
+    "code/src/drivers/pi-rpc/**",
+    "code/src/engines/pi/**",
+    "code/tests/adapters/pi/**",
+    "code/config/engines/pi.json",
+    "docs/engines/pi.md"
+  ],
+  "C": [
+    "code/src/integration/internal/**",
+    "code/tests/integration/internal/**",
+    "code/config/internal.example.json",
+    "docs/internal/**",
+    "verification/internal/**"
+  ]
+}

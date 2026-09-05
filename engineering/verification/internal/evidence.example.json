@@ -1,0 +1,46 @@
+{
+  "kind": "internal-acceptance",
+  "gitCommit": "REQUIRED_COMMIT_SHA",
+  "engineId": "REQUIRED_ENGINE",
+  "channelId": "REQUIRED_CHANNEL",
+  "engineVersion": "REQUIRED_EXACT_VERSION",
+  "nodeVersion": "v24.19.0",
+  "platform": "win32",
+  "checks": [
+    {
+      "id": "model-roundtrip",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "tool-permission",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "gateway-contract",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "session-resume",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "cancel-owned-tree",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "windows-native",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "task-artifacts",
+      "status": "not_run",
+      "evidence": []
+    }
+  ]
+}

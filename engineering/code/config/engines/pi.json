@@ -1,0 +1,8 @@
+{
+  "id": "pi",
+  "channel": "rpc",
+  "owner": "B",
+  "implementationEntry": "src/engines/pi/pack.ts",
+  "engineVersion": null,
+  "capabilityEvidence": "unverified"
+}

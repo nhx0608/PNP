@@ -1,0 +1,8 @@
+{
+  "id": "opencode",
+  "channel": "acp",
+  "owner": "A",
+  "implementationEntry": "src/engines/opencode/pack.ts",
+  "engineVersion": null,
+  "capabilityEvidence": "unverified"
+}
