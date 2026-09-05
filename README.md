@@ -24,6 +24,10 @@ see [docs/research/](./docs/research/README.md) for the index, or jump to:
 
 - [Architecture review](./docs/architecture-review.md) — review of the v2 design proposal against the
   research corpus: 5 blocking gaps, 1 conclusion to correct, 3 simplifications, with a prioritised change list
+- [Engineering review and plan](./docs/engineering-review.md) — first-principles review of the `engineering/`
+  delivery (spec, detailed design, code) against the task statement, gateway protocol and evaluation cases:
+  13 round-fatal / 18 case-level / 11 quality findings, re-balanced A/B/C ownership, milestones, shared change
+  requests, and per-task model allocation
 
 ## Engineering delivery
 
