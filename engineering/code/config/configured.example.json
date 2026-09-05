@@ -1,0 +1,12 @@
+{
+  "models": [
+    {
+      "selection": { "providerID": "approved-test", "modelID": "approved-model" },
+      "endpoint": "https://model.example.invalid/v1",
+      "protocol": "openai-chat",
+      "headerEnvironment": { "Authorization": "PNP_TEST_MODEL_AUTHORIZATION" }
+    }
+  ],
+  "tools": [],
+  "policy": { "default": "deny", "operations": {} }
+}

@@ -127,6 +127,25 @@ test("organization deny is final and exposes no overridable pending approval", a
   try { await f.core.run(f.session.id, request); assert.deepEqual(observed, { decision: "deny" }); assert.deepEqual(await f.core.interactions.list("permission"), []); }
   finally { await f.clean(); }
 });
+test("question policy allow still asks and uses question event names", async () => {
+  const pack = new MockPack(); const open = pack.open.bind(pack); let observed: unknown;
+  pack.open = async (input) => { const channel = await open(input); const run = channel.run.bind(channel);
+    channel.run = async (runInput) => { observed = await runInput.services.interact({ kind: "question", operation: "choose", payload: { questions: [] } }); return run(runInput); }; return channel; };
+  const provider = new MockIntegration(); const prepare = provider.prepare.bind(provider);
+  provider.prepare = async (input) => ({ ...(await prepare(input)), authorize: async () => ({ effect: "allow", reasonCode: "ALLOWED_TO_ASK" }) });
+  const f = await create(pack, provider); const types: string[] = [];
+  f.core.journal.subscribe((event) => types.push(event.type));
+  try {
+    const running = f.core.run(f.session.id, request);
+    await waitFor(async () => (await f.core.interactions.list("question")).length === 1);
+    const pending = (await f.core.interactions.list("question"))[0]!;
+    await f.core.interactions.reply(pending.id, "question", { decision: "answer", answers: [["A"]] });
+    await running;
+    assert.deepEqual(observed, { decision: "answer", answers: [["A"]] });
+    assert.ok(types.includes("question.asked"));
+    assert.equal(types.includes("permission.resolved"), false);
+  } finally { await f.clean(); }
+});
 test("deletion purges native data but retains workspace files", async () => {
   const f = await create();
   try {
@@ -144,6 +163,38 @@ test("resource scope closes registered resources and rejects later acquisition",
   assert.equal((await scope.stop(50)).quiescent, true);
   await scope.stop(50); assert.equal(calls, 1);
   assert.throws(() => scope.register("y", async () => ({ quiescent: true, method: "not-running" })), { code: "RESOURCE_SCOPE_CLOSED" });
+});
+test("resource scope shares an active stop attempt and retries only unproven resources", async () => {
+  const scope = new OwnedResourceScope(); let calls = 0; let release: (() => void) | undefined;
+  scope.register("x", async () => {
+    calls++;
+    if (calls === 1) await new Promise<void>((resolve) => { release = resolve; });
+    return { quiescent: calls > 1, method: "process-tree" };
+  });
+  const first = scope.stop(1000); const concurrent = scope.stop(1000);
+  await sleep(0);
+  release!();
+  assert.equal((await first).quiescent, false);
+  assert.equal((await concurrent).quiescent, false);
+  assert.equal(calls, 1);
+  assert.equal((await scope.stop(1000)).quiescent, true);
+  assert.equal((await scope.stop(1000)).quiescent, true);
+  assert.equal(calls, 2);
+});
+test("resource scope timeout does not start a second cleanup while the first is unresolved", async () => {
+  const scope = new OwnedResourceScope(); let calls = 0; let release: (() => void) | undefined;
+  scope.register("x", async () => {
+    calls++;
+    await new Promise<void>((resolve) => { release = resolve; });
+    return { quiescent: true, method: "process-tree" };
+  });
+  assert.equal((await scope.stop(5)).quiescent, false);
+  const retry = scope.stop(1000);
+  await sleep(10);
+  assert.equal(calls, 1);
+  release!();
+  assert.equal((await retry).quiescent, true);
+  assert.equal(calls, 1);
 });
 test("engine failure stops all resources registered by the session scope exactly once", async () => {
   const pack = new MockPack({ fail: true });

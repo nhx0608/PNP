@@ -6,6 +6,7 @@ import path from "node:path";
 import { resolveAsset } from "../../src/assets/resolver.ts";
 import { selectEngine, loadEngine } from "../../src/registry/index.ts";
 import { ConfiguredIntegration } from "../../src/integration/configured/provider.ts";
+import { loadIntegration } from "../../src/integration/index.ts";
 import type { Session } from "../../src/contracts/index.ts";
 
 test("engine selection requires explicit input and rejects conflicting selectors", async () => {
@@ -45,4 +46,32 @@ test("model profiles reject unapproved models, credentials in URL, and insecure 
   assert.equal((await ctx.authorize({ kind: "permission", operation: "file.write", payload: {} })).effect, "deny");
   const controller = new AbortController(); controller.abort();
   await assert.rejects(create("https://example.test/v1").prepare({ ...input, signal: controller.signal }));
+});
+
+test("configured integration is explicit, development-only, strict, and has no fallback", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "pnp-configured-"));
+  const profile = path.join(dir, "configured.json");
+  try {
+    await writeFile(profile, JSON.stringify({
+      models: [{ selection: { providerID: "approved", modelID: "model" }, endpoint: "https://example.test/v1",
+        protocol: "openai-chat", headerEnvironment: { Authorization: "TEST_AUTH" } }],
+      tools: [], policy: { default: "deny", operations: { "file.read": "allow" } },
+    }));
+    await assert.rejects(loadIntegration({ kind: "configured", development: false, engineDevelopmentOnly: false,
+      configuredProfile: profile }), { code: "CONFIGURED_FORBIDDEN" });
+    await assert.rejects(loadIntegration({ kind: "configured", development: true, engineDevelopmentOnly: false }),
+      { code: "INTEGRATION_CONFIG_INVALID" });
+    const configured = await loadIntegration({ kind: "configured", development: true, engineDevelopmentOnly: false,
+      configuredProfile: profile, environment: { TEST_AUTH: "secret" } });
+    assert.equal(configured.id, "configured");
+    const selected = await configured.prepare({ session: { id: "test", title: "", directory: dir, engineId: "opencode", channelId: "acp",
+      lifecycle: "active", status: "idle", recovery: "ready", createdAt: "", updatedAt: "" },
+      request: { parts: [{ type: "text", text: "test" }], model: { providerID: "approved", modelID: "model" } },
+      signal: new AbortController().signal });
+    assert.equal(selected.model.headers.Authorization, "secret");
+    assert.equal((await selected.authorize({ kind: "permission", operation: "file.read", payload: {} })).effect, "allow");
+    assert.equal((await selected.authorize({ kind: "permission", operation: "file.write", payload: {} })).effect, "deny");
+    await assert.rejects(loadIntegration({ kind: "unknown", development: true, engineDevelopmentOnly: false }),
+      { code: "INTEGRATION_NOT_FOUND" });
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });

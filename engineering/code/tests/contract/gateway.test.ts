@@ -34,3 +34,33 @@ test("original northbound create/prompt/message/status/delete contract", async (
     await app.close(); await store.close(); await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("HTTP input failures preserve safe 400, 413, and 415 semantics", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "pnp-http-errors-"));
+  const store = new StateStore(path.join(dir, "pnp.db"));
+  const core = new GatewayCore(store, new MockPack(), new MockIntegration(), { dataDirectory: dir });
+  const app = buildApp(core);
+  try {
+    const malformed = await app.inject({ method: "POST", url: "/session",
+      headers: { "content-type": "application/json" }, payload: "{" });
+    assert.equal(malformed.statusCode, 400);
+    assert.deepEqual(Object.keys(malformed.json()).sort(), ["code", "message"]);
+    const tooLarge = await app.inject({ method: "POST", url: "/session",
+      headers: { "content-type": "application/json" }, payload: JSON.stringify({ directory: "x".repeat(1024 * 1024) }) });
+    assert.equal(tooLarge.statusCode, 413);
+    const unsupported = await app.inject({ method: "POST", url: "/session",
+      headers: { "content-type": "application/xml" }, payload: "<session/>" });
+    assert.equal(unsupported.statusCode, 415);
+    const missingPath = path.join(dir, "missing-secret-name");
+    const missing = await app.inject({ method: "POST", url: "/session", payload: { directory: missingPath } });
+    assert.equal(missing.statusCode, 400);
+    assert.doesNotMatch(missing.body, /missing-secret-name/);
+    const created = await app.inject({ method: "POST", url: "/session", payload: { directory: dir } });
+    const id = (created.json() as { id: string }).id;
+    const emptyAbort = await app.inject({ method: "POST", url: `/session/${id}/abort`,
+      headers: { "content-type": "application/json" }, payload: "" });
+    assert.equal(emptyAbort.statusCode, 200);
+  } finally {
+    await app.close(); await store.close(); await rm(dir, { recursive: true, force: true });
+  }
+});

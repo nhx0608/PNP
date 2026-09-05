@@ -27,6 +27,7 @@
 - `run()` 返回之前必须完成该通道的终态判定，不能返回请求接受 ACK。
 - 事件回调必须返回并等待 `emit()`；不得 fire-and-forget 或吞掉持久化异常。
 - `quiescent=true` 仅表示可归属的执行资源停止；不表示外部事务已撤销。
+- `terminate`、`close` 与 `ResourceScope` 收尾必须幂等；并发调用共享同一次进行中的核验。只有 `quiescent=true` 可以缓存，超时、异常或 `quiescent=false` 后必须允许再次核验，且不得并发启动第二次收尾。
 
 ## 3. 北向 HTTP
 

@@ -65,7 +65,7 @@ export class InteractionBroker {
       if (policy.effect === "deny" || (request.kind === "permission" && policy.effect === "allow")) {
         const response: InteractionResponse = { decision: policy.effect === "allow" ? "allow" : "deny" };
         await this.store.call("resolveInteraction", { id, response: response as unknown as Json });
-        await this.journal.publish("permission.resolved", {
+        await this.journal.publish(`${request.kind}.resolved`, {
           sessionID: input.sessionId, runID: input.runId, id, decision: response.decision,
           reasonCode: policy.reasonCode, source: "policy",
         });

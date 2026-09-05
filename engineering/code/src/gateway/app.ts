@@ -5,6 +5,31 @@ import type { PublicEvent } from "../contracts/index.ts";
 import { CreateSessionSchema, PromptSchema } from "./schemas.ts";
 import type { CreateSessionBody, PromptBody } from "./schemas.ts";
 
+interface FastifyHttpError {
+  code?: string;
+  validation?: unknown;
+}
+
+function asHttpError(error: unknown): PnpError {
+  if (error instanceof PnpError) return error;
+  if (typeof error !== "object" || error === null) return asPnpError(error);
+  const candidate = error as FastifyHttpError;
+  if (candidate.validation !== undefined) {
+    return new PnpError("VALIDATION_ERROR", "Invalid request.", 400);
+  }
+  switch (candidate.code) {
+    case "FST_ERR_CTP_BODY_TOO_LARGE":
+      return new PnpError("BODY_TOO_LARGE", "Request body is too large.", 413);
+    case "FST_ERR_CTP_INVALID_MEDIA_TYPE":
+      return new PnpError("UNSUPPORTED_MEDIA_TYPE", "Unsupported media type.", 415);
+    case "FST_ERR_CTP_EMPTY_JSON_BODY":
+    case "FST_ERR_CTP_INVALID_JSON_BODY":
+      return new PnpError("VALIDATION_ERROR", "Invalid JSON body.", 400);
+    default:
+      return asPnpError(error);
+  }
+}
+
 export function buildApp(core: GatewayCore) {
   const app = Fastify({
     logger: { redact: ["req.headers.authorization", "req.headers.cookie"] },
@@ -14,11 +39,18 @@ export function buildApp(core: GatewayCore) {
     connectionTimeout: 0,
   });
   const closeStreams = new Set<() => void>();
-  app.setErrorHandler((error, _request, reply) => {
-    if (typeof error === "object" && error !== null && "validation" in error && error.validation) {
-      return reply.code(400).send({ code: "VALIDATION_ERROR", message: "Invalid request." });
+  const defaultJsonParser = app.getDefaultJsonParser("error", "error");
+  app.removeContentTypeParser("application/json");
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (request, body, done) => {
+    const text = typeof body === "string" ? body : body.toString("utf8");
+    if (text.trim() === "" && /\/session\/:id\/(?:abort|stop)$/.test(request.routeOptions.url ?? "")) {
+      done(null, {});
+      return;
     }
-    const safe = asPnpError(error);
+    defaultJsonParser(request, text, done);
+  });
+  app.setErrorHandler((error, _request, reply) => {
+    const safe = asHttpError(error);
     return reply.code(safe.status).send({ code: safe.code, message: safe.message });
   });
   app.get("/health/live", async () => ({ status: "alive" }));
@@ -81,26 +113,55 @@ export function buildApp(core: GatewayCore) {
       "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no",
     });
     let closed = false;
-    const cleanup = () => {
+    let backpressured = false;
+    let queuedBytes = 0;
+    const queued: string[] = [];
+    const maxBufferedBytes = 2 * 1024 * 1024;
+    const onDrain = () => {
+      if (closed) return;
+      backpressured = false;
+      while (queued.length > 0) {
+        const frame = queued.shift()!;
+        queuedBytes -= Buffer.byteLength(frame);
+        if (!reply.raw.write(frame)) {
+          backpressured = true;
+          return;
+        }
+      }
+    };
+    const cleanup = (force = false) => {
       if (closed) return;
       closed = true;
       clearInterval(timer);
       unsubscribe();
+      reply.raw.off("drain", onDrain);
+      queued.length = 0;
+      queuedBytes = 0;
       closeStreams.delete(cleanup);
-      reply.raw.end();
+      if (force) reply.raw.destroy();
+      else if (!reply.raw.destroyed && !reply.raw.writableEnded) reply.raw.end();
     };
     const send = (event: PublicEvent | { type: string; properties: Record<string, never> }) => {
       if (closed) return;
       const frame = `${"sequence" in event ? `id: ${event.sequence}\n` : ""}data: ${JSON.stringify(event)}\n\n`;
-      // Conservative bounded backpressure: disconnect rather than queue unbounded output.
-      if (reply.raw.writableLength > 256 * 1024) { cleanup(); return; }
-      if (!reply.raw.write(frame)) cleanup();
+      const frameBytes = Buffer.byteLength(frame);
+      if (backpressured) {
+        if (event.type === "server.heartbeat") return;
+        if (reply.raw.writableLength + queuedBytes + frameBytes > maxBufferedBytes) { cleanup(true); return; }
+        queued.push(frame);
+        queuedBytes += frameBytes;
+        return;
+      }
+      if (reply.raw.writableLength + frameBytes > maxBufferedBytes) { cleanup(true); return; }
+      // A false result means this frame was accepted into Node's buffer. Queue only later frames.
+      if (!reply.raw.write(frame)) backpressured = true;
     };
     const unsubscribe = core.journal.subscribe(send);
     const timer = setInterval(() => send({ type: "server.heartbeat", properties: {} }), 15_000);
     closeStreams.add(cleanup);
     reply.raw.once("close", cleanup);
     reply.raw.once("error", cleanup);
+    reply.raw.on("drain", onDrain);
     send({ type: "server.connected", properties: {} });
   });
   app.addHook("preClose", async () => {

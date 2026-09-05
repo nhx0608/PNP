@@ -13,8 +13,9 @@ export class ConfiguredIntegration implements IntegrationProvider {
   private readonly models: readonly ConfiguredModel[];
   private readonly tools: readonly ToolBinding[];
   private readonly policy: (operation: string) => AuthorizationDecision;
-  constructor(models: readonly ConfiguredModel[], tools: readonly ToolBinding[] = [], policy: (operation: string) => AuthorizationDecision = () => ({ effect: "deny", reasonCode: "DEFAULT_DENY" })) {
-    this.models = models; this.tools = tools; this.policy = policy;
+  private readonly environment: NodeJS.ProcessEnv;
+  constructor(models: readonly ConfiguredModel[], tools: readonly ToolBinding[] = [], policy: (operation: string) => AuthorizationDecision = () => ({ effect: "deny", reasonCode: "DEFAULT_DENY" }), environment: NodeJS.ProcessEnv = process.env) {
+    this.models = models; this.tools = tools; this.policy = policy; this.environment = environment;
   }
   async prepare(input: Parameters<IntegrationProvider["prepare"]>[0]): Promise<IntegrationContext> {
     if (input.signal.aborted) throw new PnpError("EXECUTION_CANCELLED", "Model preparation was cancelled.", 409);
@@ -25,7 +26,7 @@ export class ConfiguredIntegration implements IntegrationProvider {
     if (url.username || url.password) throw new PnpError("UNSAFE_MODEL_ENDPOINT", "Credentials are not allowed in a URL.", 400);
     const headers: Record<string, string> = {};
     for (const [name, variable] of Object.entries(model.headerEnvironment)) {
-      const value = process.env[variable];
+      const value = this.environment[variable];
       if (!value) throw new PnpError("MODEL_AUTH_MISSING", "Required credential environment variable is absent.", 503);
       headers[name] = value;
     }

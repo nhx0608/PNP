@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -50,6 +51,9 @@ export class LocalProcessHost implements ProcessHost {
     let evidence = false;
     let stopPromise: Promise<StopEvidence> | undefined;
     let launching = true;
+    let launchSent = process.platform !== "win32";
+    let abortRequested = false;
+    let decoderFailure: PnpError | undefined;
     const engineDecoder = new JsonlDecoder();
     const helperDecoder = new JsonlDecoder();
     const record = { hostId, sessionId: spec.sessionId, ownerToken: spec.ownerToken, parentPid: process.pid,
@@ -68,11 +72,13 @@ export class LocalProcessHost implements ProcessHost {
       for (const listener of exitListeners) listener(value);
     };
     const terminate = (): Promise<StopEvidence> => {
-      stopPromise ??= (async () => {
+      if (stopPromise !== undefined) return stopPromise;
+      const attempt = (async () => {
         if (child === undefined) return { quiescent: !launching, method: "not-running" as const };
         if (exitValue === undefined) {
           if (process.platform === "win32") {
-            try { await bounded(controlWrite(child, { type: "terminate" }), this.timeoutMs); } catch { child.kill(); }
+            if (!launchSent) child.kill();
+            else try { await bounded(controlWrite(child, { type: "terminate" }), this.timeoutMs); } catch { child.kill(); }
           } else {
             try { if (child.pid !== undefined) process.kill(-child.pid, "SIGTERM"); } catch { }
           }
@@ -95,67 +101,124 @@ export class LocalProcessHost implements ProcessHost {
         await save();
         return { quiescent: evidence, method: "process-tree" as const };
       })();
-      return stopPromise;
+      stopPromise = attempt;
+      void attempt.then((result) => {
+        if (!result.quiescent && stopPromise === attempt) stopPromise = undefined;
+      }, () => {
+        if (stopPromise === attempt) stopPromise = undefined;
+      });
+      return attempt;
     };
     resources?.register(hostId, terminate);
-    await mkdir(this.directory, { recursive: true });
-    await save(); // The ownership record exists before CreateProcess/spawn.
-    if (signal.aborted || resources?.closed) { launching = false; throw new PnpError("EXECUTION_CANCELLED", "Launch cancelled.", 409); }
-    if (process.platform === "win32") {
-      child = this.helper();
-    } else {
-      child = spawn(spec.executable, [...spec.args], { cwd: spec.cwd, env: { ...baseEnvironment(), ...spec.env }, shell: false, detached: true, stdio: "pipe" });
+    try {
+      await mkdir(this.directory, { recursive: true });
+      await save(); // The ownership record exists before CreateProcess/spawn.
+      if (signal.aborted || resources?.closed) throw new PnpError("EXECUTION_CANCELLED", "Launch cancelled.", 409);
+      if (process.platform === "win32") {
+        child = this.helper();
+      } else {
+        child = spawn(spec.executable, [...spec.args], { cwd: spec.cwd, env: { ...baseEnvironment(), ...spec.env }, shell: false, detached: true, stdio: "pipe" });
+      }
+    } catch (error: unknown) {
+      // A synchronous pre-spawn failure proves that no process was created.
+      if (child === undefined) {
+        launching = false;
+        evidence = true;
+        record.quiescent = true;
+        await save().catch(() => undefined);
+      }
+      if (error instanceof PnpError) throw error;
+      throw new PnpError("HOST_START_FAILED", "Process could not be started.", 503);
     }
     record.helperPid = child.pid ?? 0;
-    const onAbort = () => { void terminate().catch(() => undefined); };
+    const onAbort = () => { abortRequested = true; void terminate().catch(() => undefined); };
     signal.addEventListener("abort", onAbort, { once: true });
     child.on("error", () => { ready.reject(new PnpError("HOST_START_FAILED", "Process could not be started.", 503)); });
+    child.stdin.on("error", () => {
+      const failure = new PnpError(launching ? "HOST_START_FAILED" : "HOST_EXITED",
+        "Process control channel failed.", launching ? 503 : 502);
+      ready.reject(failure);
+      if (!launching) {
+        decoderFailure = failure;
+        reportExit({ code: null, signal: failure.code });
+        void terminate().catch(() => undefined);
+      }
+    });
     child.on("close", (code, sig) => {
       launching = false;
       signal.removeEventListener("abort", onAbort);
       exitValue = { code, signal: sig };
       exited.resolve(exitValue);
       ready.reject(new PnpError("HOST_EXITED", "Process exited during startup.", 502));
-      if (process.platform === "win32") reportExit({ code: null, signal: "HOST_FAILURE" });
-      else reportExit(exitValue);
+      if (process.platform === "win32") reportExit({ code: null, signal: decoderFailure?.code ?? "HOST_FAILURE" });
+      else reportExit(decoderFailure === undefined ? exitValue : { code: null, signal: decoderFailure.code });
     });
     child.stdout.on("data", (chunk: Buffer) => {
       try {
         if (process.platform !== "win32") { for (const line of engineDecoder.push(chunk)) dispatch(line); return; }
         for (const frame of helperDecoder.push(chunk)) {
-          const event = JSON.parse(frame) as { type: string; data?: string; quiescent?: boolean };
+          const event = JSON.parse(frame) as { type: string; data?: string; quiescent?: boolean; drained?: boolean };
           if (event.type === "ready") { launching = false; ready.resolve(); }
           else if (event.type === "stdout") for (const line of engineDecoder.push(Buffer.from(event.data!, "base64"))) dispatch(line);
           else if (event.type === "exit") {
             evidence = event.quiescent === true;
-            const engineExit = supervisorEngineExit(event);
-            if (engineExit !== undefined) reportExit(engineExit);
+            try {
+              if (event.drained !== true) throw new PnpError("ENGINE_PROTOCOL_ERROR", "Process output did not drain.", 502);
+              engineDecoder.end();
+              const engineExit = supervisorEngineExit(event);
+              if (engineExit !== undefined) reportExit(engineExit);
+            } catch {
+              decoderFailure = new PnpError("ENGINE_PROTOCOL_ERROR", "Invalid process framing.", 502);
+              reportExit({ code: null, signal: decoderFailure.code });
+            }
           }
           else if (event.type === "error") ready.reject(new PnpError("HOST_FAILURE", "Windows supervisor failed.", 503));
           // stderr is consumed without persisting credentials. Adapters emit sanitized diagnostic events.
         }
       } catch { ready.reject(new PnpError("ENGINE_PROTOCOL_ERROR", "Invalid process framing.", 502)); void terminate().catch(() => undefined); }
     });
+    child.stdout.on("end", () => {
+      try {
+        helperDecoder.end();
+        if (process.platform !== "win32") engineDecoder.end();
+      } catch {
+        decoderFailure = new PnpError("ENGINE_PROTOCOL_ERROR", "Invalid process framing.", 502);
+        ready.reject(decoderFailure);
+      }
+    });
     child.stderr.resume();
     if (process.platform !== "win32") child.once("spawn", () => { launching = false; ready.resolve(); });
     await save();
     if (process.platform === "win32") {
-      await controlWrite(child, { operation: "launch", jobName, executable: spec.executable, args: spec.args,
-        cwd: spec.cwd, env: { ...baseEnvironment(), ...spec.env }, parentPid: process.pid });
+      if (abortRequested || signal.aborted) {
+        await terminate();
+        throw new PnpError("EXECUTION_CANCELLED", "Launch was cancelled.", 409);
+      }
+      try {
+        await controlWrite(child, { operation: "launch", jobName, executable: spec.executable, args: spec.args,
+          cwd: spec.cwd, env: { ...baseEnvironment(), ...spec.env }, parentPid: process.pid });
+        launchSent = true;
+      } catch (error: unknown) {
+        await terminate().catch(() => undefined);
+        if (abortRequested || signal.aborted) throw new PnpError("EXECUTION_CANCELLED", "Launch was cancelled.", 409);
+        throw new PnpError("HOST_START_FAILED", "Process control channel failed during startup.", 503);
+      }
     }
-    if (signal.aborted) onAbort();
+    if (signal.aborted || abortRequested) onAbort();
     try { await bounded(ready.promise, this.timeoutMs); }
     catch (error) { await terminate().catch(() => undefined); throw error; }
     signal.removeEventListener("abort", onAbort); // Launch cancellation ends at handshake; run cancellation is protocol-first.
-    if (signal.aborted) { await terminate(); throw new PnpError("EXECUTION_CANCELLED", "Launch was cancelled.", 409); }
+    if (signal.aborted || abortRequested) { await terminate(); throw new PnpError("EXECUTION_CANCELLED", "Launch was cancelled.", 409); }
     const running = child;
     return {
       hostId, generation,
       write: async (frame) => {
         if (exitValue !== undefined || stopPromise !== undefined) throw new PnpError("HOST_EXITED", "Process is unavailable.", 502);
         if (Buffer.byteLength(frame) > 4 * 1024 * 1024) throw new PnpError("FRAME_TOO_LARGE", "Outgoing frame is too large.", 400);
-        if (process.platform === "win32") await controlWrite(running, { type: "write", data: Buffer.from(`${frame}\n`).toString("base64") });
-        else await new Promise<void>((resolve, reject) => running.stdin.write(`${frame}\n`, (error) => error ? reject(error) : resolve()));
+        try {
+          if (process.platform === "win32") await controlWrite(running, { type: "write", data: Buffer.from(`${frame}\n`).toString("base64") });
+          else await new Promise<void>((resolve, reject) => running.stdin.write(`${frame}\n`, (error) => error ? reject(error) : resolve()));
+        } catch { throw new PnpError("HOST_EXITED", "Process control channel is unavailable.", 502); }
       },
       onFrame: (listener) => { listeners.add(listener); const frames = buffered.splice(0); bufferedBytes = 0; for (const frame of frames) listener(frame); return () => { listeners.delete(listener); }; },
       onExit: (listener) => { exitListeners.add(listener); if (reportedExit !== undefined) listener(reportedExit); return () => { exitListeners.delete(listener); }; },
@@ -164,8 +227,16 @@ export class LocalProcessHost implements ProcessHost {
   }
   private helper(): ChildProcessWithoutNullStreams {
     const executable = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-    const script = fileURLToPath(new URL("../../native/windows/job-host.ps1", import.meta.url));
-    return spawn(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", script], { env: baseEnvironment(), windowsHide: true, shell: false, stdio: "pipe" });
+    const source = fileURLToPath(new URL("../../native/windows/JobHost.cs", import.meta.url));
+    try {
+      if (!statSync(source).isFile()) throw new Error("not a file");
+    } catch {
+      throw new PnpError("HOST_START_FAILED", "Windows supervisor source is unavailable.", 503);
+    }
+    const quoted = source.replaceAll("'", "''");
+    const bootstrap = `$ErrorActionPreference='Stop';$source=[IO.File]::ReadAllText('${quoted}');Add-Type -TypeDefinition $source -ReferencedAssemblies 'System.dll','System.Core.dll','System.Web.Extensions.dll';[Console]::InputEncoding=New-Object Text.UTF8Encoding($false);[Console]::OutputEncoding=New-Object Text.UTF8Encoding($false);[PNP.JobHost]::Run()`;
+    const encoded = Buffer.from(bootstrap, "utf16le").toString("base64");
+    return spawn(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded], { env: baseEnvironment(), windowsHide: true, shell: false, stdio: "pipe" });
   }
   async reconcile(previous: Json): Promise<StopEvidence> {
     if (previous === null || typeof previous !== "object" || Array.isArray(previous)) return { quiescent: false, method: "process-tree" };
@@ -185,6 +256,7 @@ export class LocalProcessHost implements ProcessHost {
       catch { result.resolve(false); }
     });
     helper.stderr.resume();
+    helper.stdin.on("error", () => result.resolve(false));
     helper.on("error", () => result.resolve(false));
     helper.on("close", () => result.resolve(false));
     try {

@@ -85,9 +85,13 @@ namespace PNP {
         string first = Console.ReadLine();
         if (first == null) return;
         var config = Json.Deserialize<Dictionary<string, object>>(first);
+        if (config == null || !config.ContainsKey("operation") || !(config["operation"] is string)) throw new InvalidOperationException("INVALID_OPERATION");
+        string operation = (string)config["operation"];
+        if (operation != "launch" && operation != "inspect") throw new InvalidOperationException("INVALID_OPERATION");
+        if (!config.ContainsKey("jobName") || !(config["jobName"] is string)) throw new InvalidOperationException("INVALID_JOB_NAME");
         string name = (string)config["jobName"];
         if (!name.StartsWith("Local\\PNP-", StringComparison.Ordinal)) throw new InvalidOperationException("INVALID_JOB_NAME");
-        if ((string)config["operation"] == "inspect") {
+        if (operation == "inspect") {
           job = OpenJobObject(4, false, name);
           int error = Marshal.GetLastWin32Error();
           if (job == IntPtr.Zero) { Emit(new { type="inspection", quiescent=(error==2), error=error }); return; }
@@ -149,8 +153,8 @@ namespace PNP {
         TerminateJobObject(job, code);
         DateTime deadline=DateTime.UtcNow.AddSeconds(10);
         while (!IsEmpty(job) && DateTime.UtcNow < deadline) Thread.Sleep(20);
-        Task.WaitAll(new Task[] { stdout, stderr }, 2000);
-        Emit(new { type="exit", code=code, quiescent=IsEmpty(job) });
+        bool drained=Task.WaitAll(new Task[] { stdout, stderr }, 2000);
+        Emit(new { type="exit", code=code, quiescent=IsEmpty(job), drained=drained });
       } catch (Exception error) {
         if (pi.process != IntPtr.Zero) TerminateProcess(pi.process, 1);
         if (job != IntPtr.Zero) TerminateJobObject(job, 1);
