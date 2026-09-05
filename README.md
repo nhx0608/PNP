@@ -10,6 +10,16 @@ The project goal is to build a self-developed, engine-independent Agent Gateway 
 - [Gateway API baseline](./docs/gateway-api-baseline.md)
 - [Known evaluation cases](./docs/evaluation-cases.md)
 
+## Research
+
+33 deep-dive reports on candidate engines, interop protocols, and the Windows delivery constraints —
+see [docs/research/](./docs/research/README.md) for the index, or jump to:
+
+- [Engine comparison matrix](./docs/research/engine-matrix.md) — engines x 18 dimensions, selection advice, verification checklist
+- [Capability inventory](./docs/research/capability-inventory.md) — 12 capability domains, capability x engine support matrix, unified terminology
+- [Architecture constraints](./docs/research/architecture-constraints.md) — 14 non-negotiable design decisions with evidence
+- [Digest](./docs/research/DIGEST.md) — every report's summary, key facts and design implications
+
 ## Current direction
 
 - Self-developed Agent Gateway / Engine Fabric
