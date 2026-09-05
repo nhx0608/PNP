@@ -20,6 +20,11 @@ see [docs/research/](./docs/research/README.md) for the index, or jump to:
 - [Architecture constraints](./docs/research/architecture-constraints.md) — 14 non-negotiable design decisions with evidence
 - [Digest](./docs/research/DIGEST.md) — every report's summary, key facts and design implications
 
+## Architecture
+
+- [Architecture review](./docs/architecture-review.md) — review of the v2 design proposal against the
+  research corpus: 5 blocking gaps, 1 conclusion to correct, 3 simplifications, with a prioritised change list
+
 ## Current direction
 
 - Self-developed Agent Gateway / Engine Fabric
