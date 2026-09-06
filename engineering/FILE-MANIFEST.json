@@ -258,8 +258,8 @@
       "path": "code/scripts/test.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 1244,
-      "sha256": "f663331d6fdd2441fb22c82cf04a4400aa96e10cd2155b448b49a59c5ffbf726"
+      "bytes": 1664,
+      "sha256": "d0f509ae971ca1234fb9a4569aecc21284da62075da3c34b5c464e4409ed22ec"
     },
     {
       "path": "code/src/assets/resolver.ts",
