@@ -6,13 +6,13 @@ import { instructionAssetTargetPath, projectOpenCodeAssets } from "./assets.ts";
 import { loadOpenCodeEngineConfig } from "./config.ts";
 import type { OpenCodeEngineConfig } from "./config.ts";
 import { resolveOpenCodeExecutable } from "./executable.ts";
-import { writeNativeConfig } from "./native-config.ts";
+import { OPENCODE_CONFIG_ENVIRONMENT_VARIABLE, writeNativeConfig } from "./native-config.ts";
 
 const CLIENT_INFO = { name: "pnp-gateway-opencode", version: "0.1.0" };
 
 /**
  * OpenCode Engine Pack. Fills the ACP v1 Driver's `AcpEngineDefinition` seam (src/drivers/acp/channel.ts):
- * resolves OpenCode's Windows launch target, writes a session-private OpenCode config, and projects skill /
+ * resolves OpenCode's native launch target, writes a session-private OpenCode config, and projects skill /
  * instruction assets into that private directory. See docs/engines/opencode.md for install shape, ACP subcommand
  * evidence and the capability evidence table; see AGENTS.md in this directory for the ownership boundary.
  */
@@ -31,11 +31,11 @@ export class OpenCodePack implements EnginePack {
       channelId: "acp",
       engineVersion: config.engineVersion,
       client: CLIENT_INFO,
-      // See config/engines/opencode.json#model.policy and docs/engines/opencode.md for why "launch" is the
-      // shipped default: opencode acp exposing a model-category session config option is unverified, so pinning
-      // fails closed (rejects an unsupported model up front) instead of assuming a runtime surface that may not
-      // exist. Flip config/engines/opencode.json#model.policy to "session-config" only after that is confirmed
-      // against a real opencode acp session's NewSessionResponse.configOptions.
+      // See config/engines/opencode.json#model.policy and docs/engines/opencode.md section 5. Both routes are
+      // real: a live opencode acp session does advertise a model-category session config option whose
+      // currentValue is the model pinned by the private config. "launch" ships as the default because it fails
+      // closed -- a request for any other model is rejected before a prompt is sent, rather than being answered
+      // by whatever model the engine happened to keep. Flip the config field to switch; no code change needed.
       model: config.model.policy === "session-config" ? { kind: "session-config" } : { kind: "launch", modelID },
       timeouts: config.timeouts,
       launch: (openInput) => buildLaunchRequest(config, openInput),
@@ -57,9 +57,13 @@ async function buildLaunchRequest(config: OpenCodeEngineConfig, input: EngineOpe
   const written = await writeNativeConfig(input.nativeDataDirectory, config, input.integration.model, instructionAbsolutePaths);
   // Redirection first, then secrets: a name collision must let the header env var win, never a redirect key.
   const env: Record<string, string> = { ...written.redirectEnv, ...written.secretEnv };
+  // The one exception is the pointer to the private config. A header mapped onto that name would send OpenCode
+  // back to the operator's real global config, so this assignment is last and unconditional.
+  env[OPENCODE_CONFIG_ENVIRONMENT_VARIABLE] = written.primaryConfigPath;
   if (input.integration.model.caFile !== undefined) {
-    // Standard Node.js trust-store extension (docs.node/api/cli#node_extra_ca_certsfile); node-script mode always
-    // runs under node.exe, and Bun documents the same variable for its own TLS stack in exe mode.
+    // Standard Node.js trust-store extension (docs.node/api/cli#node_extra_ca_certsfile). The shipped exe is a
+    // Bun-compiled binary and Bun documents the same variable for its own TLS stack; node-script mode runs
+    // under node.exe, where it is native.
     env["NODE_EXTRA_CA_CERTS"] = input.integration.model.caFile;
   }
   return {

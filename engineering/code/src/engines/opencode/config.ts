@@ -14,6 +14,13 @@ export interface OpenCodeExecutableSource {
 export interface OpenCodeNodeSource extends OpenCodeExecutableSource {
   fallbackToHostRuntime: boolean;
 }
+/**
+ * Whether the generated private config asks OpenCode to request permission before editing or running commands.
+ * OpenCode allows every operation by default, so "engine-default" writes no `permission` block and the engine
+ * never raises ACP `session/request_permission`; "ask" writes `{"edit":"ask","bash":"ask"}` so the request
+ * actually reaches the gateway and its policy layer decides allow/ask/deny.
+ */
+export type OpenCodeNativePermissions = "engine-default" | "ask";
 export interface OpenCodeEngineConfig {
   id: "opencode";
   channel: "acp";
@@ -34,6 +41,8 @@ export interface OpenCodeEngineConfig {
     node: OpenCodeNodeSource;
     script: OpenCodeExecutableSource;
   };
+  /** Optional in the file; absent means "engine-default". */
+  nativePermissions: OpenCodeNativePermissions;
   redirect: { variables: Readonly<Record<string, string>> };
   model: { policy: "launch" | "session-config" };
   headerEnvironmentPrefix: string;
@@ -96,6 +105,10 @@ export function parseOpenCodeEngineConfig(raw: unknown): OpenCodeEngineConfig {
   const modelRaw = requireObject(root["model"], "model");
   const modelPolicy = modelRaw["policy"];
   if (modelPolicy !== "launch" && modelPolicy !== "session-config") invalid('"model.policy" must be "launch" or "session-config".');
+  const nativePermissionsRaw = root["nativePermissions"];
+  if (nativePermissionsRaw !== undefined && nativePermissionsRaw !== "engine-default" && nativePermissionsRaw !== "ask") {
+    invalid('"nativePermissions" must be "engine-default" or "ask" when present.');
+  }
   const timeoutsRaw = requireObject(root["timeouts"], "timeouts");
   const defaultKind = executableRaw["defaultKind"];
   if (defaultKind !== "exe" && defaultKind !== "node-script") invalid('"executable.defaultKind" must be "exe" or "node-script".');
@@ -127,6 +140,7 @@ export function parseOpenCodeEngineConfig(raw: unknown): OpenCodeEngineConfig {
       node: nodeSource,
       script: requireExecutableSource(executableRaw["script"], "executable.script"),
     },
+    nativePermissions: nativePermissionsRaw === "ask" ? "ask" : "engine-default",
     redirect: { variables },
     model: { policy: modelPolicy },
     headerEnvironmentPrefix: requireString(root["headerEnvironmentPrefix"], "headerEnvironmentPrefix"),

@@ -2,9 +2,21 @@ import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import type { Json, ResolvedModel } from "../../contracts/index.ts";
 import { PnpError } from "../../core/errors.ts";
-import type { OpenCodeEngineConfig } from "./config.ts";
+import type { OpenCodeEngineConfig, OpenCodeNativePermissions } from "./config.ts";
 
 const OPENCODE_ROOT_SEGMENT = "opencode";
+const NATIVE_CONFIG_FILENAME = "opencode.json";
+/**
+ * OpenCode's documented "custom path" discovery step (opencode.ai/docs/config/): it names one exact file and
+ * needs no guess about where a config home lives on Windows. Confirmed honoured by a real opencode 1.18.29
+ * process. This is the primary route to the private config; the mirrored config homes are only a fallback.
+ */
+export const OPENCODE_CONFIG_ENVIRONMENT_VARIABLE = "OPENCODE_CONFIG";
+
+/** Environment-variable substitution understood by OpenCode's config loader. `$VAR` is NOT expanded. */
+export function environmentToken(variableName: string): string {
+  return `{env:${variableName}}`;
+}
 
 /**
  * Where this session's private OpenCode environment lives, and the env vars that point OpenCode there instead
@@ -15,12 +27,15 @@ export interface RedirectPlan {
   /** Env var name -> absolute private directory. Applied on top of the shared host's baseEnvironment(), which
    *  otherwise inherits the gateway's real HOME/USERPROFILE/APPDATA/LOCALAPPDATA (see src/runtime/process-host.ts). */
   env: Readonly<Record<string, string>>;
+  /** The one deterministic file OPENCODE_CONFIG points at. Discovery does not depend on guessing a config home. */
+  configFile: string;
   /**
-   * Candidate "config home" directories, ranked by confidence. docs/research/T03-opencode.md only confirms
-   * POSIX-style config paths (`~/.config/opencode/...`); OpenCode's actual Windows path resolution (os.homedir()
-   * literally joined with ".config", vs honouring XDG_CONFIG_HOME, vs a Windows-native APPDATA convention) is
-   * not verified. The private opencode.json and skills are therefore mirrored under every candidate so discovery
-   * does not depend on guessing correctly; see docs/engines/opencode.md for the ranked rationale.
+   * Fallback "config home" directories the same content is mirrored into. OpenCode's documented discovery order
+   * is remote `.well-known` -> global `~/.config/opencode/opencode.json` -> `OPENCODE_CONFIG` -> project
+   * `opencode.json` -> `.opencode` -> `OPENCODE_CONFIG_CONTENT` -> managed `%ProgramData%\opencode`; neither
+   * XDG_CONFIG_HOME nor %APPDATA% appears in it. The global entry is what these mirrors cover (HOME is
+   * redirected, so `~` is private), and the XDG mirror costs one extra file for the case where the loader turns
+   * out to honour XDG_CONFIG_HOME after all. See docs/engines/opencode.md section 3.
    */
   configRoots: readonly string[];
 }
@@ -33,29 +48,44 @@ export function buildRedirectPlan(nativeDataDirectory: string, config: OpenCodeE
   const homeDirectory = env["HOME"] ?? path.join(base, "home");
   const xdgConfigHome = env["XDG_CONFIG_HOME"] ?? path.join(base, "xdg-config");
   const configRoots = [...new Set([path.join(homeDirectory, ".config"), xdgConfigHome])];
-  return { env, configRoots };
+  return { env, configFile: path.join(base, NATIVE_CONFIG_FILENAME), configRoots };
 }
 
 function sanitizeEnvSuffix(name: string): string {
   const cleaned = name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+/, "").replace(/_+$/, "");
   return cleaned.length > 0 ? cleaned : "HEADER";
 }
+/** `Bearer <token>`, case-insensitive, with the separating whitespace consumed. */
+const BEARER_SCHEME = /^bearer\s+/i;
+
 export interface HeaderEnvMapping {
-  /** Original header name -> the `$VARNAME` token to place in the generated config (never the header value). */
+  /** Original header name -> the `{env:VARNAME}` token for `options.headers` (never the header value). */
   configTokens: Readonly<Record<string, string>>;
   /** Env var name -> the real secret value. Only ever placed in LaunchSpec.env for the child process. */
   secretEnv: Readonly<Record<string, string>>;
-  /** Env var backing the provider's `apiKey` field (reuses the Authorization header's var when present). */
+  /** Env var backing the provider's `options.apiKey` field. */
   apiKeyEnvName: string;
+  /** Whether apiKey carries a real credential or a non-secret placeholder. */
+  apiKeySource: "bearer-token" | "placeholder";
 }
-/** Maps every resolved header to its own env var so the private config file never carries a literal secret. */
+/**
+ * Maps every resolved header to its own env var so the private config file never carries a literal secret.
+ *
+ * `Authorization: Bearer <token>` is special-cased, and the reason is measured, not theoretical: the
+ * `@ai-sdk/openai-compatible` provider composes `Authorization: Bearer <apiKey>` itself. Feeding it the whole
+ * header value produced `Authorization: Bearer Bearer <token>` on the wire against a real opencode 1.18.29 run.
+ * So the bearer prefix is stripped, the bare token backs `options.apiKey`, and no `Authorization` entry is
+ * emitted in `options.headers` -- the provider writes that header, and a duplicate would fight it.
+ *
+ * An `Authorization` header with any other scheme is left as an ordinary header (`{env:}` in `options.headers`)
+ * and apiKey keeps its non-secret placeholder: that route has not been observed end to end, so it fails visibly
+ * rather than silently mangling a credential.
+ */
 export function mapHeadersToEnv(headers: Readonly<Record<string, string>>, prefix: string): HeaderEnvMapping {
   const configTokens: Record<string, string> = {};
   const secretEnv: Record<string, string> = {};
   const used = new Set<string>();
-  let authorizationEnvName: string | undefined;
-  for (const [name, value] of Object.entries(headers)) {
-    const suffix = sanitizeEnvSuffix(name);
+  const allocate = (suffix: string): string => {
     let envName = `${prefix}${suffix}`;
     let attempt = 2;
     while (used.has(envName)) {
@@ -63,13 +93,26 @@ export function mapHeadersToEnv(headers: Readonly<Record<string, string>>, prefi
       attempt += 1;
     }
     used.add(envName);
-    configTokens[name] = `$${envName}`;
+    return envName;
+  };
+  let apiKeyEnvName: string | undefined;
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.toLowerCase() === "authorization" && apiKeyEnvName === undefined) {
+      const scheme = BEARER_SCHEME.exec(value);
+      if (scheme !== null) {
+        apiKeyEnvName = allocate("API_KEY");
+        secretEnv[apiKeyEnvName] = value.slice(scheme[0].length);
+        continue;
+      }
+    }
+    const envName = allocate(sanitizeEnvSuffix(name));
+    configTokens[name] = environmentToken(envName);
     secretEnv[envName] = value;
-    if (name.toLowerCase() === "authorization") authorizationEnvName = envName;
   }
-  const apiKeyEnvName = authorizationEnvName ?? `${prefix}APIKEY_UNUSED`;
-  if (authorizationEnvName === undefined) secretEnv[apiKeyEnvName] = "unused";
-  return { configTokens, secretEnv, apiKeyEnvName };
+  if (apiKeyEnvName !== undefined) return { configTokens, secretEnv, apiKeyEnvName, apiKeySource: "bearer-token" };
+  const placeholder = allocate("APIKEY_UNUSED");
+  secretEnv[placeholder] = "unused";
+  return { configTokens, secretEnv, apiKeyEnvName: placeholder, apiKeySource: "placeholder" };
 }
 
 /**
@@ -96,13 +139,19 @@ export interface NativeConfigPayload {
   secretEnv: Readonly<Record<string, string>>;
 }
 /**
- * Builds the private opencode.json content. `apiKey` and every provider header are `$VARNAME` tokens
- * (docs/research/G02-internal-model-endpoint-compat.md #46 confirms opencode expands `$VAR` in config values);
- * the real values only ever exist in the child process's environment. `share` is pinned to "disabled": nothing
- * about a competition-session prompt should leave the host via opencode's share links.
+ * Builds the private opencode.json content. `apiKey` and every provider header are `{env:VARNAME}` tokens --
+ * the substitution syntax OpenCode actually implements; `$VAR` is passed through literally and would ship a
+ * useless string to the model endpoint. The real values only ever exist in the child process's environment.
+ *
+ * A custom OpenAI-compatible provider requires `npm`, a display `name`, `options.baseURL` and a display `name`
+ * on each model, so all four are written. `share` is pinned to "disabled": nothing about a competition-session
+ * prompt should leave the host via opencode's share links. `permission` is written only when the operator asked
+ * for it (nativePermissions "ask"); OpenCode allows everything by default, and without that block it never
+ * raises ACP `session/request_permission` at all.
  */
 export function buildNativeConfigPayload(
   model: ResolvedModel, instructionAbsolutePaths: readonly string[], headerEnvironmentPrefix: string,
+  nativePermissions: OpenCodeNativePermissions = "engine-default",
 ): NativeConfigPayload {
   if (model.endpoint === undefined || model.endpoint.length === 0) {
     throw new PnpError("ENGINE_MODEL_ENDPOINT_MISSING", "The resolved model has no endpoint; OpenCode requires provider.options.baseURL.", 502);
@@ -111,6 +160,11 @@ export function buildNativeConfigPayload(
   const headerMapping = mapHeadersToEnv(model.headers, headerEnvironmentPrefix);
   const providerId = model.selection.providerID;
   const modelId = model.selection.modelID;
+  const options: Json = {
+    baseURL: model.endpoint,
+    apiKey: environmentToken(headerMapping.apiKeyEnvName),
+    ...(Object.keys(headerMapping.configTokens).length > 0 ? { headers: { ...headerMapping.configTokens } } : {}),
+  };
   const json: Json = {
     "$schema": "https://opencode.ai/config.json",
     model: `${providerId}/${modelId}`,
@@ -118,41 +172,54 @@ export function buildNativeConfigPayload(
     provider: {
       [providerId]: {
         npm,
-        options: {
-          baseURL: model.endpoint,
-          apiKey: `$${headerMapping.apiKeyEnvName}`,
-          headers: { ...headerMapping.configTokens },
-        },
-        models: { [modelId]: {} },
+        name: `PNP ${providerId}`,
+        options,
+        models: { [modelId]: { name: modelId } },
       },
     },
+    ...(nativePermissions === "ask" ? { permission: { edit: "ask", bash: "ask" } } : {}),
     ...(instructionAbsolutePaths.length > 0 ? { instructions: [...instructionAbsolutePaths] } : {}),
   };
   return { json, secretEnv: headerMapping.secretEnv };
 }
 
 export interface WrittenNativeConfig {
+  /** Redirect variables plus OPENCODE_CONFIG, which names primaryConfigPath. */
   redirectEnv: Readonly<Record<string, string>>;
   secretEnv: Readonly<Record<string, string>>;
-  /** Every path the config was mirrored to (see RedirectPlan.configRoots). */
+  /** The file OPENCODE_CONFIG points at. */
+  primaryConfigPath: string;
+  /** Every path the config was written to: primaryConfigPath first, then the fallback mirrors. */
   configPaths: readonly string[];
 }
-/** Ensures every redirected directory exists, then writes the private config to every candidate root. */
+/**
+ * Ensures every redirected directory exists, writes the private config to the deterministic OPENCODE_CONFIG
+ * path, and mirrors identical content into the fallback config homes.
+ */
 export async function writeNativeConfig(
   nativeDataDirectory: string, engineConfig: OpenCodeEngineConfig, model: ResolvedModel,
   instructionAbsolutePaths: readonly string[],
 ): Promise<WrittenNativeConfig> {
   const plan = buildRedirectPlan(nativeDataDirectory, engineConfig);
-  const payload = buildNativeConfigPayload(model, instructionAbsolutePaths, engineConfig.headerEnvironmentPrefix);
+  const payload = buildNativeConfigPayload(
+    model, instructionAbsolutePaths, engineConfig.headerEnvironmentPrefix, engineConfig.nativePermissions,
+  );
   for (const directory of Object.values(plan.env)) await mkdir(directory, { recursive: true });
-  const configPaths: string[] = [];
   const serialized = `${JSON.stringify(payload.json, null, 2)}\n`;
+  await mkdir(path.dirname(plan.configFile), { recursive: true });
+  await writeFile(plan.configFile, serialized, "utf8");
+  const configPaths: string[] = [plan.configFile];
   for (const root of plan.configRoots) {
     const directory = path.join(root, OPENCODE_ROOT_SEGMENT);
     await mkdir(directory, { recursive: true });
-    const file = path.join(directory, "opencode.json");
+    const file = path.join(directory, NATIVE_CONFIG_FILENAME);
     await writeFile(file, serialized, "utf8");
     configPaths.push(file);
   }
-  return { redirectEnv: plan.env, secretEnv: payload.secretEnv, configPaths };
+  return {
+    redirectEnv: { ...plan.env, [OPENCODE_CONFIG_ENVIRONMENT_VARIABLE]: plan.configFile },
+    secretEnv: payload.secretEnv,
+    primaryConfigPath: plan.configFile,
+    configPaths,
+  };
 }

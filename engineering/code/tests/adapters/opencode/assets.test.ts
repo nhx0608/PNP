@@ -12,10 +12,10 @@ function config(): OpenCodeEngineConfig {
   return parseOpenCodeEngineConfig({
     id: "opencode", channel: "acp", implementationEntry: "src/engines/opencode/pack.ts",
     engineVersion: "1.18.27", engineVersionLocked: true, protocolVersion: 1,
-    distribution: { kind: "npm-global", packageNameCandidates: ["opencode-ai"], windowsNativeSupport: "official-discouraged" },
+    distribution: { kind: "npm-global-native-binary", packageNameCandidates: ["opencode-ai"], windowsNativeSupport: "supported-not-recommended" },
     acp: { subcommandArgs: ["acp"] },
     executable: {
-      kindEnvironmentVariable: "PNP_OPENCODE_EXECUTABLE_KIND", defaultKind: "node-script",
+      kindEnvironmentVariable: "PNP_OPENCODE_EXECUTABLE_KIND", defaultKind: "exe",
       exe: { configuredPath: null, environmentVariable: "PNP_OPENCODE_EXE_PATH", wellKnownPaths: [] },
       node: { configuredPath: null, environmentVariable: "PNP_OPENCODE_NODE_PATH", wellKnownPaths: [], fallbackToHostRuntime: true },
       script: { configuredPath: null, environmentVariable: "PNP_OPENCODE_SCRIPT_PATH", wellKnownPaths: [] },
@@ -24,7 +24,7 @@ function config(): OpenCodeEngineConfig {
     model: { policy: "launch" },
     headerEnvironmentPrefix: "PNP_OPENCODE_HEADER_",
     timeouts: { requestMs: 30000, cancelGraceMs: 2000, cancelAckMs: 1000 },
-    capabilityEvidence: "unverified",
+    capabilityEvidence: "probed",
   });
 }
 function fakeSession(directory: string): Session {
