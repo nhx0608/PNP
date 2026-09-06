@@ -538,8 +538,8 @@
       "path": "code/src/runtime/instance-lock.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 6207,
-      "sha256": "5c2bbed19bff41da89dff5a1e3b03bcd0af3acc54b55afe8f9bf37f9a3d37e5c"
+      "bytes": 7434,
+      "sha256": "e790467451492a5ef9dbc6c1e3748283e7b5fc286ef0770d76059514aa2f44c4"
     },
     {
       "path": "code/src/runtime/jsonl.ts",
@@ -776,8 +776,8 @@
       "path": "code/tests/unit/runtime.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 15307,
-      "sha256": "41a6e6cc89210dc2755302a7ae7dbfe1026247c29509fbc8cf5c774c2eaa7acd"
+      "bytes": 17147,
+      "sha256": "a4124c5cfe4c2ebdf3f2ba7487c1afc3592d35bd084c781298f6db80ce59edcf"
     },
     {
       "path": "code/toolchain.json",

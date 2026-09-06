@@ -198,32 +198,62 @@ test("recovery quarantines an ownerless host record instead of fencing every ses
 
 test("Windows process-lifetime guard excludes a second owner and releases on process exit", {
   skip: process.platform !== "win32",
-}, async () => {
+}, async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), "pnp-guard-"));
   const moduleUrl = new URL("../../src/runtime/instance-lock.ts", import.meta.url).href;
-  const source = `import { acquireProcessLifetimeLock } from ${JSON.stringify(moduleUrl)};\ntry { await acquireProcessLifetimeLock(process.env.GUARD_DIR); console.log("granted"); if (process.env.HOLD === "1") setInterval(() => {}, 1000); } catch (error) { console.log(error.code ?? "failed"); process.exitCode=2; }`;
-  const launch = (hold: boolean) => spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", source], {
-    env: { ...process.env, GUARD_DIR: directory, HOLD: hold ? "1" : "0" }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
-  });
-  const output = (child: ReturnType<typeof launch>) => new Promise<string>((resolve) => {
-    let value = ""; child.stdout.on("data", (chunk: Buffer) => { value += chunk.toString(); if (value.includes("\n")) resolve(value.trim()); });
-    child.on("close", () => resolve(value.trim()));
-  });
-  const first = launch(true);
-  const firstClosed = new Promise<void>((resolve) => first.once("close", () => resolve()));
+  const source = `import { acquireProcessLifetimeLock } from ${JSON.stringify(moduleUrl)};\nconst t0 = Date.now();\ntry { await acquireProcessLifetimeLock(process.env.GUARD_DIR); console.log("granted " + (Date.now() - t0)); if (process.env.HOLD === "1") setInterval(() => {}, 1000); } catch (error) { console.log((error.code ?? "failed") + " " + (Date.now() - t0)); process.exitCode=2; }`;
+  const startedAt = Date.now();
+  const launch = (label: string, hold: boolean) => {
+    const child = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", source], {
+      env: { ...process.env, GUARD_DIR: directory, HOLD: hold ? "1" : "0" }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-4096); });
+    // Exit is the process lifetime. `close` also waits for pipes a grandchild may still hold, which is
+    // exactly the wait that kept this test open for hours on a CI runner; nothing here is unbounded.
+    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    return { child, label, exited, stderr: () => stderr.trim() };
+  };
+  type Launched = ReturnType<typeof launch>;
+  const firstLine = (launched: Launched): Promise<string> => bounded(new Promise<string>((resolve) => {
+    let value = "";
+    launched.child.stdout.on("data", (chunk: Buffer) => {
+      value += chunk.toString();
+      if (value.includes("\n")) resolve(value.trim().split("\n")[0]!);
+    });
+    launched.child.once("exit", () => resolve(value.trim()));
+  }), 60_000);
+  const report = (launched: Launched, line: string): void => {
+    const tail = launched.stderr() === "" ? "" : ` stderr=${JSON.stringify(launched.stderr().slice(-400))}`;
+    t.diagnostic(`${launched.label}: ${line} at t+${Date.now() - startedAt}ms${tail}`);
+  };
+  const first = launch("first", true);
   try {
-    assert.equal(await output(first), "granted");
-    const second = launch(false);
-    const secondClosed = new Promise<void>((resolve) => second.once("close", () => resolve()));
-    assert.equal(await output(second), "INSTANCE_LOCKED");
-    await secondClosed;
-    first.kill();
-    await firstClosed;
-    const third = launch(false);
-    const thirdClosed = new Promise<void>((resolve) => third.once("close", () => resolve()));
-    assert.equal(await output(third), "granted");
-    await thirdClosed;
-  } finally { first.kill(); await firstClosed; await rm(directory, { recursive: true, force: true }); }
+    const granted = await firstLine(first);
+    report(first, granted);
+    assert.match(granted, /^granted /, `first owner must be granted; stderr: ${first.stderr()}`);
+    // "granted" alone does not tell the guard from its file-lock fallback: only the guard, having duplicated
+    // the exclusive handles into the owner, writes ownership.json. The fallback reports why on stderr.
+    const ownership = JSON.parse(await readFile(path.join(directory, "ownership.json"), "utf8").catch(() => "null"));
+    assert.ok(ownership !== null && ownership.pid === first.child.pid,
+      `the process-lifetime guard must have granted the first owner, not the file-lock fallback; stderr: ${first.stderr()}`);
+    const second = launch("second", false);
+    const refused = await firstLine(second);
+    report(second, refused);
+    assert.match(refused, /^INSTANCE_LOCKED /, `a second owner must be refused; stderr: ${second.stderr()}`);
+    await bounded(second.exited, 60_000);
+    first.child.kill();
+    await bounded(first.exited, 60_000);
+    const third = launch("third", false);
+    const regranted = await firstLine(third);
+    report(third, regranted);
+    assert.match(regranted, /^granted /, `ownership must release with the owner process; stderr: ${third.stderr()}`);
+    await bounded(third.exited, 60_000);
+  } finally {
+    first.child.kill();
+    await bounded(first.exited, 10_000).catch(() => undefined);
+    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
 });
 
 test("a launch whose executable does not exist fails fast and records that nothing is running", {

@@ -75,15 +75,29 @@ export async function acquireProcessLifetimeLock(directory: string, timeoutMs = 
   });
   const result = deferred<{ ok?: boolean; code?: string; pid?: number; creationTime?: string }>();
   const decoder = new JsonlDecoder();
+  const startedAt = Date.now();
+  // What the helper said and how it ended: a guard that silently degrades to the file lock hides a
+  // weaker ownership guarantee from the operator, so the reason for the fallback is always reported.
+  let stderrTail = "";
+  let ending = "";
+  const failed = (code: string, detail: string): void => {
+    if (ending === "") ending = detail;
+    result.resolve({ ok: false, code });
+  };
   child.stdout.on("data", (chunk: Buffer) => {
     try { for (const frame of decoder.push(chunk)) result.resolve(JSON.parse(frame)); }
-    catch { result.resolve({ ok: false, code: "INSTANCE_GUARD_FAILED" }); }
+    catch { failed("INSTANCE_GUARD_FAILED", "helper output was not a JSON frame"); }
   });
-  child.stdout.on("end", () => { try { decoder.end(); } catch { result.resolve({ ok: false, code: "INSTANCE_GUARD_FAILED" }); } });
-  child.stdin.on("error", () => result.resolve({ ok: false, code: "INSTANCE_GUARD_FAILED" }));
-  child.stderr.resume();
-  child.on("error", () => result.resolve({ ok: false, code: "INSTANCE_GUARD_FAILED" }));
-  child.on("exit", () => result.resolve({ ok: false, code: "INSTANCE_GUARD_FAILED" }));
+  child.stdout.on("end", () => { try { decoder.end(); } catch { failed("INSTANCE_GUARD_FAILED", "helper output ended mid-frame"); } });
+  child.stdin.on("error", (error) => failed("INSTANCE_GUARD_FAILED", `helper stdin failed: ${error.message}`));
+  child.stderr.on("data", (chunk: Buffer) => { stderrTail = (stderrTail + chunk.toString()).slice(-2048); });
+  child.on("error", (error) => failed("INSTANCE_GUARD_FAILED", `helper could not be spawned: ${error.message}`));
+  child.on("exit", (code, signal) => failed("INSTANCE_GUARD_FAILED", `helper exited before answering (code=${code ?? "null"}, signal=${signal ?? "null"})`));
+  const diagnostics = (): string => {
+    const elapsed = `${Date.now() - startedAt}ms`;
+    const tail = stderrTail.trim() === "" ? "" : `; helper stderr: ${JSON.stringify(stderrTail.trim().slice(-512))}`;
+    return `${ending === "" ? `no answer within ${timeoutMs}ms` : ending} after ${elapsed}${tail}`;
+  };
   let granted = false;
   try {
     await new Promise<void>((resolve, reject) => child.stdin.write(
@@ -92,7 +106,7 @@ export async function acquireProcessLifetimeLock(directory: string, timeoutMs = 
     const grant = await bounded(result.promise, timeoutMs);
     if (grant.code === "INSTANCE_LOCKED") throw new PnpError("INSTANCE_LOCKED", "Data directory is already owned.", 503);
     if (grant.ok !== true || grant.pid !== process.pid || !/^\d+$/.test(grant.creationTime ?? "")) {
-      throw new PnpError("INSTANCE_GUARD_FAILED", "Instance ownership could not be established.", 503);
+      throw new PnpError("INSTANCE_GUARD_FAILED", `Instance ownership could not be established: ${diagnostics()}`, 503);
     }
     granted = true;
     const ownership = { version: 2, nonce: randomUUID(), mode: "gateway", pid: process.pid, creationTime: grant.creationTime };
@@ -106,9 +120,13 @@ export async function acquireProcessLifetimeLock(directory: string, timeoutMs = 
   } catch (error) {
     child.kill();
     if (error instanceof PnpError && error.code === "INSTANCE_LOCKED") throw error;
-    // A guard that never granted must not be a new single point of startup failure.
-    if (!granted) return fileLock();
+    // A guard that never granted must not be a new single point of startup failure. The degradation
+    // is real, though: the file lock does not release on process death, so it is never silent.
+    if (!granted) {
+      process.stderr.write(`[pnp] windows instance guard unavailable (${diagnostics()}); continuing with the file lock\n`);
+      return fileLock();
+    }
     if (error instanceof PnpError) throw error;
-    throw new PnpError("INSTANCE_GUARD_FAILED", "Instance ownership could not be established.", 503);
+    throw new PnpError("INSTANCE_GUARD_FAILED", `Instance ownership could not be established: ${diagnostics()}`, 503);
   }
 }
