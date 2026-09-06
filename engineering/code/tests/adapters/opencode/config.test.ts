@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { loadOpenCodeEngineConfig, parseOpenCodeEngineConfig } from "../../../src/engines/opencode/config.ts";
+import {
+  applyOpenCodeEnvironmentOverrides, loadOpenCodeEngineConfig, parseOpenCodeEngineConfig,
+} from "../../../src/engines/opencode/config.ts";
 
 function validConfig(): Record<string, unknown> {
   return {
@@ -87,8 +89,44 @@ test("nativePermissions is optional, defaults to engine-default, and rejects any
   }
 });
 
+// --- C. PNP_OPENCODE_NATIVE_PERMISSIONS ---------------------------------------------------------------------
+
+test("an unset or empty PNP_OPENCODE_NATIVE_PERMISSIONS leaves the file's value alone", () => {
+  const ask = parseOpenCodeEngineConfig({ ...validConfig(), nativePermissions: "ask" });
+  assert.equal(applyOpenCodeEnvironmentOverrides(ask, {}).nativePermissions, "ask");
+  assert.equal(applyOpenCodeEnvironmentOverrides(ask, { PNP_OPENCODE_NATIVE_PERMISSIONS: "" }).nativePermissions, "ask");
+  assert.equal(applyOpenCodeEnvironmentOverrides(ask, { PNP_OPENCODE_NATIVE_PERMISSIONS: undefined }).nativePermissions, "ask");
+  const fileDefault = parseOpenCodeEngineConfig(validConfig());
+  assert.equal(applyOpenCodeEnvironmentOverrides(fileDefault, {}).nativePermissions, "engine-default");
+});
+
+test("PNP_OPENCODE_NATIVE_PERMISSIONS overrides the file in both directions", () => {
+  const fileDefault = parseOpenCodeEngineConfig(validConfig());
+  assert.equal(applyOpenCodeEnvironmentOverrides(fileDefault, { PNP_OPENCODE_NATIVE_PERMISSIONS: "ask" }).nativePermissions, "ask");
+  const ask = parseOpenCodeEngineConfig({ ...validConfig(), nativePermissions: "ask" });
+  assert.equal(applyOpenCodeEnvironmentOverrides(ask, { PNP_OPENCODE_NATIVE_PERMISSIONS: "engine-default" }).nativePermissions, "engine-default");
+  // Only that one field moves; the rest of the operator's config is untouched.
+  const overridden = applyOpenCodeEnvironmentOverrides(fileDefault, { PNP_OPENCODE_NATIVE_PERMISSIONS: "ask" });
+  assert.deepEqual({ ...overridden, nativePermissions: "engine-default" }, fileDefault);
+});
+
+test("an unrecognised PNP_OPENCODE_NATIVE_PERMISSIONS fails the load instead of falling back", () => {
+  const fileDefault = parseOpenCodeEngineConfig(validConfig());
+  for (const bad of ["ASK", "allow", "deny", "true", "engine default", "0"]) {
+    assert.throws(() => applyOpenCodeEnvironmentOverrides(fileDefault, { PNP_OPENCODE_NATIVE_PERMISSIONS: bad }),
+      { code: "ENGINE_CONFIG_INVALID" }, `accepted ${bad}`);
+  }
+});
+
+test("loadOpenCodeEngineConfig applies the environment override to the shipped file", async () => {
+  assert.equal((await loadOpenCodeEngineConfig({ PNP_OPENCODE_NATIVE_PERMISSIONS: "ask" })).nativePermissions, "ask");
+  assert.equal((await loadOpenCodeEngineConfig({})).nativePermissions, "engine-default");
+  await assert.rejects(loadOpenCodeEngineConfig({ PNP_OPENCODE_NATIVE_PERMISSIONS: "yes" }), { code: "ENGINE_CONFIG_INVALID" });
+});
+
 test("the shipped config/engines/opencode.json matches the real OpenCode distribution", async () => {
-  const config = await loadOpenCodeEngineConfig();
+  // An explicit environment, so a variable set in the developer's shell cannot change what this asserts.
+  const config = await loadOpenCodeEngineConfig({});
   assert.equal(config.id, "opencode");
   assert.equal(config.channel, "acp");
   assert.deepEqual(config.acp.subcommandArgs, ["acp"], "opencode acp takes no further arguments");

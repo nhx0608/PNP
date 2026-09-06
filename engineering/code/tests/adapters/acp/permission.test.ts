@@ -6,7 +6,7 @@ import type { InteractionRequest, InteractionResponse } from "../../../src/contr
 import { openAcpChannel } from "../../../src/drivers/acp/channel.ts";
 import type { FakeAgent } from "../../kit/fake-host.ts";
 import { definition, harness, nativePayload, RecordingServices, runTurn, waitFor } from "./harness.ts";
-import { askPermission, baseScript, heldPrompt, permissionRequest, promptResponse } from "./script.ts";
+import { askPermission, baseScript, heldPrompt, NATIVE_SESSION, permissionRequest, promptResponse, update } from "./script.ts";
 
 interface Asked {
   outcome: RequestPermissionResponse;
@@ -18,11 +18,14 @@ interface Asked {
 async function askDuringTurn(options: {
   answer(request: InteractionRequest): Promise<InteractionResponse>;
   request?: RequestPermissionRequest;
+  /** Session updates the engine sends before it asks, e.g. the `tool_call` that announces the call. */
+  announce?(agent: FakeAgent): void;
 }): Promise<Asked> {
   let outcome: RequestPermissionResponse | undefined;
   const fixture = harness({
     handlers: baseScript({
       prompt: async (_params: unknown, agent: FakeAgent) => {
+        options.announce?.(agent);
         outcome = await askPermission(agent, options.request ?? permissionRequest());
         return promptResponse();
       },
@@ -170,6 +173,70 @@ test("the request payload carries what the approver needs to decide", async () =
     { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
     { optionId: "reject-once", name: "Reject", kind: "reject_once" },
   ]);
+});
+
+// --- the operation a policy can be written against ------------------------------------------------------------
+
+test("a request that carries only a file path is authorised as the tool that was announced", async () => {
+  const asked = await askDuringTurn({
+    answer: (): Promise<InteractionResponse> => Promise.resolve({ decision: "allow", source: "user" }),
+    // opencode 1.18.29 announces the call with its name, then asks with display fields only.
+    announce: (agent: FakeAgent): void => {
+      update(agent, {
+        sessionUpdate: "tool_call", toolCallId: "call-7", title: "Write a file", name: "write",
+        kind: "edit", status: "pending", rawInput: {},
+      });
+      update(agent, {
+        sessionUpdate: "tool_call_update", toolCallId: "call-7", status: "in_progress",
+        title: "C:\\workspace\\out.txt", rawInput: { filePath: "C:\\workspace\\out.txt", content: "hi" },
+      });
+    },
+    request: {
+      sessionId: NATIVE_SESSION,
+      // No `name`, and `title` is the target path: keying on the title would make every file its own
+      // operation, so `policy.operations.write` could never match.
+      toolCall: {
+        toolCallId: "call-7", title: "C:\\workspace\\out.txt", kind: "edit",
+        rawInput: { filepath: "C:\\workspace\\out.txt", diff: "+hi" },
+        content: [{ type: "diff", path: "C:\\workspace\\out.txt", oldText: null, newText: "hi" }],
+      },
+      options: [
+        { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+        { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+      ],
+    },
+  });
+  assert.equal(asked.interactions[0]?.operation, "write");
+  // The payload still carries everything the approver sees, unchanged.
+  const payload = asked.interactions[0]?.payload;
+  assert.ok(payload !== null && typeof payload === "object" && !Array.isArray(payload));
+  assert.equal(payload["title"], "C:\\workspace\\out.txt");
+  assert.equal(payload["name"], null);
+  assert.equal(payload["kind"], "edit");
+});
+
+test("without an announced name the ACP kind is preferred over the free-form title", async () => {
+  const asked = await askDuringTurn({
+    answer: (): Promise<InteractionResponse> => Promise.resolve({ decision: "allow", source: "user" }),
+    request: {
+      sessionId: NATIVE_SESSION,
+      toolCall: { toolCallId: "call-8", title: "C:\\workspace\\out.txt", kind: "edit" },
+      options: [
+        { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+        { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+      ],
+    },
+  });
+  // A closed ACP vocabulary is at least writable in a policy; a per-file title is not.
+  assert.equal(asked.interactions[0]?.operation, "edit");
+});
+
+test("the request's own name still wins when the mapper never saw the call", async () => {
+  const asked = await askDuringTurn({
+    answer: (): Promise<InteractionResponse> => Promise.resolve({ decision: "allow", source: "user" }),
+    request: permissionRequest({ toolCallId: "call-never-announced", name: "bash" }),
+  });
+  assert.equal(asked.interactions[0]?.operation, "bash");
 });
 
 test("exercising a permission raises its evidence past a bare declaration", async () => {

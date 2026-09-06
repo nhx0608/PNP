@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { AGENT_METHODS } from "@agentclientprotocol/sdk";
 import type { FakeAgent } from "../../kit/fake-host.ts";
 import { openAcpChannel } from "../../../src/drivers/acp/channel.ts";
+import { SessionUpdateMapper } from "../../../src/drivers/acp/updates.ts";
 import { definition, harness, nativePayload, RecordingServices, runTurn } from "./harness.ts";
 import { baseScript, NATIVE_SESSION, promptResponse, update } from "./script.ts";
 
@@ -516,4 +517,35 @@ test("a sink failure fails the turn rather than being swallowed", async () => {
   } finally {
     await channel.close();
   }
+});
+
+// --- the tool name a later request can be keyed on ------------------------------------------------------------
+
+test("nameOf reports the name locked when the call was announced, not what a later update renamed it to", () => {
+  const mapper = new SessionUpdateMapper();
+  mapper.map({
+    sessionUpdate: "tool_call", toolCallId: "call-1", title: "Write a file", name: "write",
+    kind: "edit", status: "pending", rawInput: {},
+  });
+  mapper.map({
+    sessionUpdate: "tool_call_update", toolCallId: "call-1", status: "in_progress",
+    title: "C:\\workspace\\out.txt", rawInput: { filePath: "C:\\workspace\\out.txt", content: "hi" },
+  });
+  // This is what a permission request arriving after the rename has to be authorised as.
+  assert.equal(mapper.nameOf("call-1"), "write");
+});
+
+test("nameOf knows nothing about a call the engine never announced", () => {
+  const mapper = new SessionUpdateMapper();
+  assert.equal(mapper.nameOf("call-unknown"), undefined);
+  // An unmatched update becomes an observation and must not invent a call the core never saw begin.
+  mapper.map({ sessionUpdate: "tool_call_update", toolCallId: "call-unknown", status: "in_progress", title: "late" });
+  assert.equal(mapper.nameOf("call-unknown"), undefined);
+});
+
+test("nameOf falls back to what the announcement did carry", () => {
+  const mapper = new SessionUpdateMapper();
+  mapper.map({ sessionUpdate: "tool_call", toolCallId: "call-2", title: "Edit out.txt", kind: "edit" });
+  // Same resolution order the recorded tool call uses: an engine that announces no name is taken at its word.
+  assert.equal(mapper.nameOf("call-2"), "Edit out.txt");
 });

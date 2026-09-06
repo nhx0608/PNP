@@ -21,6 +21,13 @@ export interface OpenCodeNodeSource extends OpenCodeExecutableSource {
  * actually reaches the gateway and its policy layer decides allow/ask/deny.
  */
 export type OpenCodeNativePermissions = "engine-default" | "ask";
+/**
+ * Deployment override for `nativePermissions`, read when the engine config is loaded. Turning engine-side
+ * prompting on is a deployment decision (a smoke run that has to exercise the approval loop, an operator who
+ * wants every edit approved) and it must not require editing a file that is checked in. Unset or empty means
+ * "use the file"; anything but the two documented values is a configuration error, never a silent default.
+ */
+export const NATIVE_PERMISSIONS_ENVIRONMENT_VARIABLE = "PNP_OPENCODE_NATIVE_PERMISSIONS";
 export interface OpenCodeEngineConfig {
   id: "opencode";
   channel: "acp";
@@ -157,10 +164,32 @@ function requireTimeout(value: unknown, field: string): number {
   return value as number;
 }
 
+/**
+ * Applies the `PNP_OPENCODE_NATIVE_PERMISSIONS` override to a parsed config. Pure, so the precedence is
+ * testable without a filesystem: an unset or empty variable leaves the file's value alone, a valid one replaces
+ * it, and an unrecognised one fails the load instead of being rounded down to "engine-default" — an operator
+ * who asked for prompting must never get an engine that silently allows everything.
+ */
+export function applyOpenCodeEnvironmentOverrides(config: OpenCodeEngineConfig,
+  environment: Readonly<Record<string, string | undefined>>): OpenCodeEngineConfig {
+  const requested = environment[NATIVE_PERMISSIONS_ENVIRONMENT_VARIABLE];
+  if (requested === undefined || requested === "") return config;
+  if (requested !== "engine-default" && requested !== "ask") {
+    throw new PnpError("ENGINE_CONFIG_INVALID",
+      `${NATIVE_PERMISSIONS_ENVIRONMENT_VARIABLE} must be "engine-default" or "ask" when set.`, 500);
+  }
+  if (requested === config.nativePermissions) return config;
+  return { ...config, nativePermissions: requested };
+}
+
 const CONFIG_URL = new URL("../../../config/engines/opencode.json", import.meta.url);
 
-/** Loads and validates the operator-authored engine config. Never caches across calls: config is cheap to re-read and tests must see edits. */
-export async function loadOpenCodeEngineConfig(): Promise<OpenCodeEngineConfig> {
+/**
+ * Loads and validates the operator-authored engine config, then applies the environment overrides. Never caches
+ * across calls: config is cheap to re-read, tests must see edits, and the environment can change between runs.
+ */
+export async function loadOpenCodeEngineConfig(
+  environment: Readonly<Record<string, string | undefined>> = process.env): Promise<OpenCodeEngineConfig> {
   let text: string;
   try {
     text = await readFile(fileURLToPath(CONFIG_URL), "utf8");
@@ -173,5 +202,5 @@ export async function loadOpenCodeEngineConfig(): Promise<OpenCodeEngineConfig> 
   } catch (error) {
     throw new PnpError("ENGINE_CONFIG_INVALID", `config/engines/opencode.json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`, 500);
   }
-  return parseOpenCodeEngineConfig(raw);
+  return applyOpenCodeEnvironmentOverrides(parseOpenCodeEngineConfig(raw), environment);
 }

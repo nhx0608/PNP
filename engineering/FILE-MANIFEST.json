@@ -41,8 +41,8 @@
       "path": "code/.env.example",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 2017,
-      "sha256": "e0599295b274e781fe6d0be8d773bcddf59c17135e2770a2fc9555526a2946ed"
+      "bytes": 2792,
+      "sha256": "143f18fd153f8e09bdc832e72c27988fa5bce3d9555a75d900f42b273c4c99e0"
     },
     {
       "path": "code/.gitignore",
@@ -76,8 +76,8 @@
       "path": "code/config/engines/opencode.json",
       "owner": "A",
       "category": "入口与配置",
-      "bytes": 7017,
-      "sha256": "06ae79e1b9b07a4f2adbd7f05bd0ce890297f35bd06c5ff98d0c60e70cd90c22"
+      "bytes": 7299,
+      "sha256": "3347144e7f61692183cccf3ebdd6fdc0bef6a939bb115ee6dd6ec88f86c63c40"
     },
     {
       "path": "code/config/engines/pi.json",
@@ -139,8 +139,8 @@
       "path": "code/README.md",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 3104,
-      "sha256": "dfabed21a595e8ccf6564733be49a735fe9322a626444b3abb18add87bdd8ed4"
+      "bytes": 3777,
+      "sha256": "9e0768be056aec67cb60037cff7437ad8c909c1220191d32caa845f8307f87af"
     },
     {
       "path": "code/scripts/check-boundaries.mjs",
@@ -160,8 +160,8 @@
       "path": "code/scripts/e2e/ci-smoke.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 19478,
-      "sha256": "e2ca71bb1e1c3a1312a4d8e7d16a094c44b7f2578d04778fa30167cd88f00280"
+      "bytes": 20398,
+      "sha256": "190c4bfcae2d4fd27bb22768c581a89b7b51a6bfc1d4d8984fa1addc80189889"
     },
     {
       "path": "code/scripts/e2e/mock-model-server.mjs",
@@ -174,8 +174,8 @@
       "path": "code/scripts/e2e/run-e2e.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 19886,
-      "sha256": "88fed26295b38c6364f1495a7df07d3fad6398d7c0483ea187c42613435d50a0"
+      "bytes": 29904,
+      "sha256": "049d75800b04aab17d4536b3dda152c921a23482160bdb1be3e6f529fc78f60d"
     },
     {
       "path": "code/scripts/export-diagnostics.mjs",
@@ -342,8 +342,8 @@
       "path": "code/src/drivers/acp/channel.ts",
       "owner": "A",
       "category": "实现源码",
-      "bytes": 32816,
-      "sha256": "6c8747966ac8878479d36339717f165217b4f7c6315bfa20d073c86fb3e4d08c"
+      "bytes": 34020,
+      "sha256": "599670e6820f29cbedcdde8abf5c156a08503ba529969719ba2a6b61b8cd00a5"
     },
     {
       "path": "code/src/drivers/acp/json.ts",
@@ -363,8 +363,8 @@
       "path": "code/src/drivers/acp/updates.ts",
       "owner": "A",
       "category": "实现源码",
-      "bytes": 12051,
-      "sha256": "a39dbb2e9f0c06313ac140c3a7b6acb54d44e8ebef8149fb033286d059946860"
+      "bytes": 12579,
+      "sha256": "b4ef81d2b619aa2662a64929b8dd1185368bf6a5dbc00545834d4ae7e40beea0"
     },
     {
       "path": "code/src/drivers/pi-rpc/AGENTS.md",
@@ -412,8 +412,8 @@
       "path": "code/src/engines/opencode/config.ts",
       "owner": "A",
       "category": "实现源码",
-      "bytes": 8966,
-      "sha256": "48efb5c94e75eeb879e7e5f189be7d0a2c31591cdd2fa106102bf6fdf9b0c955"
+      "bytes": 10773,
+      "sha256": "f9e4b447902b0619929cb8a0f8743ccfbf10c43cd652d082c00f39653253f961"
     },
     {
       "path": "code/src/engines/opencode/executable.ts",
@@ -657,8 +657,8 @@
       "path": "code/tests/adapters/acp/permission.test.ts",
       "owner": "A",
       "category": "测试代码",
-      "bytes": 11329,
-      "sha256": "6a8346d22a76c2be3256c65c5a169746992db33d483d3d34c93f11aeda4c9383"
+      "bytes": 14649,
+      "sha256": "58b54dfd9f15dad51c5152d19654be70e19cc6b80067ee18b46eafab6bb16cb1"
     },
     {
       "path": "code/tests/adapters/acp/projection.test.ts",
@@ -678,8 +678,8 @@
       "path": "code/tests/adapters/acp/updates.test.ts",
       "owner": "A",
       "category": "测试代码",
-      "bytes": 27446,
-      "sha256": "93e4edb29b8758676b9ec7612b039c2ea35448f8103469d0ea077ad1b801c4df"
+      "bytes": 29163,
+      "sha256": "f0da927d1826863958065bc59f687530090fe58373f34c7e375a559c46add243"
     },
     {
       "path": "code/tests/adapters/opencode/assets.test.ts",
@@ -692,8 +692,8 @@
       "path": "code/tests/adapters/opencode/config.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 5607,
-      "sha256": "38f3342d1f0037f82fa60e5f18313332d806bfeb393f6a3d4fa4343561247263"
+      "bytes": 8239,
+      "sha256": "e5abc76a2b8f855896bdfca699d4f592b9b913ff15ce2fb2c86dc4747c574c6c"
     },
     {
       "path": "code/tests/adapters/opencode/executable.test.ts",
@@ -804,8 +804,8 @@
       "path": "docs/engines/opencode.md",
       "owner": "A",
       "category": "入口与配置",
-      "bytes": 29277,
-      "sha256": "07a82c3ec97b22a0dd5b0b54240e1e5fd33aeb543b6430aee99823a5440ab4fe"
+      "bytes": 34990,
+      "sha256": "7c824b3604da32a0238274957ebfc3a7446d240b1e2c71ade40c06e9c16d3a31"
     },
     {
       "path": "docs/engines/pi.md",

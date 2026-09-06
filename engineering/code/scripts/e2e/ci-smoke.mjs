@@ -227,7 +227,12 @@ try {
       headerEnvironment: { Authorization: AUTH_VARIABLE },
     }],
     tools: [],
-    policy: { default: "allow", operations: {} },
+    // The evaluator answers permissions it finds on GET /permission, so one operation has to actually
+    // reach that endpoint. Only `write` is put on "ask": the driver authorises a permission request under
+    // the tool name the engine announced the call with, and an "allow" policy would be decided inside the
+    // gateway without ever publishing a pending request. The mock engine raises no permission at all, so
+    // its leg keeps an empty operations map rather than waiting for something that never comes.
+    policy: { default: "allow", operations: engine === "opencode" ? { write: "ask" } : {} },
   };
   await writeFile(profilePath, `${JSON.stringify(profile, null, 2)}\n`, "utf8");
 
@@ -259,16 +264,21 @@ try {
     environment.PNP_MODE = "development";
     environment.PNP_INTEGRATION = "mock";
     delete environment.PNP_CONFIGURED_PROFILE;
+    delete environment.PNP_OPENCODE_NATIVE_PERMISSIONS;
   } else {
     environment.PNP_INTEGRATION = "configured";
     environment.PNP_CONFIGURED_PROFILE = profilePath;
+    // OpenCode allows every operation unless its private config asks; without this the engine never
+    // raises ACP session/request_permission and the approval loop below would have nothing to drive.
+    environment.PNP_OPENCODE_NATIVE_PERMISSIONS = "ask";
     const executable = resolveOpenCodeExecutable();
     summary.opencode_executable = executable;
     log(`opencode executable: ${executable.path ?? "unresolved"} (${executable.source}, exists=${executable.exists})`);
     if (executable.path !== null) environment.PNP_OPENCODE_EXE_PATH = executable.path;
   }
   summary.engine_environment = Object.fromEntries(
-    ["AGENT_ENGINE", "PNP_MODE", "PNP_INTEGRATION", "PNP_CONFIGURED_PROFILE", "PNP_OPENCODE_EXE_PATH", "PNP_DATA_DIR"]
+    ["AGENT_ENGINE", "PNP_MODE", "PNP_INTEGRATION", "PNP_CONFIGURED_PROFILE", "PNP_OPENCODE_EXE_PATH",
+      "PNP_OPENCODE_NATIVE_PERMISSIONS", "PNP_DATA_DIR"]
       .filter((key) => environment[key] !== undefined).map((key) => [key, environment[key]]),
   );
 

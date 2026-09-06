@@ -104,6 +104,23 @@ async function settleEvidence(attempt: Promise<StopEvidence>): Promise<StopEvide
   try { return await attempt; }
   catch { return { quiescent: false, method: "process-tree" }; }
 }
+/**
+ * The operation a permission request is authorised as. A policy names operations by tool name (an "ask" entry
+ * for `write`), so this has to be the name of the tool and not something the engine rewrites per call.
+ *
+ * ACP lets a permission request carry only `toolCallId` plus display fields, and opencode 1.18.29 does exactly
+ * that for an edit: no `name`, `kind: "edit"`, and `title` set to the target file path (see
+ * docs/engines/opencode.md section 4.2). Keying on the title would make every file its own operation, which no
+ * configured policy could ever match, so the name the mapper locked when the call was announced comes first;
+ * `kind` — a small closed ACP vocabulary — comes before the free-form title. The call id is the last resort:
+ * unique per call, so nothing can match it either, but it never claims an operation that was not asked for.
+ */
+function permissionOperation(mappedName: string | undefined, call: RequestPermissionRequest["toolCall"]): string {
+  for (const candidate of [mappedName, call.name, call.kind, call.title, call.toolCallId]) {
+    if (typeof candidate === "string" && candidate !== "") return candidate;
+  }
+  return "tool";
+}
 export function mcpServersFor(tools: readonly ToolBinding[]): McpServer[] {
   return tools.filter((tool) => tool.transport === "mcp-stdio").map((tool) => ({
     name: tool.id, command: tool.command, args: [...tool.args],
@@ -264,7 +281,7 @@ export class AcpSessionChannel implements EngineSessionChannel {
     try {
       response = await turn.services.interact({
         kind: "permission",
-        operation: call.name ?? call.title ?? call.toolCallId,
+        operation: permissionOperation(this.mapper.nameOf(call.toolCallId), call),
         payload: toJson({
           toolCallId: call.toolCallId, title: call.title ?? null, name: call.name ?? null, kind: call.kind ?? null,
           locations: call.locations ?? null, rawInput: call.rawInput ?? null,

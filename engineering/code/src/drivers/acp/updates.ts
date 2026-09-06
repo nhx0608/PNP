@@ -172,6 +172,17 @@ export class SessionUpdateMapper {
     return { type: "usage", inputTokens: input, outputTokens: output, source: "engine" };
   }
 
+  /**
+   * The tool name locked when the call was announced, or undefined for a call this mapper never saw.
+   *
+   * A permission request identifies its call by id and may carry nothing else the policy layer can key on:
+   * opencode's `session/request_permission` sends no `name` and puts the target file path in `title`. The
+   * announcing `tool_call` did carry the name, so it is read from here instead of from the request.
+   */
+  nameOf(callId: string): string | undefined {
+    return this.tools.get(callId)?.name;
+  }
+
   /** Every call the engine has not finished, including one still held for its arguments. */
   openCallIds(): string[] {
     return [...this.tools.entries()].filter(([, tool]) => tool.open).map(([callId]) => callId);

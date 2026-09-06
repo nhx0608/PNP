@@ -21,6 +21,8 @@ const { values } = parseArgs({
     "abort-busy-timeout-ms": { type: "string" },
     "require-default-model": { type: "boolean" },
     "write-file-name": { type: "string" },
+    "reject-file-name": { type: "string" },
+    "permission-timeout-ms": { type: "string" },
   },
 });
 const base = (values.base ?? "http://127.0.0.1:6217").replace(/\/$/, "");
@@ -36,6 +38,10 @@ const abortAttempts = Math.max(1, Number(values["abort-attempts"] ?? (expectTool
 const abortBusyTimeoutMs = Number(values["abort-busy-timeout-ms"] ?? 2_000);
 const requireDefaultModel = values["require-default-model"] === true;
 const writeFileName = values["write-file-name"] ?? "e2e-output.txt";
+const rejectFileName = values["reject-file-name"] ?? "e2e-rejected.txt";
+// The gateway denies an unanswered interaction after its own timeout (45 s by default), so a budget
+// longer than that would only be spent waiting for a request that has already been taken away.
+const permissionTimeoutMs = Number(values["permission-timeout-ms"] ?? 60_000);
 const writeFileBody = "hello-from-e2e";
 
 await mkdir(workspaceInput, { recursive: true });
@@ -169,6 +175,93 @@ function summarise(messages) {
   }));
 }
 
+// ---------------------------------------------------------------- the evaluator's permission loop
+/**
+ * A request whose settlement can be read without awaiting it. `prompt_async` only answers when the run
+ * ends, and a run blocked on a permission cannot end until that permission is answered: awaiting the
+ * prompt first would deadlock the very loop this exercises.
+ */
+function inFlight(promise) {
+  const state = { outcome: undefined };
+  const tracked = promise.then((value) => { state.outcome = value; return value; });
+  return { promise: tracked, outcome: () => state.outcome };
+}
+function promptAsync(sessionId, text) {
+  return inFlight(call("POST", `/session/${sessionId}/prompt_async`, { body: promptBody(text), timeoutMs: promptTimeoutMs })
+    .then((response) => ({ status: response.status, body: response.json ?? response.text.slice(0, 200) }))
+    .catch((error) => ({ status: null, error: String(error) })));
+}
+async function listPermissions() {
+  const response = await call("GET", "/permission", { timeoutMs: 15_000 });
+  assert(response.status === 200 && Array.isArray(response.json),
+    "GET /permission must return 200 with an array", { status: response.status, body: response.text.slice(0, 200) });
+  return response.json;
+}
+/** Everything an approver would decide on, small enough to keep in the report. */
+function permissionEvidence(entry) {
+  const content = Array.isArray(entry.content) ? entry.content : [];
+  const diffs = content.filter((part) => part !== null && typeof part === "object" && part.type === "diff");
+  return {
+    id: entry.id ?? null,
+    session_id: entry.sessionID ?? null,
+    permission: entry.permission ?? null,
+    title: entry.title ?? null,
+    name: entry.name ?? null,
+    kind: entry.kind ?? null,
+    content_types: content.map((part) => part?.type ?? null),
+    diff_paths: diffs.map((part) => part.path ?? null),
+    diff_new_text: diffs.map((part) => String(part.newText ?? "").slice(0, 80)),
+    locations: Array.isArray(entry.locations) ? entry.locations.map((location) => location?.path ?? null) : null,
+    raw_input_keys: entry.rawInput !== null && typeof entry.rawInput === "object" ? Object.keys(entry.rawInput) : null,
+    option_kinds: Array.isArray(entry.options) ? entry.options.map((option) => option?.kind ?? null) : null,
+  };
+}
+/** Polls GET /permission exactly as the evaluator does, until this session has a pending request. */
+async function waitForPermission(sessionId, budgetMs, outcome) {
+  const startedAt = Date.now();
+  let polls = 0;
+  for (;;) {
+    polls += 1;
+    const entries = await listPermissions();
+    const entry = entries.find((candidate) => candidate.sessionID === sessionId);
+    if (entry !== undefined) return { entry, polls, waited_ms: Date.now() - startedAt };
+    // A run that already finished will never ask; report that instead of spending the whole budget.
+    assert(outcome === undefined || outcome() === undefined,
+      "the run ended without ever asking for permission", { polls, prompt: outcome?.() });
+    assert(Date.now() - startedAt < budgetMs, "no permission request appeared for this session",
+      { polls, waited_ms: Date.now() - startedAt, pending: entries.length });
+    await sleep(250);
+  }
+}
+async function replyPermission(id, reply) {
+  const response = await call("POST", `/permission/${id}/reply`, { body: { reply }, timeoutMs: 30_000 });
+  return { reply, status: response.status, body: response.json ?? response.text.slice(0, 200) };
+}
+/**
+ * Waits for the run to end, answering every further permission it raises the same way — an unattended
+ * evaluator answers what it finds rather than assuming how many requests an engine makes.
+ */
+async function settleAnswering(prompt, sessionId, reply, answered, limit = 6) {
+  while (prompt.outcome() === undefined && answered.length < limit) {
+    for (const entry of await listPermissions()) {
+      if (entry.sessionID !== sessionId) continue;
+      answered.push({ ...permissionEvidence(entry), ...(await replyPermission(entry.id, reply)) });
+    }
+    if (prompt.outcome() !== undefined) break;
+    await sleep(250);
+  }
+  return prompt.promise;
+}
+/** Reports a file without pretending an unreadable one is an absent one. */
+async function describeFile(target) {
+  try {
+    const content = await readFile(target, "utf8");
+    return { exists: true, bytes: content.length, head: content.slice(0, 160) };
+  } catch (error) {
+    return { exists: false, error_code: String(error?.code ?? error) };
+  }
+}
+
 /** Case 1 assertions, shared by the first and the second session. */
 async function helloCase(label, sessionId, { probeDefaultModel }) {
   let defaultModelStatus = null;
@@ -252,21 +345,51 @@ if (currentSessionId !== null) {
   await helloCase("case1", currentSessionId, { probeDefaultModel: true });
 
   const writeTarget = path.join(workspace, writeFileName);
+  const rejectTarget = path.join(workspace, rejectFileName);
   await step("case2/write-file", async (evidence) => {
     if (!expectTools) { evidence.reason = "--expect-tools is off; this engine produces no tool trace."; return "skip"; }
     evidence.target = writeTarget;
-    const response = await call("POST", `/session/${currentSessionId}/prompt_async`, {
-      body: promptBody(`E2E_WRITE_FILE "${writeTarget}" ${writeFileBody}`),
-      timeoutMs: promptTimeoutMs,
-    });
-    evidence.status = response.status;
-    evidence.body = response.json ?? response.text.slice(0, 200);
-    assert(response.status === 204, "prompt_async must return 204", { status: response.status, body: evidence.body });
+    // 1. Send and do NOT await: this is the evaluator's own shape, and the run cannot finish before the
+    //    permission it raises has been answered.
+    const prompt = promptAsync(currentSessionId, `E2E_WRITE_FILE "${writeTarget}" ${writeFileBody}`);
+    // 2. Find the request the same way the evaluator does.
+    const asked = await waitForPermission(currentSessionId, permissionTimeoutMs, prompt.outcome);
+    evidence.permission = { ...permissionEvidence(asked.entry), polls: asked.polls, waited_ms: asked.waited_ms };
+    assert(typeof asked.entry.id === "string" && asked.entry.id !== "",
+      "a pending permission must carry the id the reply is addressed to", evidence.permission);
+    assert(asked.entry.sessionID === currentSessionId,
+      "the pending permission must name the session it belongs to", evidence.permission);
+    // The operation is the key a policy is written against. A per-file title here (which is all the ACP
+    // request carries for an opencode edit) would match no configured operation at all.
+    assert(asked.entry.permission === "write",
+      "the permission must be keyed on the tool name, not on the file being written", evidence.permission);
+    const named = [...evidence.permission.diff_paths, ...(evidence.permission.locations ?? []), evidence.permission.title];
+    evidence.permission.names_target = named.some((value) => typeof value === "string" && value.includes(writeFileName));
+    assert(evidence.permission.names_target,
+      "the payload must tell the approver which file is being written", evidence.permission);
+    // 3. Answer once, and prove a repeated answer cannot pass for a second approval.
+    const once = await replyPermission(asked.entry.id, "once");
+    evidence.reply = once;
+    assert(once.status === 200, "POST /permission/{id}/reply must return 200", once);
+    assert(once.body?.ok === true, "the reply must answer {ok:true}", once);
+    const repeated = await replyPermission(asked.entry.id, "once");
+    evidence.repeated_reply = repeated;
+    assert([404, 409].includes(repeated.status),
+      "replying twice to the same permission must not silently succeed", repeated);
+    // 4. Only now can the run end.
+    evidence.further_permissions = [];
+    evidence.prompt = await settleAnswering(prompt, currentSessionId, "once", evidence.further_permissions);
+    assert(evidence.prompt.status === 204, "prompt_async must settle with 204", evidence.prompt);
     const messages = await messagesOf(currentSessionId);
     evidence.messages = summarise(messages);
     const toolCallMessage = messages.find((message) => message.role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0);
     assert(toolCallMessage !== undefined, "the trace must contain an assistant message carrying tool_calls");
     evidence.tool_calls = toolCallMessage.tool_calls.map((call) => call.name);
+    evidence.tool_call_finish = toolCallMessage.info?.finish ?? null;
+    assert(evidence.tool_call_finish === "tool-calls",
+      "the tool-calling assistant message must finish with tool-calls", { info: toolCallMessage.info });
+    // The same name the permission was keyed on: both come from the call the engine announced.
+    assert(evidence.tool_calls.includes("write"), "the recorded tool call must be write", evidence.tool_calls);
     const toolResult = messages.find((message) => message.role === "tool");
     assert(toolResult !== undefined, "the trace must contain a tool result message");
     evidence.tool_result_name = toolResult.tool_name ?? null;
@@ -276,6 +399,35 @@ if (currentSessionId !== null) {
     evidence.file_bytes = content.length;
     evidence.file_head = content.slice(0, 160);
     assert(content.includes(writeFileBody), `${writeFileName} must contain ${writeFileBody}`, { head: evidence.file_head });
+  });
+
+  await step("case2b/permission-rejected", async (evidence) => {
+    if (!expectTools) { evidence.reason = "--expect-tools is off; this engine raises no permission."; return "skip"; }
+    evidence.target = rejectTarget;
+    const prompt = promptAsync(currentSessionId, `E2E_WRITE_FILE "${rejectTarget}" ${writeFileBody}`);
+    const asked = await waitForPermission(currentSessionId, permissionTimeoutMs, prompt.outcome);
+    evidence.permission = { ...permissionEvidence(asked.entry), polls: asked.polls, waited_ms: asked.waited_ms };
+    assert(asked.entry.permission === "write",
+      "the second write must be keyed on the same operation", evidence.permission);
+    const rejected = await replyPermission(asked.entry.id, "reject");
+    evidence.reply = rejected;
+    assert(rejected.status === 200 && rejected.body?.ok === true, "a rejection must be accepted", rejected);
+    // A refused tool is not a gateway failure. Whatever the run then reports is recorded as observed;
+    // only the two things that must hold either way are asserted: nothing was written, and the session
+    // is usable again.
+    evidence.further_permissions = [];
+    evidence.prompt = await settleAnswering(prompt, currentSessionId, "reject", evidence.further_permissions);
+    assert(evidence.prompt.status !== null, "the refused run must settle rather than hang", evidence.prompt);
+    const messages = await messagesOf(currentSessionId);
+    evidence.messages = summarise(messages);
+    evidence.final_finish = finalAssistant(messages)?.info?.finish ?? null;
+    evidence.file = await describeFile(rejectTarget);
+    assert(evidence.file.exists === false, "a rejected write must not appear on disk", evidence.file);
+    assert(evidence.file.error_code === "ENOENT", "the target must be absent, not merely unreadable", evidence.file);
+    const status = await call("GET", "/session/status");
+    evidence.session_status = status.json?.[currentSessionId] ?? null;
+    assert(status.json?.[currentSessionId]?.type === "idle",
+      "the session must return to idle after a refused tool", evidence.session_status);
   });
 
   await step("case3/abort", async (evidence) => {
@@ -330,6 +482,10 @@ if (currentSessionId !== null) {
     evidence.permission = { status: permission.status, count: Array.isArray(permission.json) ? permission.json.length : null };
     assert(question.status === 200 && Array.isArray(question.json), "GET /question must return an array", evidence.question);
     assert(permission.status === 200 && Array.isArray(permission.json), "GET /permission must return an array", evidence.permission);
+    // Every request raised above was answered, and no run is in flight: a leftover entry here would be a
+    // request nobody can ever settle.
+    evidence.pending = permission.json;
+    assert(permission.json.length === 0, "no permission request may be left pending", evidence.pending);
   });
 
   await step("session-lifecycle", async (evidence) => {
@@ -364,7 +520,9 @@ await step("event-sequence", async (evidence) => {
   evidence.event_types = seen;
   evidence.event_count = events.length;
   evidence.stream_error = eventStreamError;
-  const required = ["server.connected", "session.status", "session.idle", "message.part.updated"];
+  // The permission pair is required exactly where a permission was driven: the mock engine raises none.
+  const required = ["server.connected", "session.status", "session.idle", "message.part.updated",
+    ...(expectTools ? ["permission.asked", "permission.resolved"] : [])];
   const missing = required.filter((type) => !seen.includes(type));
   evidence.missing = missing;
   assert(missing.length === 0, "the SSE stream must carry the baseline event types", { seen, missing });

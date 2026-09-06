@@ -56,7 +56,7 @@
     "modeNotes": "exe is the shipped default because it is the only mode that matches the real distribution. node-script is retained as an explicit opt-in (PNP_OPENCODE_EXECUTABLE_KIND=node-script plus PNP_OPENCODE_SCRIPT_PATH) for a repackaged or future JS-entry build; it has no well-known script paths because opencode-ai ships no script entry to point at. npm's global install also writes an opencode.cmd shim, which the shared ProcessHost rejects (shell:false, and on win32 the executable must end in .exe); the shim is never a launch target in either mode."
   },
   "nativePermissions": "engine-default",
-  "nativePermissionsNotes": "OpenCode permits every operation by default. \"ask\" writes \"permission\": {\"edit\": \"ask\", \"bash\": \"ask\"} into the private config so the engine raises ACP session/request_permission and the gateway's policy layer gets to decide allow/ask/deny. \"engine-default\" leaves the block out entirely and the engine never asks.",
+  "nativePermissionsNotes": "OpenCode permits every operation by default. \"ask\" writes \"permission\": {\"edit\": \"ask\", \"bash\": \"ask\"} into the private config so the engine raises ACP session/request_permission and the gateway's policy layer gets to decide allow/ask/deny. \"engine-default\" leaves the block out entirely and the engine never asks. PNP_OPENCODE_NATIVE_PERMISSIONS overrides this field at load time (same two values; empty or unset means \"use this file\", anything else fails the load with ENGINE_CONFIG_INVALID), so a deployment or a smoke run can turn engine-side prompting on without editing a checked-in file.",
   "redirect": {
     "variables": {
       "XDG_CONFIG_HOME": "xdg-config",

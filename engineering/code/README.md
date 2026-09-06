@@ -66,10 +66,16 @@ npm install -g opencode-ai@1.18.29 --loglevel=error
 编排器用 `npm root -g` 推导 `<npm root -g>/opencode-ai/bin/opencode.exe`（非 Windows 为
 `opencode`），并通过 `PNP_OPENCODE_EXE_PATH` 传给 Pack；若该环境变量已设置则原样透传。
 
+`--engine opencode` 这条腿还会把评测方的审批回路真的跑一遍：编排器给网关设 `PNP_OPENCODE_NATIVE_PERMISSIONS=ask`
+（引擎侧才会发 ACP 权限请求），集成档写成 `policy: { default: "allow", operations: { write: "ask" } }`（网关侧只对 `write`
+停下来问）。客户端于是不等 `prompt_async` 返回，而是轮询 `GET /permission`、`POST /permission/{id}/reply` 回
+`once`（`case2`）与 `reject`（`case2b`），再等 `prompt_async` 落 204。Mock 引擎不发权限请求，这两例照旧跳过。
+
 三个脚本各自独立可用：
 
 - `mock-model-server.mjs` — 零依赖模型服务，`--port 0 --log <jsonl>`，启动后 stdout 输出 `{"port":N}`；
-- `run-e2e.mjs` — 只用全局 `fetch` 的北向协议客户端，`--base/--workspace/--report/--expect-tools`；
+- `run-e2e.mjs` — 只用全局 `fetch` 的北向协议客户端，`--base/--workspace/--report/--expect-tools`，
+  审批回路的两个文件名与轮询预算是 `--write-file-name/--reject-file-name/--permission-timeout-ms`；
 - `ci-smoke.mjs` — 编排器，负责临时 `PNP_DATA_DIR`、配置档、进程收尾与产物收集。
 
 产物（网关日志、模型请求 JSONL、断言报告、`hosts/*.json`、`/diagnostics`）默认写到系统临时目录，
