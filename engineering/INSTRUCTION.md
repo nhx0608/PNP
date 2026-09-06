@@ -41,11 +41,14 @@ C 交付内部模型、工具和权限配置。`config/internal.example.json` �
 |---|---|---|
 | `PNP_INTEGRATION` | 未设置（非 mock 引擎回退 `internal`，无实现会拒绝启动；mock 引擎回退 `mock`） | 模型/工具/权限的集成方式：`internal`（内网，C 交付）、`configured`（读取下方配置档）、`mock`（仅限 mock 引擎）。选错或与所选引擎不匹配会在启动阶段失败，见 3.2 |
 | `PNP_CONFIGURED_PROFILE` | 无 | `PNP_INTEGRATION=configured` 时必填的**绝对路径**，指向形如 `config/configured.example.json` 的模型/工具/策略档；其他集成方式下忽略 |
+| `PNP_MODEL_STRICT` | 未设置（宽松映射） | 置为 `1` 时，`prompt_async` 传入的 `model` 不在配置档内即返回 403 `MODEL_NOT_ALLOWED`；不设置时映射到配置档的默认模型，见下方说明 |
 | `PNP_MAX_RESIDENT_SESSIONS` | `16`（范围 1–64） | 常驻原生通道上限；到达上限按最久未用淘汰非活跃会话的通道，不再直接拒绝第 17 个会话。评测一轮同时保有的会话数持续高于默认值时才需要调大 |
 | `PNP_RUN_TIMEOUT_MS` | `900000`（15 分钟，范围 1000–86400000） | 单次 Prompt 执行的总时限。任务涉及大文档转换、多步网页检索等确需更久时再调大 |
 | `PNP_OPEN_TIMEOUT_MS` | `60000`（范围 1000–600000） | 原生进程/引擎握手时限。评测机首次运行叠加杀软扫描或冷编译较慢时调大 |
 | `PNP_CANCEL_GRACE_MS` | `15000`（范围 100–300000） | 取消后到判定"停止未证实"前的宽限期。引擎需要更长时间才能安全落盘（例如 Office 另存为）时调大；调小可在用例之间更快回收资源 |
 | `PNP_INTERACTION_TIMEOUT_MS` | `45000`（范围 1000–600000） | 反问/授权等待回复的时限，超时按 `reason:"TIMEOUT"` 处理为拒绝 |
+
+规范把 `model.providerID/modelID` 定为必填，取值由评测脚本决定，本网关不掌握。因此不在配置档内的选择**不返回 403**，而是落到配置档的第一个模型（默认模型）；调用方省略 `model` 时同样使用该默认模型。每轮在模型解析成功后立即发布事件 `model.resolved`，载荷为 `{sessionID, runID, requested, selected, resolution}`，`resolution` 取值 `exact`（档内命中）、`default`（未传 `model`）、`substituted`（传入的标识不在档内）；替换时另有一行 `console.warn` 的 JSON 日志。两者都只含模型标识，不含端点、请求头或凭据。配置档才是端点允许清单，替换只发生在"名字"这一层，不扩大任何访问面。需要严格拒绝时设置 `PNP_MODEL_STRICT=1`。
 
 以上数值型变量留空（`VAR=`）等同于不设置，按默认值处理，不会被解析成 `0` 而拒绝启动。
 

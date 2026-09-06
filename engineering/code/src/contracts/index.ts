@@ -163,6 +163,19 @@ export interface DriverServices {
   events: EventSink;
   interact(request: InteractionRequest): Promise<InteractionResponse>;
 }
+/**
+ * How a caller's `model` became the model that actually ran. The specification makes
+ * `model.providerID/modelID` required and the caller supplies identifiers the deployment does not
+ * control, so an unconfigured selection resolves to the profile's default instead of failing the
+ * whole round; this record is what makes that substitution auditable. It carries selection
+ * identifiers only, never an endpoint or a credential.
+ */
+export interface ModelResolution {
+  requested: ModelSelection;
+  /** `exact`: the request named a configured model. `default`: the request named none.
+   *  `substituted`: the request named one that is not configured. */
+  outcome: "exact" | "default" | "substituted";
+}
 export interface ResolvedModel {
   selection: ModelSelection;
   protocol: "openai-chat" | "anthropic-messages" | "custom" | "test";
@@ -170,6 +183,8 @@ export interface ResolvedModel {
   /** Never persist or log resolved model configuration. */
   headers: Readonly<Record<string, string>>;
   caFile?: string;
+  /** Absent means the provider does not report a resolution; callers treat that as `exact`. */
+  resolution?: ModelResolution;
 }
 export interface ToolBinding {
   id: string;

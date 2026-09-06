@@ -145,7 +145,11 @@ export async function loadIntegration(input: {
     }
     return { effect: effect as AuthorizationDecision["effect"], reasonCode: configured === undefined ? "CONFIGURED_DEFAULT" : "CONFIGURED_OPERATION" };
   };
-  return new ConfiguredIntegration(models, tools, decide, environment);
+  // The evaluator supplies model identifiers this deployment does not control, so an unconfigured
+  // selection falls back to the profile's default model (docs/engineering-review-3.md section 7,
+  // R2). A deployment that would rather answer 403 sets PNP_MODEL_STRICT=1.
+  const strictModel = environment.PNP_MODEL_STRICT === "1";
+  return new ConfiguredIntegration(models, tools, decide, environment, strictModel);
 }
 
 /**

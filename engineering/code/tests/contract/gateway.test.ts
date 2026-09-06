@@ -7,6 +7,7 @@ import { StateStore } from "../../src/storage/store.ts";
 import { GatewayCore } from "../../src/core/gateway-core.ts";
 import { MockPack } from "../../src/engines/mock/pack.ts";
 import { MockIntegration } from "../../src/integration/mock/provider.ts";
+import { ConfiguredIntegration } from "../../src/integration/configured/provider.ts";
 import { buildApp } from "../../src/gateway/app.ts";
 
 test("original northbound create/prompt/message/status/delete contract", async () => {
@@ -67,6 +68,43 @@ test("HTTP input failures preserve safe 400, 413, and 415 semantics", async () =
     const emptyAbort = await app.inject({ method: "POST", url: `/session/${id}/abort`,
       headers: { "content-type": "application/json" }, payload: "" });
     assert.equal(emptyAbort.statusCode, 200);
+  } finally {
+    await app.close(); await store.close(); await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("an unrecognised model runs on the configured default and is published as model.resolved", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "pnp-model-"));
+  const store = new StateStore(path.join(dir, "pnp.db"));
+  // A small configured profile, the same shape the shipped one has: one model, no credentials.
+  const integration = new ConfiguredIntegration(
+    [{ selection: { providerID: "competition", modelID: "default" }, endpoint: "http://127.0.0.1:9/v1",
+      protocol: "openai-chat", headerEnvironment: {} }],
+    [], () => ({ effect: "allow", reasonCode: "TEST_ALLOW" }), {},
+  );
+  const core = new GatewayCore(store, new MockPack(), integration, { dataDirectory: dir });
+  const app = buildApp(core);
+  try {
+    const created = await app.inject({ method: "POST", url: "/session", payload: { directory: dir } });
+    const id = (created.json() as { id: string }).id;
+    // The specification makes `model` required and the evaluator supplies identifiers this
+    // deployment does not control. That is a 204 on the profile's default model, never a 403.
+    const response = await app.inject({ method: "POST", url: `/session/${id}/prompt_async`,
+      payload: { parts: [{ type: "text", text: "hello" }], model: { providerID: "evaluator", modelID: "unknown-1" } } });
+    assert.equal(response.statusCode, 204);
+    const history = await app.inject({ method: "GET", url: `/session/${id}/message` });
+    assert.equal(history.json().at(-1).info.finish, "stop");
+    const resolved = (await core.eventsSince(0)).filter((event) => event.type === "model.resolved");
+    assert.equal(resolved.length, 1);
+    const properties = resolved[0]?.properties ?? {};
+    assert.deepEqual(properties.requested, { providerID: "evaluator", modelID: "unknown-1" });
+    assert.deepEqual(properties.selected, { providerID: "competition", modelID: "default" });
+    assert.equal(properties.resolution, "substituted");
+    assert.equal(properties.sessionID, id);
+    // A named, configured model is recorded as exact.
+    assert.equal((await app.inject({ method: "POST", url: `/session/${id}/prompt_async`,
+      payload: { parts: [{ type: "text", text: "again" }], model: { providerID: "competition", modelID: "default" } } })).statusCode, 204);
+    assert.equal((await core.eventsSince(0)).filter((event) => event.type === "model.resolved").at(-1)?.properties.resolution, "exact");
   } finally {
     await app.close(); await store.close(); await rm(dir, { recursive: true, force: true });
   }

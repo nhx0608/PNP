@@ -301,6 +301,17 @@ export class GatewayCore {
       }
       const secrets = [...Object.values(integration.model.headers), ...integration.tools.flatMap((t) => Object.values(t.env))];
       redactor = new Redactor(secrets);
+      // What the caller asked for and what actually ran, recorded before anything executes. The
+      // specification makes `model` required and the caller's identifiers are outside this
+      // deployment's control, so a substitution is a fact to publish, not a request to refuse
+      // (docs/engineering-review-3.md section 7, R2). Selection identifiers only: no endpoint,
+      // no header, no credential.
+      await this.journal.publish("model.resolved", {
+        sessionID: sessionId, runID: ctx.runId,
+        requested: { ...(integration.model.resolution?.requested ?? request.model) },
+        selected: { ...integration.model.selection },
+        resolution: integration.model.resolution?.outcome ?? "exact",
+      });
       if (ctx.controller.signal.aborted) throw new PnpError("EXECUTION_CANCELLED", "Cancelled before execution.", 409);
       const run: Run = { id: ctx.runId, sessionId, state: "running", requestHash: hash, startedAt: new Date().toISOString(),
         ...(idempotencyKey === undefined ? {} : { idempotencyKey }) };
