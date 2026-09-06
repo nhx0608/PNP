@@ -73,9 +73,17 @@ function resolveOpenCodeExecutable() {
   const result = spawnSync(process.execPath, [cli, "root", "-g"], { encoding: "utf8", shell: false });
   if (result.status !== 0) return { path: null, source: "npm-root-failed", exists: false, error: (result.stderr ?? "").trim() };
   const root = result.stdout.trim().split(/\r?\n/).pop() ?? "";
-  const binary = process.platform === "win32" ? "opencode.exe" : "opencode";
-  const resolved = path.join(root, "opencode-ai", "bin", binary);
-  return { path: resolved, source: "npm root -g", exists: existsSync(resolved), npm_root: root };
+  // opencode-ai's postinstall copies the platform binary to bin/opencode.exe on EVERY platform
+  // (the name is fixed in the script); the platform package keeps the native name.
+  const platform = { win32: "windows", linux: "linux", darwin: "darwin" }[process.platform] ?? process.platform;
+  const native = process.platform === "win32" ? "opencode.exe" : "opencode";
+  const candidates = [
+    path.join(root, "opencode-ai", "bin", "opencode.exe"),
+    path.join(root, `opencode-${platform}-${process.arch}`, "bin", native),
+    path.join(root, `opencode-${platform}-${process.arch}-baseline`, "bin", native),
+  ];
+  const resolved = candidates.find((candidate) => existsSync(candidate));
+  return { path: resolved ?? candidates[0], source: "npm root -g", exists: resolved !== undefined, npm_root: root, candidates };
 }
 
 const children = new Set();

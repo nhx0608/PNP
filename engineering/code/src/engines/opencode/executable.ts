@@ -76,6 +76,19 @@ function expand(template: string, env: Readonly<Record<string, string | undefine
   return unresolved ? undefined : expanded;
 }
 
+/**
+ * An explicit path is an operator's statement and is checked as one: a well-formed path that names no file
+ * fails here, naming its source, instead of surfacing later as the host's generic "could not be started".
+ * Well-known candidates are existence-checked during probing and never reach this.
+ */
+async function requireExists(
+  candidate: string, resolved: { evidence: ExecutableEvidence }, source: OpenCodeExecutableSource,
+  field: string, environment: ExecutableEnvironment,
+): Promise<void> {
+  if (resolved.evidence === "well-known-probe" || await environment.fileExists(candidate)) return;
+  const origin = resolved.evidence === "configured" ? `${field}.configuredPath` : source.environmentVariable;
+  throw new PnpError("ENGINE_EXECUTABLE_NOT_FOUND", `${origin} names "${candidate}", which is not a file on this host.`, 503);
+}
 async function resolveSource(
   source: OpenCodeExecutableSource, environment: ExecutableEnvironment,
 ): Promise<{ candidate: string; evidence: ExecutableEvidence } | undefined> {
@@ -134,10 +147,9 @@ export async function resolveOpenCodeExecutable(
       throw new PnpError("ENGINE_EXECUTABLE_NOT_FOUND",
         "No opencode executable was found via config, environment or well-known paths. Install it with `npm install -g opencode-ai`, or set executable.exe.configuredPath in config/engines/opencode.json or the PNP_OPENCODE_EXE_PATH environment variable.", 503);
     }
-    return {
-      executable: requireExecutablePath(resolved.candidate, "executable.exe", environment.platform),
-      prefixArgs: [], kind: "exe", executableEvidence: resolved.evidence,
-    };
+    const executable = requireExecutablePath(resolved.candidate, "executable.exe", environment.platform);
+    await requireExists(executable, resolved, config.executable.exe, "executable.exe", environment);
+    return { executable, prefixArgs: [], kind: "exe", executableEvidence: resolved.evidence };
   }
   let node = await resolveSource(config.executable.node, environment);
   if (node === undefined && config.executable.node.fallbackToHostRuntime) {

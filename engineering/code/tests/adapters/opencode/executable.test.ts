@@ -121,8 +121,32 @@ test("on Windows the resolved executable must be an absolute Windows path ending
     resolveOpenCodeExecutable(config(), environment({ env: { PNP_OPENCODE_EXE_PATH: `${APPDATA}\\npm\\opencode.cmd` } })),
     { code: "ENGINE_EXECUTABLE_INVALID" },
   );
-  const resolved = await resolveOpenCodeExecutable(config(), environment({ env: { PNP_OPENCODE_EXE_PATH: "C:\\opencode\\opencode.exe" } }));
+  const resolved = await resolveOpenCodeExecutable(config(), environment({
+    env: { PNP_OPENCODE_EXE_PATH: "C:\\opencode\\opencode.exe" }, fileExists: async () => true,
+  }));
   assert.equal(resolved.executable, "C:\\opencode\\opencode.exe");
+});
+
+test("an explicit path that names no file fails as ENGINE_EXECUTABLE_NOT_FOUND and says where it came from", async () => {
+  // The shape is fine, so the host would otherwise be the first to notice, with a generic start failure.
+  await assert.rejects(
+    resolveOpenCodeExecutable(config(), environment({ env: { PNP_OPENCODE_EXE_PATH: "C:\\opencode\\opencode.exe" } })),
+    (error: unknown) => error instanceof Error && "code" in error && error.code === "ENGINE_EXECUTABLE_NOT_FOUND"
+      && error.message.includes("PNP_OPENCODE_EXE_PATH names \"C:\\opencode\\opencode.exe\""),
+  );
+  await assert.rejects(
+    resolveOpenCodeExecutable(
+      config({ exe: { configuredPath: "C:\\Custom\\opencode.exe", environmentVariable: "PNP_OPENCODE_EXE_PATH", wellKnownPaths: [] } }),
+      environment(),
+    ),
+    (error: unknown) => error instanceof Error && "code" in error && error.code === "ENGINE_EXECUTABLE_NOT_FOUND"
+      && /executable\.exe\.configuredPath names/.test(error.message),
+  );
+  // A malformed path is still reported as malformed, not as missing.
+  await assert.rejects(
+    resolveOpenCodeExecutable(config(), environment({ env: { PNP_OPENCODE_EXE_PATH: "opencode.exe" } })),
+    { code: "ENGINE_EXECUTABLE_INVALID" },
+  );
 });
 
 test("a shared Windows host still enforces .exe even when the checking process runs on Linux", async () => {
@@ -136,7 +160,7 @@ test("a shared Windows host still enforces .exe even when the checking process r
 test("on a non-Windows host an absolute POSIX path with no extension is accepted", async () => {
   for (const platform of ["linux", "darwin"] as const) {
     const resolved = await resolveOpenCodeExecutable(config(), environment({
-      platform, env: { PNP_OPENCODE_EXE_PATH: "/opt/opencode-linux-x64/bin/opencode" },
+      platform, env: { PNP_OPENCODE_EXE_PATH: "/opt/opencode-linux-x64/bin/opencode" }, fileExists: async () => true,
     }));
     assert.equal(resolved.executable, "/opt/opencode-linux-x64/bin/opencode");
     assert.equal(resolved.kind, "exe");
@@ -220,7 +244,7 @@ test("throws ENGINE_EXECUTABLE_NOT_FOUND when node-script has no node.exe and no
 
 test("an unrecognised PNP_OPENCODE_EXECUTABLE_KIND falls back to the configured default rather than guessing", async () => {
   const resolved = await resolveOpenCodeExecutable(config(), environment({
-    env: { PNP_OPENCODE_EXECUTABLE_KIND: "wsl", PNP_OPENCODE_EXE_PATH: "C:\\opencode\\opencode.exe" },
+    env: { PNP_OPENCODE_EXECUTABLE_KIND: "wsl", PNP_OPENCODE_EXE_PATH: "C:\\opencode\\opencode.exe" }, fileExists: async () => true,
   }));
   assert.equal(resolved.kind, "exe");
 });

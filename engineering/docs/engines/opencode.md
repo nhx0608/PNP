@@ -60,7 +60,11 @@ ${ProgramFiles}\nodejs\node_modules\opencode-ai\bin\opencode.exe             ←
 ${LOCALAPPDATA}\Programs\opencode\opencode.exe                               ← 手工安装留的位置
 ```
 
-模板里的 `${VAR}` 若未设置，**整条候选被跳过**，不会退化成 `\npm\node_modules\...` 这种根相对路径去探测（在 Linux 上跑时这一点尤其重要）。POSIX 侧没有 well-known 列表：npm 在类 Unix 上的全局前缀不固定，用 `PNP_OPENCODE_EXE_PATH` 直接指向 `opencode-linux-x64` 的二进制即可。
+模板里的 `${VAR}` 若未设置，**整条候选被跳过**，不会退化成 `\npm\node_modules\...` 这种根相对路径去探测（在 Linux 上跑时这一点尤其重要）。POSIX 侧没有 well-known 列表：npm 在类 Unix 上的全局前缀不固定，用 `PNP_OPENCODE_EXE_PATH` 直接指向二进制即可。
+
+**显式路径要真的存在。** `configuredPath` 与 `PNP_OPENCODE_EXE_PATH` 给出的路径在形状校验之后再做一次存在性检查（`stat` 是普通文件），不存在则在 `open()` 内、任何进程启动之前抛 `ENGINE_EXECUTABLE_NOT_FOUND`，消息里指名来源与路径。这是 CI 的 ubuntu/opencode 腿教的：一条指向不存在文件的路径原本要等宿主报一句泛泛的 `HOST_START_FAILED`。
+
+**一个反直觉的分发事实（probed，Linux CI）：`npm i -g opencode-ai` 在所有平台上都把真实二进制落在 `<npm root -g>/opencode-ai/bin/opencode.exe`** —— postinstall 脚本里目标文件名写死为 `bin/opencode.exe`，Linux 上也是这个名字（一个叫 `.exe` 的 ELF）。平台包（`opencode-linux-x64/bin/opencode`）保留原生名字。`scripts/e2e/ci-smoke.mjs` 按 `opencode-ai/bin/opencode.exe` → `opencode-<platform>-<arch>/bin/<原生名>` → `-baseline` 的顺序定位；Windows 上 `%APPDATA%\npm\...\opencode.exe` 的推断与这条一致。
 
 **`node-script` 保留为显式可选**（`PNP_OPENCODE_EXECUTABLE_KIND=node-script` + `PNP_OPENCODE_SCRIPT_PATH`），给"未来出现 JS 入口构建"或"自行重打包"的情况留门。但要说清楚：**真实分发没有脚本入口**，所以 `executable.script.wellKnownPaths` 是空的，在 stock 安装上这个模式必定抛 `ENGINE_SCRIPT_NOT_FOUND` —— 它失败，而不是去猜一个路径。
 

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { OpenCodePack } from "../../../src/engines/opencode/pack.ts";
@@ -90,8 +90,11 @@ function fakeIntegration(overrides: Partial<IntegrationContext> = {}): Integrati
   };
 }
 /** The path shape the shared ProcessHost accepts on the host this test happens to run on. */
-function fakeExecutable(root: string): string {
-  return path.join(root, process.platform === "win32" ? "opencode.exe" : "opencode");
+/** The resolver checks that an explicit path names a file, so the fake must exist; it is never executed. */
+async function fakeExecutable(root: string): Promise<string> {
+  const executable = path.join(root, process.platform === "win32" ? "opencode.exe" : "opencode");
+  await writeFile(executable, "", "utf8");
+  return executable;
 }
 /** Sets engine env vars for one test and restores exactly what was there before, including "was unset". */
 async function withEnvironment(values: Record<string, string | undefined>, body: () => Promise<void>): Promise<void> {
@@ -113,7 +116,7 @@ async function withEnvironment(values: Record<string, string | undefined>, body:
 
 test("open() launches the resolved executable with just the ACP subcommand and reaches the ACP driver seam", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "pnp-opencode-pack-"));
-  const executable = fakeExecutable(root);
+  const executable = await fakeExecutable(root);
   try {
     await withEnvironment({ PNP_OPENCODE_EXECUTABLE_KIND: undefined, PNP_OPENCODE_EXE_PATH: executable }, async () => {
       const host = new FakeProcessHost();
@@ -191,7 +194,7 @@ test("open() fails with a clear executable-resolution error and never starts a p
 test("open() fails before any process starts when a required asset kind has no native projection", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "pnp-opencode-pack-"));
   try {
-    await withEnvironment({ PNP_OPENCODE_EXECUTABLE_KIND: undefined, PNP_OPENCODE_EXE_PATH: fakeExecutable(root) }, async () => {
+    await withEnvironment({ PNP_OPENCODE_EXECUTABLE_KIND: undefined, PNP_OPENCODE_EXE_PATH: await fakeExecutable(root) }, async () => {
       const host = new FakeProcessHost();
       const input: EngineOpenInput = {
         host, session: fakeSession(path.join(root, "workspace")), nativeDataDirectory: path.join(root, "native"),

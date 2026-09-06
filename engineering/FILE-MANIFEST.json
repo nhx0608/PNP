@@ -160,8 +160,8 @@
       "path": "code/scripts/e2e/ci-smoke.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 15570,
-      "sha256": "80755200b98a300cb6599b0743ad121e8a072ccd5bf05801d84bc1e4b7759127"
+      "bytes": 16150,
+      "sha256": "69b1c50c7a1ba8eee680cf55839d340d885e2a1c0a1f30cf6fe3917ab2ab8564"
     },
     {
       "path": "code/scripts/e2e/mock-model-server.mjs",
@@ -419,8 +419,8 @@
       "path": "code/src/engines/opencode/executable.ts",
       "owner": "A",
       "category": "实现源码",
-      "bytes": 9032,
-      "sha256": "2da33e38a95ce026a2135efc2ecb4fceb36fb94000f531c2e4a223697f211b7f"
+      "bytes": 9985,
+      "sha256": "2a3f82b01ca4563c00ee0b584731bb34a1e1ccf829a86fbecd9ddb5063fddb47"
     },
     {
       "path": "code/src/engines/opencode/native-config.ts",
@@ -552,8 +552,8 @@
       "path": "code/src/runtime/process-host.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 38330,
-      "sha256": "48f06f8d7ab43d1c48ae15f220d5cf7ff7e256202a8a329d6f05725f2e603fa5"
+      "bytes": 38893,
+      "sha256": "87fd0fe79b62994379217008482c5c0e03e1293a204c601e1ff5eec62a54bc4a"
     },
     {
       "path": "code/src/runtime/recovery.ts",
@@ -699,8 +699,8 @@
       "path": "code/tests/adapters/opencode/executable.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 11966,
-      "sha256": "276df18c8e195dc9b024f8f0fd0737f7017dd0f72a76c8134279324321082b63"
+      "bytes": 13312,
+      "sha256": "9b7bc84c33271494fca7f802a28dbe44271a7933d2b717a3bc60bb03fa9e05e4"
     },
     {
       "path": "code/tests/adapters/opencode/native-config.test.ts",
@@ -713,8 +713,8 @@
       "path": "code/tests/adapters/opencode/pack.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 10327,
-      "sha256": "aa44fccbff8554dada2756c62848bc3428c86d485993ea3d2288ec75d6b60b41"
+      "bytes": 10550,
+      "sha256": "1fde51cba818573c829c6e6495a6e4bf544914d75a768fcb68db9f4db37298cd"
     },
     {
       "path": "code/tests/contract/gateway.test.ts",
@@ -776,8 +776,8 @@
       "path": "code/tests/unit/runtime.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 13692,
-      "sha256": "ea1974d4cbac3d62c2dfb622d892c1efdbabc57587604ff926293072b32d3cf1"
+      "bytes": 15307,
+      "sha256": "41a6e6cc89210dc2755302a7ae7dbfe1026247c29509fbc8cf5c774c2eaa7acd"
     },
     {
       "path": "code/toolchain.json",
@@ -804,8 +804,8 @@
       "path": "docs/engines/opencode.md",
       "owner": "A",
       "category": "入口与配置",
-      "bytes": 27598,
-      "sha256": "27baad71a467b057c8cb6c9ce37c50a6dbe7997991e90a95af59c1245ebb5818"
+      "bytes": 28606,
+      "sha256": "4abaa1ca45058b3a2ab1dd6f04d497129c089023da486e272e95c819f3bbc83a"
     },
     {
       "path": "docs/engines/pi.md",

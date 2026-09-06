@@ -225,3 +225,32 @@ test("Windows process-lifetime guard excludes a second owner and releases on pro
     await thirdClosed;
   } finally { first.kill(); await firstClosed; await rm(directory, { recursive: true, force: true }); }
 });
+
+test("a launch whose executable does not exist fails fast and records that nothing is running", {
+  skip: process.platform === "win32",
+}, async () => {
+  // spawn() reports ENOENT through "error", never assigns a pid and never emits "exit". The host must
+  // not wait for that exit, and must not call the stop unproven: no process was created, so the
+  // session that asked for it stays usable and deletable.
+  const directory = await mkdtemp(path.join(tmpdir(), "pnp-missing-launch-"));
+  const host = new LocalProcessHost(directory);
+  const scope = new OwnedResourceScope();
+  try {
+    const startedAt = Date.now();
+    await assert.rejects(host.start({
+      executable: path.join(directory, "missing-engine"), args: ["acp"], cwd: directory, env: {},
+      sessionId: "missing-launch", ownerToken: "missing-launch",
+    }, new AbortController().signal, scope), (error: unknown) => {
+      assert.ok(error instanceof PnpError);
+      assert.equal(error.code, "HOST_START_FAILED");
+      return true;
+    });
+    assert.ok(Date.now() - startedAt < 3_000, "a spawn failure must not wait for a process exit that cannot come");
+    assert.equal((await scope.stop(1_000)).quiescent, true);
+    const files = (await readdir(path.join(directory, "hosts"))).filter((file) => file.endsWith(".json"));
+    assert.equal(files.length, 1);
+    const record = JSON.parse(await readFile(path.join(directory, "hosts", files[0]!), "utf8"));
+    assert.equal(record.quiescent, true);
+    assert.equal((await host.reconcile(record)).quiescent, true);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

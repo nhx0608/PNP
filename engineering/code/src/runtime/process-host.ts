@@ -276,6 +276,17 @@ export class LocalProcessHost implements ProcessHost {
       const owned = child;
       if (owned === undefined) return { quiescent: !launching, method: "not-running" };
       const pid = owned.pid;
+      if (pid === undefined) {
+        // spawn() reports a process it could not create (ENOENT, EACCES) through "error" and never
+        // assigns a pid; no "exit" follows. Nothing exists to wait for or to kill, so waiting on the
+        // exit that cannot come would turn a missing executable into an unproven stop and fence the
+        // session for a process that was never there.
+        launching = false;
+        evidence = true;
+        record.quiescent = true;
+        await save();
+        return { quiescent: true, method: "not-running" };
+      }
       if (exitValue === undefined) {
         // Phase one: a real end-of-file so the engine can finish writing an Office document,
         // then the grace window the supervisor honours before it destroys the job.
