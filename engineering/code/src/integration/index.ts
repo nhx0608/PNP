@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AuthorizationDecision, IntegrationProvider, ModelSelection, ToolBinding } from "../contracts/index.ts";
 import { PnpError } from "../core/errors.ts";
 import { ConfiguredIntegration, type ConfiguredModel } from "./configured/provider.ts";
@@ -8,6 +9,20 @@ import { MockIntegration } from "./mock/provider.ts";
 
 type IntegrationKind = "internal" | "configured" | "mock";
 type JsonObject = Record<string, unknown>;
+type Effect = AuthorizationDecision["effect"];
+const EFFECTS: readonly Effect[] = ["allow", "deny", "ask"];
+
+/** `src/integration/` in the source tree and `dist/integration/` in a build both sit one level
+ *  below the package root, so the shipped profile is found the same way in either. */
+const codeRoot = fileURLToPath(new URL("../../", import.meta.url));
+/**
+ * The integration is shipped configuration, not a code delivery: an operator who follows
+ * INSTRUCTION.md gets this profile without setting anything (docs/engineering-review-3.md section
+ * 7, R3). It names environment variables instead of carrying an endpoint or a credential, so the
+ * public repository holds no deployment address; the values only ever exist in the process
+ * environment, and `probeIntegration` refuses to start when one of them is missing.
+ */
+export const DEFAULT_CONFIGURED_PROFILE = path.join(codeRoot, "config", "competition-profile.json");
 
 function object(value: unknown, label: string): JsonObject {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -33,12 +48,30 @@ function headers(value: unknown): Readonly<Record<string, string>> {
   const item = object(value, "headerEnvironment");
   return Object.fromEntries(Object.entries(item).map(([name, variable]) => [name, string(variable, `headerEnvironment.${name}`)]));
 }
+/**
+ * A model declares its endpoint either literally or, like its headers, by the NAME of an
+ * environment variable holding it. Exactly one form is allowed. A literal endpoint is checked
+ * against the transport rule here; a variable-backed one is checked against the same rule the
+ * moment it resolves (ConfiguredIntegration.endpointOf), because its value exists only in the
+ * process environment.
+ */
 function model(value: unknown): ConfiguredModel {
   const item = object(value, "model");
-  exactKeys(item, ["selection", "endpoint", "protocol", "headerEnvironment"], "model");
+  exactKeys(item, ["selection", "endpoint", "endpointEnvironment", "protocol", "headerEnvironment"], "model");
   const protocol = string(item.protocol, "model.protocol");
   if (protocol !== "openai-chat" && protocol !== "anthropic-messages") {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "Unsupported model protocol.", 400);
+  }
+  const hasEndpoint = Object.hasOwn(item, "endpoint");
+  const hasEndpointEnvironment = Object.hasOwn(item, "endpointEnvironment");
+  if (hasEndpoint === hasEndpointEnvironment) {
+    throw new PnpError("INTEGRATION_CONFIG_INVALID", "A model needs exactly one of endpoint and endpointEnvironment.", 400);
+  }
+  const common: Pick<ConfiguredModel, "selection" | "protocol" | "headerEnvironment"> = {
+    selection: selection(item.selection), protocol, headerEnvironment: headers(item.headerEnvironment),
+  };
+  if (hasEndpointEnvironment) {
+    return { ...common, endpointEnvironment: string(item.endpointEnvironment, "model.endpointEnvironment") };
   }
   const endpoint = string(item.endpoint, "model.endpoint");
   let url: URL;
@@ -47,8 +80,30 @@ function model(value: unknown): ConfiguredModel {
   if (!(url.protocol === "https:" || (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) || url.username || url.password) {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "Model endpoint is not an approved transport.", 400);
   }
-  return { selection: selection(item.selection), endpoint, protocol,
-    headerEnvironment: headers(item.headerEnvironment) };
+  return { ...common, endpoint };
+}
+
+/**
+ * Deployment-side operation policy, supplied as JSON in `PNP_CONFIGURED_POLICY_OVERRIDES` so a
+ * deployment can put one operation on "ask" without forking the shipped profile. It is the same
+ * trust level as the profile file (both are set by whoever runs the gateway) and it is applied at
+ * load time, so it can never be reached by a caller, a prompt or a user reply.
+ */
+function overrides(raw: string | undefined): Record<string, Effect> {
+  if (raw === undefined || raw.trim() === "") return {};
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); }
+  catch { throw new PnpError("INTEGRATION_CONFIG_INVALID", "PNP_CONFIGURED_POLICY_OVERRIDES must be valid JSON.", 400); }
+  const item = object(parsed, "PNP_CONFIGURED_POLICY_OVERRIDES");
+  const result: Record<string, Effect> = {};
+  for (const [operation, value] of Object.entries(item)) {
+    const effect = string(value, `PNP_CONFIGURED_POLICY_OVERRIDES.${operation}`);
+    if (!EFFECTS.includes(effect as Effect)) {
+      throw new PnpError("INTEGRATION_CONFIG_INVALID", "Unsupported operation policy.", 400);
+    }
+    result[operation] = effect as Effect;
+  }
+  return result;
 }
 function tool(value: unknown, environment: NodeJS.ProcessEnv): ToolBinding {
   const item = object(value, "tool");
@@ -89,7 +144,9 @@ export async function loadIntegration(input: {
   configuredProfile?: string;
   environment?: NodeJS.ProcessEnv;
 }): Promise<IntegrationProvider> {
-  const kind = input.kind ?? (input.engineDevelopmentOnly ? "mock" : "internal");
+  // A real engine defaults to the shipped configured profile. `internal` stays selectable, and it
+  // is the explicit choice — never a default — that fails while it has no implementation.
+  const kind = input.kind ?? (input.engineDevelopmentOnly ? "mock" : "configured");
   if (!(["internal", "configured", "mock"] as const).includes(kind as IntegrationKind)) {
     throw new PnpError("INTEGRATION_NOT_FOUND", "Unknown integration profile.", 400);
   }
@@ -105,11 +162,16 @@ export async function loadIntegration(input: {
   // endpoints to https or loopback — the same trust model as the internal provider. A real
   // (non-mock) engine must have a usable model path in a non-development deployment, and
   // configured is currently the only one that is actually implemented.
-  if (input.configuredProfile === undefined || !path.isAbsolute(input.configuredProfile)) {
+  // An unset PNP_CONFIGURED_PROFILE (or an empty one) means the shipped profile; an explicit
+  // absolute path still wins.
+  const environment = input.environment ?? process.env;
+  const profilePath = input.configuredProfile === undefined || input.configuredProfile.trim() === ""
+    ? DEFAULT_CONFIGURED_PROFILE : input.configuredProfile;
+  if (!path.isAbsolute(profilePath)) {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "PNP_CONFIGURED_PROFILE must be an absolute path.", 400);
   }
   let parsed: unknown;
-  try { parsed = JSON.parse(await readFile(input.configuredProfile, "utf8")); }
+  try { parsed = JSON.parse(await readFile(profilePath, "utf8")); }
   catch { throw new PnpError("INTEGRATION_CONFIG_INVALID", "Configured integration profile could not be loaded.", 400); }
   const profile = object(parsed, "profile");
   exactKeys(profile, ["models", "tools", "policy"], "profile");
@@ -118,18 +180,19 @@ export async function loadIntegration(input: {
   const policy = object(profile.policy, "policy");
   exactKeys(policy, ["default", "operations"], "policy");
   const defaultEffect = string(policy.default, "policy.default");
-  if (!(["allow", "deny", "ask"] as const).includes(defaultEffect as AuthorizationDecision["effect"])) {
+  if (!EFFECTS.includes(defaultEffect as Effect)) {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "Unsupported default policy.", 400);
   }
-  const operations = object(policy.operations, "policy.operations");
-  for (const [operation, configured] of Object.entries(operations)) {
+  const configuredOperations: Record<string, Effect> = {};
+  for (const [operation, configured] of Object.entries(object(policy.operations, "policy.operations"))) {
     const effect = string(configured, `policy.operations.${operation}`);
-    if (!(["allow", "deny", "ask"] as const).includes(effect as AuthorizationDecision["effect"])) {
+    if (!EFFECTS.includes(effect as Effect)) {
       throw new PnpError("INTEGRATION_CONFIG_INVALID", "Unsupported operation policy.", 400);
     }
+    configuredOperations[operation] = effect as Effect;
   }
+  const operationOverrides = overrides(environment.PNP_CONFIGURED_POLICY_OVERRIDES);
   const models = profile.models.map(model);
-  const environment = input.environment ?? process.env;
   const tools = profile.tools.map((value) => tool(value, environment));
   if (new Set(models.map((entry) => `${entry.selection.providerID}\0${entry.selection.modelID}`)).size !== models.length) {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "Model selections must be unique.", 400);
@@ -138,12 +201,11 @@ export async function loadIntegration(input: {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "Tool identifiers must be unique.", 400);
   }
   const decide = (operation: string): AuthorizationDecision => {
-    const configured = Object.hasOwn(operations, operation) ? operations[operation] : undefined;
-    const effect = configured === undefined ? defaultEffect : string(configured, `policy.operations.${operation}`);
-    if (!(["allow", "deny", "ask"] as const).includes(effect as AuthorizationDecision["effect"])) {
-      return { effect: "deny", reasonCode: "INVALID_OPERATION_POLICY" };
-    }
-    return { effect: effect as AuthorizationDecision["effect"], reasonCode: configured === undefined ? "CONFIGURED_DEFAULT" : "CONFIGURED_OPERATION" };
+    const overridden = operationOverrides[operation];
+    if (overridden !== undefined) return { effect: overridden, reasonCode: "CONFIGURED_OVERRIDE" };
+    const configured = configuredOperations[operation];
+    if (configured !== undefined) return { effect: configured, reasonCode: "CONFIGURED_OPERATION" };
+    return { effect: defaultEffect as Effect, reasonCode: "CONFIGURED_DEFAULT" };
   };
   // The evaluator supplies model identifiers this deployment does not control, so an unconfigured
   // selection falls back to the profile's default model (docs/engineering-review-3.md section 7,

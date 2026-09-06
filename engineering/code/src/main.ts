@@ -5,7 +5,7 @@ import { StateStore } from "./storage/store.ts";
 import { GatewayCore } from "./core/gateway-core.ts";
 import { buildApp } from "./gateway/app.ts";
 import { loadEngine, selectEngine } from "./registry/index.ts";
-import { loadIntegration } from "./integration/index.ts";
+import { loadIntegration, probeIntegration } from "./integration/index.ts";
 import { acquireProcessLifetimeLock } from "./runtime/instance-lock.ts";
 import { LocalProcessHost } from "./runtime/process-host.ts";
 import { recoverOwnedState } from "./runtime/recovery.ts";
@@ -33,6 +33,10 @@ const port = Number(args.values.port ?? process.env.PNP_PORT ?? 6217);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new PnpError("VALIDATION_ERROR", "Invalid port.", 400);
 const provider = await loadIntegration({ kind: process.env.PNP_INTEGRATION, development,
   engineDevelopmentOnly: engine.descriptor.developmentOnly, configuredProfile: process.env.PNP_CONFIGURED_PROFILE });
+// The profile names its endpoint and credentials by environment variable. A variable the profile
+// names but the environment does not set is a deployment error, and it belongs at startup with the
+// variable's name in the message — not at the first prompt of the first case.
+await probeIntegration(provider);
 const capacity = duration("PNP_MAX_RESIDENT_SESSIONS", 16, 1, 64);
 const runTimeoutMs = duration("PNP_RUN_TIMEOUT_MS", 900_000, 1_000, 86_400_000);
 const openTimeoutMs = duration("PNP_OPEN_TIMEOUT_MS", 60_000, 1_000, 600_000);

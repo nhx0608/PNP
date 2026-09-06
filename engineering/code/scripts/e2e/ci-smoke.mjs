@@ -26,7 +26,13 @@ if (!["mock", "opencode"].includes(engine)) throw new Error("--engine must be mo
 const artifacts = path.resolve(values.artifacts ?? path.join(os.tmpdir(), "pnp-e2e-artifacts", engine));
 const totalTimeoutMs = Number(values["timeout-ms"] ?? 600_000);
 const AUTH_VALUE = "Bearer e2e-not-a-secret";
-const AUTH_VARIABLE = "PNP_E2E_MODEL_AUTHORIZATION";
+// The variable names the SHIPPED profile (code/config/competition-profile.json) declares. The
+// opencode leg sets nothing else about the integration: exercising the documented defaults is the
+// point, so a regression that reintroduces a start-time gate fails this smoke.
+const AUTH_VARIABLE = "PNP_MODEL_AUTHORIZATION";
+const ENDPOINT_VARIABLE = "PNP_MODEL_ENDPOINT";
+// Deliberately NOT the model the profile declares: the evaluator sends identifiers this deployment
+// does not control, and the run must land on the profile's default model instead of a 403.
 const MODEL = { providerID: "e2e", modelID: "mock-1" };
 
 const scriptsDir = path.join(codeRoot, "scripts", "e2e");
@@ -155,7 +161,7 @@ const gatewayStdout = path.join(logs, "gateway.stdout.log");
 const gatewayStderr = path.join(logs, "gateway.stderr.log");
 const runnerLog = path.join(logs, "e2e-runner.log");
 const reportPath = path.join(logs, "e2e-report.json");
-const profilePath = path.join(temporaryRoot, "configured-profile.json");
+const shippedProfile = path.join(codeRoot, "config", "competition-profile.json");
 // Always present so the artifact set is the same shape whether or not the engine
 // reached the model service (the mock engine never does).
 await writeFile(modelRequestLog, "", "utf8");
@@ -217,25 +223,6 @@ try {
   summary.model_endpoint = `http://127.0.0.1:${modelPort}/v1`;
   log(`mock model service on ${summary.model_endpoint}`);
 
-  // ------------------------------------------------------------ configured profile
-  const profile = {
-    models: [{
-      selection: MODEL,
-      endpoint: `http://127.0.0.1:${modelPort}/v1`,
-      protocol: "openai-chat",
-      // Only the variable NAME is stored; the gateway reads the value from the environment.
-      headerEnvironment: { Authorization: AUTH_VARIABLE },
-    }],
-    tools: [],
-    // The evaluator answers permissions it finds on GET /permission, so one operation has to actually
-    // reach that endpoint. Only `write` is put on "ask": the driver authorises a permission request under
-    // the tool name the engine announced the call with, and an "allow" policy would be decided inside the
-    // gateway without ever publishing a pending request. The mock engine raises no permission at all, so
-    // its leg keeps an empty operations map rather than waiting for something that never comes.
-    policy: { default: "allow", operations: engine === "opencode" ? { write: "ask" } : {} },
-  };
-  await writeFile(profilePath, `${JSON.stringify(profile, null, 2)}\n`, "utf8");
-
   // ------------------------------------------------------------ gateway process
   // Started exactly as INSTRUCTION.md tells the assessor to start it: AGENT_ENGINE in the
   // environment, `npm start -- --port 6217 --host localhost`. The competition's default port and
@@ -252,22 +239,32 @@ try {
     ...process.env,
     PNP_DATA_DIR: dataDirectory,
     AGENT_ENGINE: engine,
-    [AUTH_VARIABLE]: AUTH_VALUE,
   };
   // The bind address and port come from the documented command line, never from these.
   delete environment.PNP_HOST;
   delete environment.PNP_PORT;
   // Only the mock engine needs development mode (it is development-only by design). The real
-  // engine runs in the same posture as a deployment: no development flag, configured profile.
+  // engine runs in the same posture as a deployment: no development flag, shipped profile.
   delete environment.PNP_MODE;
+  // Whatever this machine happens to export, the integration posture of each leg is set here.
+  for (const name of ["PNP_INTEGRATION", "PNP_CONFIGURED_PROFILE", "PNP_CONFIGURED_POLICY_OVERRIDES",
+    "PNP_MODEL_STRICT", AUTH_VARIABLE, ENDPOINT_VARIABLE]) delete environment[name];
   if (engine === "mock") {
     environment.PNP_MODE = "development";
     environment.PNP_INTEGRATION = "mock";
-    delete environment.PNP_CONFIGURED_PROFILE;
     delete environment.PNP_OPENCODE_NATIVE_PERMISSIONS;
   } else {
-    environment.PNP_INTEGRATION = "configured";
-    environment.PNP_CONFIGURED_PROFILE = profilePath;
+    // No PNP_INTEGRATION and no PNP_CONFIGURED_PROFILE: the shipped profile is the default, and
+    // these two variables are all a deployment supplies for the model it names.
+    environment[ENDPOINT_VARIABLE] = `http://127.0.0.1:${modelPort}/v1`;
+    environment[AUTH_VARIABLE] = AUTH_VALUE;
+    // The evaluator answers permissions it finds on GET /permission, so one operation has to actually
+    // reach that endpoint. Only `write` is put on "ask": the driver authorises a permission request under
+    // the tool name the engine announced the call with, and an "allow" policy would be decided inside the
+    // gateway without ever publishing a pending request. This is the documented deployment override, so
+    // the leg still runs the shipped profile rather than a private copy of it. The mock engine raises no
+    // permission at all, so its leg sets no override rather than waiting for something that never comes.
+    environment.PNP_CONFIGURED_POLICY_OVERRIDES = JSON.stringify({ write: "ask" });
     // OpenCode allows every operation unless its private config asks; without this the engine never
     // raises ACP session/request_permission and the approval loop below would have nothing to drive.
     environment.PNP_OPENCODE_NATIVE_PERMISSIONS = "ask";
@@ -276,11 +273,15 @@ try {
     log(`opencode executable: ${executable.path ?? "unresolved"} (${executable.source}, exists=${executable.exists})`);
     if (executable.path !== null) environment.PNP_OPENCODE_EXE_PATH = executable.path;
   }
+  // Values only for variables that carry no credential; PNP_INTEGRATION and PNP_CONFIGURED_PROFILE
+  // stay in the list precisely so their ABSENCE is visible evidence that the defaults ran.
   summary.engine_environment = Object.fromEntries(
-    ["AGENT_ENGINE", "PNP_MODE", "PNP_INTEGRATION", "PNP_CONFIGURED_PROFILE", "PNP_OPENCODE_EXE_PATH",
-      "PNP_OPENCODE_NATIVE_PERMISSIONS", "PNP_DATA_DIR"]
+    ["AGENT_ENGINE", "PNP_MODE", "PNP_INTEGRATION", "PNP_CONFIGURED_PROFILE", "PNP_CONFIGURED_POLICY_OVERRIDES",
+      ENDPOINT_VARIABLE, "PNP_OPENCODE_EXE_PATH", "PNP_OPENCODE_NATIVE_PERMISSIONS", "PNP_DATA_DIR"]
       .filter((key) => environment[key] !== undefined).map((key) => [key, environment[key]]),
   );
+  // The credential is recorded by variable NAME only, never by value.
+  summary.credential_variables = environment[AUTH_VARIABLE] === undefined ? [] : [AUTH_VARIABLE];
 
   const cli = npmCli();
   if (cli === undefined) throw new Error("npm-cli.js was not found next to the Node runtime; the documented start command is `npm start`.");
@@ -366,7 +367,9 @@ try {
     if (!existsSync(source)) continue;
     await writeFile(path.join(artifacts, name), redact(await readFile(source, "utf8")), "utf8");
   }
-  if (existsSync(profilePath)) await copyFile(profilePath, path.join(artifacts, "configured-profile.json"));
+  // The profile the run actually used is the shipped one; it is copied verbatim as evidence that
+  // nothing private was substituted for it.
+  if (engine !== "mock" && existsSync(shippedProfile)) await copyFile(shippedProfile, path.join(artifacts, "configured-profile.json"));
   const hostsSource = path.join(dataDirectory, "hosts");
   if (existsSync(hostsSource)) {
     const hostsTarget = path.join(artifacts, "hosts");

@@ -1,0 +1,15 @@
+{
+  "models": [
+    {
+      "selection": { "providerID": "competition", "modelID": "default" },
+      "endpointEnvironment": "PNP_MODEL_ENDPOINT",
+      "protocol": "openai-chat",
+      "headerEnvironment": { "Authorization": "PNP_MODEL_AUTHORIZATION" }
+    }
+  ],
+  "tools": [],
+  "policy": {
+    "default": "allow",
+    "operations": {}
+  }
+}

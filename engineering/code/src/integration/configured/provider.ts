@@ -2,7 +2,11 @@ import type { IntegrationContext, IntegrationProvider, ModelResolution, ModelSel
 import { PnpError } from "../../core/errors.ts";
 export interface ConfiguredModel {
   selection: ModelSelection;
-  endpoint: string;
+  /** Exactly one of these two is set (the profile parser enforces it): a literal URL, or the NAME
+   *  of an environment variable that holds it. The shipped profile uses the variable form so a
+   *  public repository never carries a deployment address, the same way headers already work. */
+  endpoint?: string;
+  endpointEnvironment?: string;
   protocol: "openai-chat" | "anthropic-messages";
   headerEnvironment: Readonly<Record<string, string>>;
 }
@@ -43,29 +47,57 @@ export class ConfiguredIntegration implements IntegrationProvider {
     console.warn(JSON.stringify({ event: "model.substituted", requested, selected: fallback.selection }));
     return { model: fallback, resolution: { requested, outcome: "substituted" } };
   }
-  /** Optional startup probe (see `probeIntegration` in ../index.ts). Confirms the credential
-   *  environment variables referenced by the default model are currently resolvable, without
-   *  caching any resolved secret value — headers are still re-resolved fresh on every prepare(). */
+  /**
+   * Resolves the model's endpoint and applies the transport rule to whatever came back: https
+   * anywhere, http on loopback only, never credentials in the URL. A variable-backed endpoint is
+   * checked here rather than at load time because the value only exists in the process
+   * environment. Neither the value nor any part of it appears in a thrown message.
+   */
+  private endpointOf(model: ConfiguredModel): string {
+    const endpoint = model.endpointEnvironment === undefined
+      ? model.endpoint
+      : this.environment[model.endpointEnvironment];
+    if (endpoint === undefined || endpoint === "") {
+      throw model.endpointEnvironment === undefined
+        ? new PnpError("INTEGRATION_CONFIG_INVALID", "The configured model has no endpoint.", 503)
+        : new PnpError("MODEL_ENDPOINT_MISSING", "Required model endpoint environment variable is absent.", 503);
+    }
+    let url: URL;
+    try { url = new URL(endpoint); }
+    catch { throw new PnpError("MODEL_ENDPOINT_INVALID", "Model endpoint is not a valid URL.", 400); }
+    if (!(url.protocol === "https:" || (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))) throw new PnpError("INSECURE_MODEL_ENDPOINT", "Non-local model transport requires TLS.", 400);
+    if (url.username || url.password) throw new PnpError("UNSAFE_MODEL_ENDPOINT", "Credentials are not allowed in a URL.", 400);
+    return endpoint;
+  }
+  /** Optional startup probe (see `probeIntegration` in ../index.ts). Confirms that every
+   *  environment variable the default model names — its endpoint and its headers — is currently
+   *  resolvable, and that the resolved endpoint is an approved transport. Startup output is read
+   *  by the operator, so the message names the missing VARIABLES; no value is ever read out, kept
+   *  or logged, and headers are still re-resolved fresh on every prepare(). */
   async probe(): Promise<void> {
     const [defaultModel] = this.models;
     if (defaultModel === undefined) throw new PnpError("INTEGRATION_CONFIG_INVALID", "At least one model is required.", 503);
-    for (const variable of Object.values(defaultModel.headerEnvironment)) {
-      if (!this.environment[variable]) throw new PnpError("MODEL_AUTH_MISSING", "Required credential environment variable is absent.", 503);
+    const missing = [
+      ...(defaultModel.endpointEnvironment === undefined ? [] : [defaultModel.endpointEnvironment]),
+      ...Object.values(defaultModel.headerEnvironment),
+    ].filter((variable) => !this.environment[variable]);
+    if (missing.length > 0) {
+      throw new PnpError("MODEL_ENVIRONMENT_MISSING",
+        `The configured integration profile names environment variables that are not set: ${[...new Set(missing)].join(", ")}.`, 503);
     }
+    this.endpointOf(defaultModel);
   }
   async prepare(input: Parameters<IntegrationProvider["prepare"]>[0]): Promise<IntegrationContext> {
     if (input.signal.aborted) throw new PnpError("EXECUTION_CANCELLED", "Model preparation was cancelled.", 409);
     const { model, resolution } = this.resolve(input.request.model);
-    const url = new URL(model.endpoint);
-    if (!(url.protocol === "https:" || (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))) throw new PnpError("INSECURE_MODEL_ENDPOINT", "Non-local model transport requires TLS.", 400);
-    if (url.username || url.password) throw new PnpError("UNSAFE_MODEL_ENDPOINT", "Credentials are not allowed in a URL.", 400);
+    const endpoint = this.endpointOf(model);
     const headers: Record<string, string> = {};
     for (const [name, variable] of Object.entries(model.headerEnvironment)) {
       const value = this.environment[variable];
       if (!value) throw new PnpError("MODEL_AUTH_MISSING", "Required credential environment variable is absent.", 503);
       headers[name] = value;
     }
-    return { model: { selection: model.selection, endpoint: model.endpoint, protocol: model.protocol, headers, resolution },
+    return { model: { selection: model.selection, endpoint, protocol: model.protocol, headers, resolution },
       tools: this.tools, assets: [], authorize: async (request) => this.policy(request.operation) };
   }
 }
