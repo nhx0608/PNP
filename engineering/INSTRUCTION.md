@@ -23,15 +23,24 @@ npm run build
 
 ## 3. 启动与切换
 
+规范字面形式，在交付包的 `code/` 目录下执行：
+
 ```powershell
-$env:AGENT_ENGINE='opencode'
 $env:PNP_DATA_DIR='D:\pnp-data'
 $env:PNP_MODEL_ENDPOINT='https://<模型服务主机>/v1'
 $env:PNP_MODEL_AUTHORIZATION='Bearer <凭据>'
-npm start -- --port 6217 --host localhost
+.\gateway.cmd --engine opencode --port 6217
 ```
 
-修改环境变量后重启。也支持 `--engine`；与 `AGENT_ENGINE` 冲突时启动失败。正式运行不设置 `PNP_MODE=development`。
+等价形式（三选一，效果相同）：
+
+```powershell
+.\gateway.ps1 --engine opencode --port 6217      # PowerShell
+./gateway --engine opencode --port 6217           # POSIX shell
+$env:AGENT_ENGINE='opencode'; npm start -- --port 6217 --host localhost
+```
+
+`gateway.cmd`/`gateway.ps1`/`gateway` 都在 `code/` 下，内部执行 `node dist/main.js`，因此先按第 2 节 `npm run build`。引擎既可用 `--engine` 指定，也可用环境变量 `AGENT_ENGINE`；两者都给出时必须一致，冲突以 `ENGINE_CONFIGURATION_CONFLICT` 启动失败，都不给出以 `ENGINE_NOT_FOUND` 失败。`--port` 默认 6217；`--host` 默认 `localhost`，会同时绑定 `127.0.0.1` 与 `::1`，允许的绑定地址仍只有回环（`127.0.0.1`/`localhost`/`::1`）。修改环境变量后重启。正式运行不设置 `PNP_MODE=development`。
 
 集成是交付包内的**配置**，不是启动门禁：非 mock 引擎默认按 `PNP_INTEGRATION=configured` 读取随包交付的 `code/config/competition-profile.json`。该档只写环境变量的**名字**（`PNP_MODEL_ENDPOINT`、`PNP_MODEL_AUTHORIZATION`），端点地址与凭据只存在于启动进程的环境变量里，不落盘、不入仓库。档里点名的变量缺失时在监听端口之前以 `MODEL_ENVIRONMENT_MISSING` 失败，并列出缺少哪几个变量名（不打印取值）。需要自带模型/工具/策略档时用 `PNP_CONFIGURED_PROFILE` 指向绝对路径；只需在交付档之上改某个操作的策略时用 `PNP_CONFIGURED_POLICY_OVERRIDES`（JSON，例如 `{"write":"ask"}`）。
 

@@ -224,10 +224,11 @@ try {
   log(`mock model service on ${summary.model_endpoint}`);
 
   // ------------------------------------------------------------ gateway process
-  // Started exactly as INSTRUCTION.md tells the assessor to start it: AGENT_ENGINE in the
-  // environment, `npm start -- --port 6217 --host localhost`. The competition's default port and
-  // the documented command line are what this smoke exercises, not a private shortcut; only
-  // --gateway-port exists for a developer whose 6217 is taken.
+  // Started exactly as INSTRUCTION.md tells the assessor to start it. The real-engine leg uses the
+  // specification's literal form -- the `gateway` launcher with `--engine <engine> --port <port>`,
+  // no AGENT_ENGINE and no --host, so the documented default bind is what gets probed. The mock leg
+  // keeps the npm form so both documented commands stay exercised. The competition's default port
+  // is what this smoke uses; only --gateway-port exists for a developer whose 6217 is taken.
   const gatewayPort = Number(values["gateway-port"] ?? 6217);
   if (!Number.isInteger(gatewayPort) || gatewayPort < 1 || gatewayPort > 65535) throw new Error("--gateway-port must be a TCP port.");
   if (!await portFree(gatewayPort)) {
@@ -254,6 +255,9 @@ try {
     environment.PNP_INTEGRATION = "mock";
     delete environment.PNP_OPENCODE_NATIVE_PERMISSIONS;
   } else {
+    // The launcher carries `--engine`; the specification's command line names no environment
+    // variable, and an AGENT_ENGINE left here would hide a launcher that dropped the flag.
+    delete environment.AGENT_ENGINE;
     // No PNP_INTEGRATION and no PNP_CONFIGURED_PROFILE: the shipped profile is the default, and
     // these two variables are all a deployment supplies for the model it names.
     environment[ENDPOINT_VARIABLE] = `http://127.0.0.1:${modelPort}/v1`;
@@ -283,22 +287,41 @@ try {
   // The credential is recorded by variable NAME only, never by value.
   summary.credential_variables = environment[AUTH_VARIABLE] === undefined ? [] : [AUTH_VARIABLE];
 
-  const cli = npmCli();
-  if (cli === undefined) throw new Error("npm-cli.js was not found next to the Node runtime; the documented start command is `npm start`.");
-  const startArguments = ["start", "--", "--port", String(gatewayPort), "--host", "localhost"];
-  summary.startup_command = `npm ${startArguments.join(" ")}`;
-  gateway = launch(process.execPath, [cli, ...startArguments], {
+  let command;
+  let commandArguments;
+  if (engine === "mock") {
+    const cli = npmCli();
+    if (cli === undefined) throw new Error("npm-cli.js was not found next to the Node runtime; the documented start command is `npm start`.");
+    const startArguments = ["start", "--", "--port", String(gatewayPort), "--host", "localhost"];
+    command = process.execPath;
+    commandArguments = [cli, ...startArguments];
+    summary.startup_command = `npm ${startArguments.join(" ")}`;
+  } else {
+    // `gateway --engine <engine> --port <port>`, the specification's literal start command, through
+    // the launcher a delivered package actually contains. cmd.exe runs the .cmd on Windows; the
+    // POSIX script is exec'd directly, so the process this smoke tears down is the gateway itself.
+    const launcherName = process.platform === "win32" ? "gateway.cmd" : "gateway";
+    const launcher = path.join(codeRoot, launcherName);
+    if (!existsSync(launcher)) throw new Error(`launcher ${launcher} is missing; it ships next to package.json.`);
+    const launcherArguments = ["--engine", engine, "--port", String(gatewayPort)];
+    command = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : launcher;
+    commandArguments = process.platform === "win32" ? ["/d", "/s", "/c", launcher, ...launcherArguments] : launcherArguments;
+    summary.startup_command = `${process.platform === "win32" ? ".\\gateway.cmd" : "./gateway"} ${launcherArguments.join(" ")}`;
+  }
+  summary.startup_uses_agent_engine = environment.AGENT_ENGINE !== undefined;
+  gateway = launch(command, commandArguments, {
     cwd: codeRoot,
     stdio: ["ignore", openSync(gatewayStdout, "a"), openSync(gatewayStderr, "a")],
     env: environment,
   });
   let gatewayExit = null;
   gateway.once("exit", (code, signal) => { gatewayExit = { code, signal }; });
-  log(`gateway via \`${summary.startup_command}\` (npm pid ${gateway.pid}), AGENT_ENGINE=${engine}`);
+  log(`gateway via \`${summary.startup_command}\` (pid ${gateway.pid}), AGENT_ENGINE=${environment.AGENT_ENGINE ?? "(unset)"}`);
 
-  // `--host localhost` must serve both address families the assessor's client may resolve to:
-  // Windows resolves localhost to ::1 first, a client may still dial 127.0.0.1. Both are probed
-  // before the protocol client runs, and a gateway that answers on only one fails here.
+  // The bind must serve both address families the assessor's client may resolve to: Windows
+  // resolves localhost to ::1 first, a client may still dial 127.0.0.1. Both are probed before the
+  // protocol client runs, and a gateway that answers on only one fails here -- which is exactly
+  // what the real-engine leg, which passes no --host at all, checks about the default.
   const readyBudgetMs = engine === "opencode" ? 120_000 : 60_000;
   summary.bind_probe = await probeBind(summary.gateway_hosts, readyBudgetMs, () => gatewayExit !== null);
   for (const probe of summary.bind_probe) {

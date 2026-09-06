@@ -26,7 +26,10 @@ const releaseCodeDir = path.join(solutionDir, "code");
 // is opt-in via --include-tests: the requirements call for it excluded by default, with a switch
 // (see the task's packaging item).
 const KEEP_DIRS = ["src", "native", "config", "scripts", "assets"];
-const KEEP_FILES = ["package.json", "package-lock.json", "tsconfig.json", "toolchain.json", ".env.example", "README.md"];
+// The three launchers are what the specification's literal start command (`gateway --engine
+// opencode --port 6217`) resolves to on a delivered package, so they ship with it.
+const KEEP_FILES = ["package.json", "package-lock.json", "tsconfig.json", "toolchain.json", ".env.example", "README.md",
+  "gateway", "gateway.cmd", "gateway.ps1"];
 if (args["include-tests"]) KEEP_DIRS.push("tests");
 
 // Defense in depth even inside an allow-listed directory: a stray build artefact, database file,

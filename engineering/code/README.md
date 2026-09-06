@@ -47,7 +47,7 @@ HTTP 契约测试需要完整依赖。真实引擎和内网测试不由 Mock 结
 
 ## 端到端冒烟（e2e）
 
-`scripts/e2e/` 用真实网关进程、真实引擎和北向 HTTP 协议跑完整一轮。网关的启动方式与 `INSTRUCTION.md` 给评测方的命令逐字一致：环境变量 `AGENT_ENGINE`，命令 `npm start -- --port 6217 --host localhost`，默认端口 6217（本机 6217 被占用时可用 `--gateway-port` 改，仅限本地）；就绪探测同时打 `http://localhost:6217` 与 `http://127.0.0.1:6217`，只答其一算失败。**唯一被 Mock 的是模型服务**：
+`scripts/e2e/` 用真实网关进程、真实引擎和北向 HTTP 协议跑完整一轮。网关的启动方式与 `INSTRUCTION.md` 给评测方的命令逐字一致：真实引擎一路走规范字面形式，即启动脚本 `gateway.cmd`（Windows）/`./gateway`（POSIX）加 `--engine <引擎> --port <端口>`，环境里没有 `AGENT_ENGINE`，也不传 `--host`，因此被验证的正是文档写明的默认绑定；mock 一路保留 `AGENT_ENGINE` 加 `npm start -- --port 6217 --host localhost`。默认端口 6217（本机 6217 被占用时可用 `--gateway-port` 改，仅限本地）；就绪探测同时打 `http://localhost:6217` 与 `http://127.0.0.1:6217`，只答其一算失败。**唯一被 Mock 的是模型服务**：
 `mock-model-server.mjs` 在 `127.0.0.1` 上实现 OpenAI Chat Completions（流式与非流式）。
 
 ```powershell

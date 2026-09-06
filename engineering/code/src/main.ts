@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -27,7 +28,11 @@ const args = parseArgs({ options: { engine: { type: "string" }, port: { type: "s
 const engineId = selectEngine(args.values.engine, process.env.AGENT_ENGINE);
 const development = process.env.PNP_MODE === "development";
 const engine = await loadEngine(engineId, development);
-const host = args.values.host ?? process.env.PNP_HOST ?? "127.0.0.1";
+// The specification's default is `localhost`, and Fastify 5 resolves it to BOTH loopback families
+// (127.0.0.1 and ::1). Defaulting to 127.0.0.1 instead left a client that resolves localhost to
+// ::1 first — the Windows default — depending on its own address fallback. The allowed set is
+// unchanged: loopback only.
+const host = args.values.host ?? process.env.PNP_HOST ?? "localhost";
 if (!["127.0.0.1", "localhost", "::1"].includes(host)) throw new PnpError("UNSUPPORTED_BIND_ADDRESS", "This gateway exposes local assessment APIs only.", 400);
 const port = Number(args.values.port ?? process.env.PNP_PORT ?? 6217);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new PnpError("VALIDATION_ERROR", "Invalid port.", 400);
