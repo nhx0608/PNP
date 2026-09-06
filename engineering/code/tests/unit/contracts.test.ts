@@ -275,6 +275,16 @@ test("start-run storage failure permanently removes gateway readiness", async ()
     assert.equal(f.core.readiness, false);
   } finally { await f.clean(true); }
 });
+test("online diagnostics remain safely readable after storage becomes unavailable", async () => {
+  const f = await create();
+  await f.store.close();
+  try {
+    const diagnostics = await f.core.diagnostics();
+    assert.equal(diagnostics.ready, false);
+    assert.equal(diagnostics.sessions, null);
+    assert.ok(Array.isArray(diagnostics.storage));
+  } finally { await rm(f.dir, { recursive: true, force: true }); }
+});
 test("streaming known secret prefixes are held until they can be redacted", () => {
   const redactor = new Redactor(["secret-long-key"]);
   assert.equal(redactor.streamText("Output secret-long"), "Output ");

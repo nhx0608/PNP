@@ -1,12 +1,14 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+const codeRoot = fileURLToPath(new URL("../", import.meta.url));
 function walk(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => e.isDirectory()
     ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]);
 }
 const violations = [];
-for (const file of walk("src").filter((f) => f.endsWith(".ts"))) {
-  const normalized = file.replaceAll("\\", "/");
+for (const file of walk(path.join(codeRoot, "src")).filter((f) => f.endsWith(".ts"))) {
+  const normalized = path.relative(codeRoot, file).replaceAll("\\", "/");
   const text = readFileSync(file, "utf8");
   const imports = [...text.matchAll(/(?:from\s*|import\s*\(\s*|import\s+)["']([^"']+)["']/g)].map((m) => m[1]);
   for (const target of imports) {

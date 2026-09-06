@@ -6,7 +6,9 @@ import { GatewayCore } from "./core/gateway-core.ts";
 import { buildApp } from "./gateway/app.ts";
 import { loadEngine, selectEngine } from "./registry/index.ts";
 import { loadIntegration } from "./integration/index.ts";
-import { acquireInstanceLock } from "./runtime/instance-lock.ts";
+import { acquireProcessLifetimeLock } from "./runtime/instance-lock.ts";
+import { LocalProcessHost } from "./runtime/process-host.ts";
+import { recoverOwnedState } from "./runtime/recovery.ts";
 import { PnpError } from "./core/errors.ts";
 
 const args = parseArgs({ options: { engine: { type: "string" }, port: { type: "string" }, host: { type: "string" } } });
@@ -23,7 +25,7 @@ const capacity = Number(process.env.PNP_MAX_RESIDENT_SESSIONS ?? 8);
 if (!Number.isInteger(capacity) || capacity < 1 || capacity > 64) throw new PnpError("VALIDATION_ERROR", "Invalid resident session capacity.", 400);
 const data = path.resolve(process.env.PNP_DATA_DIR ?? "data");
 await mkdir(data, { recursive: true });
-const unlock = await acquireInstanceLock(path.join(data, "gateway.lock"));
+const unlock = await acquireProcessLifetimeLock(data);
 let store: StateStore | undefined;
 let app: ReturnType<typeof buildApp> | undefined;
 let closing = false;
@@ -36,7 +38,12 @@ const shutdown = async () => {
 };
 try {
   store = new StateStore(path.join(data, "pnp.db"));
-  const core = new GatewayCore(store, engine, provider, { dataDirectory: data, maxResidentSessions: capacity });
+  const processHost = new LocalProcessHost(data);
+  const recovery = await recoverOwnedState(store, processHost, data);
+  if (recovery.invalidRecords > 0 || recovery.unverifiedRecords > 0) {
+    throw new PnpError("RECOVERY_EVIDENCE_INVALID", "Owned process records require operator inspection.", 503);
+  }
+  const core = new GatewayCore(store, engine, provider, { dataDirectory: data, maxResidentSessions: capacity, processHost });
   app = buildApp(core);
   process.once("SIGINT", () => { void shutdown().catch(() => { process.exitCode = 1; }); });
   process.once("SIGTERM", () => { void shutdown().catch(() => { process.exitCode = 1; }); });

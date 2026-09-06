@@ -94,9 +94,16 @@ namespace PNP {
         if (operation == "inspect") {
           job = OpenJobObject(4, false, name);
           int error = Marshal.GetLastWin32Error();
-          if (job == IntPtr.Zero) { Emit(new { type="inspection", quiescent=(error==2), error=error }); return; }
-          Emit(new { type="inspection", quiescent=IsEmpty(job), error=0 }); return;
+          if (job == IntPtr.Zero) { Emit(new { type="inspection", quiescent=(error==2), error=error, windowsSessionId=Process.GetCurrentProcess().SessionId }); return; }
+          Emit(new { type="inspection", quiescent=IsEmpty(job), error=0, windowsSessionId=Process.GetCurrentProcess().SessionId }); return;
         }
+        // Do not create a Job or process until the Node owner has durably recorded
+        // the Windows object namespace in which this supervisor operates.
+        Emit(new { type="prepared", windowsSessionId=Process.GetCurrentProcess().SessionId });
+        string proceedLine=Console.ReadLine();
+        var proceed=proceedLine==null ? null : Json.Deserialize<Dictionary<string,object>>(proceedLine);
+        if (proceed==null || !proceed.ContainsKey("type") || (string)proceed["type"]!="proceed")
+          throw new InvalidOperationException("LAUNCH_NOT_COMMITTED");
         job = CreateJobObject(IntPtr.Zero, name);
         if (job == IntPtr.Zero) throw new InvalidOperationException("CREATE_JOB_FAILED");
         if (Marshal.GetLastWin32Error() == 183) throw new InvalidOperationException("JOB_ALREADY_EXISTS");
@@ -146,7 +153,7 @@ namespace PNP {
         });
         int parentPid=Convert.ToInt32(config["parentPid"]);
         Task.Run(() => { try { Process.GetProcessById(parentPid).WaitForExit(); } catch { } TerminateJobObject(ownedJob, 1); });
-        Emit(new { type="ready", pid=pi.pid, jobName=name });
+        Emit(new { type="ready", pid=pi.pid, jobName=name, windowsSessionId=Process.GetCurrentProcess().SessionId });
         WaitForSingleObject(pi.process, UInt32.MaxValue);
         uint code; GetExitCodeProcess(pi.process, out code);
         // A root exit must not strand descendants waiting on inherited pipes.

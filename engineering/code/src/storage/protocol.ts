@@ -39,4 +39,9 @@ export type Operation = keyof Operations;
 export interface WorkerRequest { id: number; op: Operation; input: unknown }
 export type WorkerReply =
   | { id: number; ok: true; value: unknown }
-  | { id: number; ok: false; code: string; message: string; status: number };
+  | { id: number; ok: false; code: string; message: string; status: number; diagnostic?: StorageDiagnostic };
+export interface StorageDiagnostic {
+  category: "sqlite" | "worker" | "timeout";
+  code?: string;
+  outcome: "known-failed" | "unknown";
+}

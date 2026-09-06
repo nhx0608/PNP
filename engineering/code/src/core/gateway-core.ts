@@ -103,7 +103,13 @@ export class GatewayCore {
   get engineId(): string { return this.engine.descriptor.id; }
   get channelId(): string { return this.engine.descriptor.channelId; }
   async diagnostics() {
-    return { ...(await this.store.call("diagnostics", null)), ready: this.readiness,
+    let persisted: { sessions: number | null; runs: number | null; interrupted: number | null; blocked: number | null };
+    try { persisted = await this.store.call("diagnostics", null); }
+    catch (error) {
+      this.observeFailure(error);
+      persisted = { sessions: null, runs: null, interrupted: null, blocked: null };
+    }
+    return { ...persisted, ready: this.readiness, storage: this.store.diagnosticsSnapshot(),
       activeRuns: this.active.size, residentChannels: this.channels.size, engine: this.engineId, channel: this.channelId };
   }
   async createSession(directory: string, title?: string): Promise<Session> {

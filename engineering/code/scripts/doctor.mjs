@@ -1,15 +1,18 @@
 import { readFileSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { parseArgs } from "node:util";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+const codeRoot = fileURLToPath(new URL("../", import.meta.url));
 const args = parseArgs({ options: { engine: { type: "string" } } });
 const selected = process.env.AGENT_ENGINE ?? args.values.engine;
 const conflict = !!(process.env.AGENT_ENGINE && args.values.engine && process.env.AGENT_ENGINE !== args.values.engine);
-const toolchain = JSON.parse(readFileSync("toolchain.json", "utf8"));
+const toolchain = JSON.parse(readFileSync(path.join(codeRoot, "toolchain.json"), "utf8"));
 const checks = [
   { id: "node-version", passed: process.versions.node === toolchain.node, observed: process.versions.node },
   { id: "target-os", passed: process.platform === "win32", observed: process.platform },
-  { id: "dependency-lock", passed: existsSync("package-lock.json") },
-  { id: "compiled-entry", passed: existsSync("dist/main.js") },
+  { id: "dependency-lock", passed: existsSync(path.join(codeRoot, "package-lock.json")) },
+  { id: "compiled-entry", passed: existsSync(path.join(codeRoot, "dist/main.js")) },
   { id: "selected-engine", passed: !!selected && selected !== "mock" && !conflict, observed: selected },
 ];
 if (process.platform === "win32") {

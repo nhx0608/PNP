@@ -56,7 +56,7 @@ C 交付内部模型、工具和权限配置。`config/internal.example.json` �
 
 可使用 `Idempotency-Key` 请求级防重，但不能保证外部消息系统 exactly-once。
 
-异常退出不自动重放。存在残留实例锁时执行 `npm run recover`；停止证据不足会拒绝解锁。禁止手动删锁后立即运行新任务。
+异常退出不自动重放。Gateway 启动时会在取得进程生命周期独占锁后自动核验全部宿主记录；只有停止证据完整的 Session 才解除阻断。停止证据不足时保持 not-ready，可退出后执行 `npm run recover` 重试同一核验流程。禁止手动删锁后立即运行新任务。
 
 ## 6. 诊断与关闭
 

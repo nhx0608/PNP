@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { statSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, open, rename, unlink } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,13 +53,36 @@ export class LocalProcessHost implements ProcessHost {
     let stopPromise: Promise<StopEvidence> | undefined;
     let launching = true;
     let launchSent = process.platform !== "win32";
+    let launchCommitted = process.platform !== "win32";
     let abortRequested = false;
     let decoderFailure: PnpError | undefined;
     const engineDecoder = new JsonlDecoder();
     const helperDecoder = new JsonlDecoder();
     const record = { hostId, sessionId: spec.sessionId, ownerToken: spec.ownerToken, parentPid: process.pid,
-      generation, jobName, platform: process.platform, helperPid: 0, quiescent: false };
-    const save = async () => { await writeFile(path.join(this.directory, `${hostId}.json`), JSON.stringify(record), { mode: 0o600 }); };
+      generation, jobName, platform: process.platform, helperPid: 0, windowsSessionId: null as number | null, quiescent: false };
+    const recordPath = path.join(this.directory, `${hostId}.json`);
+    let saveTail = Promise.resolve();
+    const save = (): Promise<void> => {
+      const serialized = JSON.stringify(record);
+      const temporary = path.join(this.directory, `${hostId}.${randomUUID()}.tmp`);
+      const publish = async () => {
+        let handle: FileHandle | undefined;
+        try {
+          handle = await open(temporary, "wx", 0o600);
+          await handle.writeFile(serialized);
+          await handle.sync();
+          await handle.close();
+          handle = undefined;
+          await rename(temporary, recordPath);
+        } finally {
+          await handle?.close().catch(() => undefined);
+          await unlink(temporary).catch(() => undefined);
+        }
+      };
+      const attempt = saveTail.catch(() => undefined).then(publish);
+      saveTail = attempt;
+      return attempt;
+    };
     const dispatch = (frame: string) => {
       if (listeners.size === 0) {
         bufferedBytes += Buffer.byteLength(frame);
@@ -95,7 +119,7 @@ export class LocalProcessHost implements ProcessHost {
           try { if (child.pid !== undefined) process.kill(-child.pid, 0); evidence = false; }
           catch (e) { evidence = e instanceof Error && "code" in e && e.code === "ESRCH"; }
         } else if (!evidence) {
-          evidence = (await this.reconcile(record as unknown as Json)).quiescent;
+          evidence = !launchCommitted || (await this.reconcile(record as unknown as Json)).quiescent;
         }
         record.quiescent = evidence;
         await save();
@@ -157,8 +181,24 @@ export class LocalProcessHost implements ProcessHost {
       try {
         if (process.platform !== "win32") { for (const line of engineDecoder.push(chunk)) dispatch(line); return; }
         for (const frame of helperDecoder.push(chunk)) {
-          const event = JSON.parse(frame) as { type: string; data?: string; quiescent?: boolean; drained?: boolean };
-          if (event.type === "ready") { launching = false; ready.resolve(); }
+          const event = JSON.parse(frame) as { type: string; data?: string; quiescent?: boolean; drained?: boolean; windowsSessionId?: number };
+          if (event.type === "prepared") {
+            if (!Number.isInteger(event.windowsSessionId)) throw new PnpError("HOST_FAILURE", "Windows supervisor identity is missing.", 503);
+            record.windowsSessionId = event.windowsSessionId!;
+            void save().then(async () => {
+              if (abortRequested || signal.aborted) await controlWrite(child!, { type: "terminate" });
+              else { launchCommitted = true; await controlWrite(child!, { type: "proceed" }); }
+            }).catch(() => {
+              ready.reject(new PnpError("HOST_FAILURE", "Windows supervisor identity could not be recorded.", 503));
+              void terminate().catch(() => undefined);
+            });
+          }
+          else if (event.type === "ready") {
+            if (!launchCommitted || !Number.isInteger(event.windowsSessionId) || event.windowsSessionId !== record.windowsSessionId)
+              throw new PnpError("HOST_FAILURE", "Windows supervisor identity changed during launch.", 503);
+            launching = false;
+            ready.resolve();
+          }
           else if (event.type === "stdout") for (const line of engineDecoder.push(Buffer.from(event.data!, "base64"))) dispatch(line);
           else if (event.type === "exit") {
             evidence = event.quiescent === true;
@@ -240,29 +280,45 @@ export class LocalProcessHost implements ProcessHost {
   }
   async reconcile(previous: Json): Promise<StopEvidence> {
     if (previous === null || typeof previous !== "object" || Array.isArray(previous)) return { quiescent: false, method: "process-tree" };
-    const value = previous as { hostId?: Json; jobName?: Json; helperPid?: Json; platform?: Json };
-    if (typeof value.helperPid !== "number" || value.helperPid <= 0 || alive(value.helperPid)) return { quiescent: false, method: "process-tree" };
+    const value = previous as { hostId?: Json; sessionId?: Json; ownerToken?: Json; parentPid?: Json; generation?: Json;
+      jobName?: Json; helperPid?: Json; platform?: Json; windowsSessionId?: Json; quiescent?: Json };
+    const validRecord = typeof value.hostId === "string" && value.hostId.length > 0
+      && typeof value.sessionId === "string" && value.sessionId.length > 0
+      && typeof value.ownerToken === "string" && value.ownerToken.length > 0
+      && typeof value.parentPid === "number" && Number.isSafeInteger(value.parentPid) && value.parentPid > 0
+      && typeof value.generation === "number" && Number.isSafeInteger(value.generation) && value.generation > 0
+      && typeof value.helperPid === "number" && Number.isSafeInteger(value.helperPid) && value.helperPid >= 0
+      && typeof value.quiescent === "boolean";
+    if (!validRecord) return { quiescent: false, method: "process-tree" };
+    const hostId = value.hostId as string;
+    const helperPid = value.helperPid as number;
     if (value.platform !== process.platform) return { quiescent: false, method: "process-tree" };
+    if (process.platform === "win32" && value.jobName !== `Local\\PNP-${hostId}`) return { quiescent: false, method: "process-tree" };
+    // Durable stop evidence is stronger than later PID liveness: PIDs can be reused,
+    // and a clean pre-spawn cancellation intentionally records helperPid=0.
+    if (value.quiescent === true) return { quiescent: true, method: "process-tree" };
+    if (helperPid <= 0 || alive(helperPid)) return { quiescent: false, method: "process-tree" };
     if (process.platform !== "win32") {
-      try { process.kill(-value.helperPid, 0); return { quiescent: false, method: "process-tree" }; }
+      try { process.kill(-helperPid, 0); return { quiescent: false, method: "process-tree" }; }
       catch (e) { return { quiescent: e instanceof Error && "code" in e && e.code === "ESRCH", method: "process-tree" }; }
     }
-    if (typeof value.hostId !== "string" || value.jobName !== `Local\\PNP-${value.hostId}`) return { quiescent: false, method: "process-tree" };
     const helper = this.helper();
-    const result = deferred<boolean>();
+    const result = deferred<{ quiescent: boolean; windowsSessionId?: number }>();
     const decoder = new JsonlDecoder();
     helper.stdout.on("data", (chunk: Buffer) => {
-      try { for (const frame of decoder.push(chunk)) { const event = JSON.parse(frame); if (event.type === "inspection") result.resolve(event.quiescent === true); } }
-      catch { result.resolve(false); }
+      try { for (const frame of decoder.push(chunk)) { const event = JSON.parse(frame); if (event.type === "inspection") result.resolve({ quiescent: event.quiescent === true, windowsSessionId: event.windowsSessionId }); } }
+      catch { result.resolve({ quiescent: false }); }
     });
     helper.stderr.resume();
-    helper.stdin.on("error", () => result.resolve(false));
-    helper.on("error", () => result.resolve(false));
-    helper.on("close", () => result.resolve(false));
+    helper.stdin.on("error", () => result.resolve({ quiescent: false }));
+    helper.on("error", () => result.resolve({ quiescent: false }));
+    helper.on("close", () => result.resolve({ quiescent: false }));
     try {
       await controlWrite(helper, { operation: "inspect", jobName: value.jobName });
       helper.stdin.end();
-      return { quiescent: await bounded(result.promise, this.timeoutMs), method: "process-tree" };
+      const inspected = await bounded(result.promise, this.timeoutMs);
+      return { quiescent: inspected.quiescent && typeof value.windowsSessionId === "number"
+        && inspected.windowsSessionId === value.windowsSessionId, method: "process-tree" };
     } catch { return { quiescent: false, method: "process-tree" }; }
     finally { helper.kill(); }
   }

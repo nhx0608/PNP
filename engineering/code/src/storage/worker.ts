@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Message, Run, Session } from "../contracts/index.ts";
-import type { InteractionRow, Operations, WorkerReply, WorkerRequest } from "./protocol.ts";
+import type { InteractionRow, Operations, StorageDiagnostic, WorkerReply, WorkerRequest } from "./protocol.ts";
 import { PnpError } from "../core/errors.ts";
 
 if (parentPort === null) throw new Error("Storage must run in a worker.");
@@ -286,9 +286,22 @@ port.on("message", (request: WorkerRequest) => {
   let reply: WorkerReply;
   try { reply = { id: request.id, ok: true, value: handle(request) }; }
   catch (error) {
+    const rawCode = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+    const rawErrcode = typeof error === "object" && error !== null && "errcode" in error
+      && typeof error.errcode === "number" && Number.isSafeInteger(error.errcode) ? error.errcode : undefined;
+    const sqliteFailure = /^(?:ERR_)?SQLITE_[A-Z0-9_]+$/.test(rawCode) || rawErrcode !== undefined;
+    const readOnly = new Set<keyof Operations>(["getSession", "listSessions", "findRunByKey", "messages",
+      "diagnostics", "getRun", "listInteractions"]);
+    const diagnostic: StorageDiagnostic = {
+      category: sqliteFailure ? "sqlite" : "worker",
+      ...(sqliteFailure ? { code: `${rawCode || "SQLITE_ERROR"}${rawErrcode === undefined ? "" : `/${rawErrcode}`}` } : {}),
+      // A failed read cannot have committed a mutation. Write-side failures remain
+      // unknown unless the transaction layer can prove rollback durably completed.
+      outcome: readOnly.has(request.op) ? "known-failed" : "unknown",
+    };
     reply = error instanceof PnpError
       ? { id: request.id, ok: false, code: error.code, message: error.message, status: error.status }
-      : { id: request.id, ok: false, code: "STORAGE_ERROR", message: "Storage operation failed.", status: 503 };
+      : { id: request.id, ok: false, code: "STORAGE_ERROR", message: "Storage operation failed.", status: 503, diagnostic };
   }
   port.postMessage(reply);
 });
