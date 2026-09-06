@@ -22,8 +22,9 @@ const systemKeys = ["SystemRoot", "WINDIR", "SystemDrive", "PATH", "PATHEXT", "T
   "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "CommonProgramFiles", "ProgramData",
   "ALLUSERSPROFILE", "USERNAME", "USERDOMAIN", "HOMEDRIVE", "HOMEPATH",
   "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS", "OS", "PUBLIC", "SESSIONNAME", "PSModulePath"];
-export function baseEnvironment(): Record<string, string> {
-  return Object.fromEntries(systemKeys.flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]!]]));
+/** The source is injectable so a test can assert the allow-list without mutating the real process. */
+export function baseEnvironment(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  return Object.fromEntries(systemKeys.flatMap((key) => source[key] === undefined ? [] : [[key, source[key]!]]));
 }
 const diagnosticLimitBytes = 16 * 1024;
 const secretishKey = /key|token|secret|password|credential|cookie|authorization/i;
@@ -517,6 +518,10 @@ export class LocalProcessHost implements ProcessHost {
     try { await handshake(); }
     catch (error: unknown) {
       // Cancellation outranks the host exit it caused; the caller must see 409, not 502.
+      // Degrade on any supervisor failure, including one raised while creating the engine: a policy
+      // that blocks CreateProcess from PowerShell may still allow it here, and refusing to try costs
+      // the whole round. The supervisor's own phase stays in the diagnostics either way, so the
+      // second attempt replaces neither the diagnosis nor the evidence.
       const canDegrade = platform === "win32" && wiring === "helper" && !cancelled() && (helperErrorSeen || !launchCommitted);
       await terminate().catch(() => undefined);
       if (cancelled()) throw new PnpError("EXECUTION_CANCELLED", "Launch was cancelled.", 409);

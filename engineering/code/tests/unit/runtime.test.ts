@@ -18,6 +18,7 @@ import { StateStore } from "../../src/storage/store.ts";
 import { MockPack } from "../../src/engines/mock/pack.ts";
 import { MockIntegration } from "../../src/integration/mock/provider.ts";
 import { GatewayCore } from "../../src/core/gateway-core.ts";
+import { PnpError } from "../../src/core/errors.ts";
 
 test("JSONL preserves unicode separators and splits only on LF", () => {
   const decoder = new JsonlDecoder();
@@ -131,7 +132,15 @@ test("Windows launch failure records recoverable namespace and stop evidence", {
     await assert.rejects(host.start({
       executable: path.join(directory, "missing.exe"), args: [], cwd: directory, env: {},
       sessionId: "failed-launch", ownerToken: "failed-launch",
-    }, new AbortController().signal, new OwnedResourceScope()), { code: "HOST_FAILURE" });
+    }, new AbortController().signal, new OwnedResourceScope()), (error: unknown) => {
+      // The supervisor cannot create the engine, so the host degrades and tries directly; the honest
+      // code is that the process could not be started, and the supervisor's own phase must survive
+      // into the diagnostics rather than being replaced by the second, vaguer attempt.
+      assert.ok(error instanceof PnpError);
+      assert.equal(error.code, "HOST_START_FAILED");
+      assert.match(error.message, /supervisor failed in phase spawn/);
+      return true;
+    });
     const files = (await readdir(path.join(directory, "hosts"))).filter((file) => file.endsWith(".json"));
     assert.equal(files.length, 1);
     const record = JSON.parse(await readFile(path.join(directory, "hosts", files[0]!), "utf8"));

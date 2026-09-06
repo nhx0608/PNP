@@ -531,8 +531,8 @@
       "path": "code/src/runtime/process-host.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 37328,
-      "sha256": "5f873a9ea849dae10d5688c9add21852262933b1bca41a6102751e09cdfabfe1"
+      "bytes": 37833,
+      "sha256": "df490e274e1637111304bf3e4584a5ce0714ac6c33dc83440fc599f3f6f50e32"
     },
     {
       "path": "code/src/runtime/recovery.ts",
@@ -748,15 +748,15 @@
       "path": "code/tests/unit/process-host.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 34190,
-      "sha256": "52ca7a13ef43c0c8d36a9b37cb377ec55b94d20c467d1cc497e01eab21f23480"
+      "bytes": 35128,
+      "sha256": "32bea02281f856d3996767a8c0e0b1a242bba0aa47a18463e84ada11d3847bf9"
     },
     {
       "path": "code/tests/unit/runtime.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 13159,
-      "sha256": "57c1255c0849a2bc1bacb922e5478046ad3994282899fd5a8268196b1021f5d1"
+      "bytes": 13692,
+      "sha256": "ea1974d4cbac3d62c2dfb622d892c1efdbabc57587604ff926293072b32d3cf1"
     },
     {
       "path": "code/toolchain.json",

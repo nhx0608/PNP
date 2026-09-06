@@ -64,12 +64,9 @@ process.stdin.on("data", (chunk) => {
   }
 });
 if (mode === "die-now") process.exit(5);
-if (mode === "stubborn") {
-  // A wedged supervisor: it ignores the polite signal, which is the only way the
-  // process-id last resort is ever reached. The timer keeps it alive but bounded.
-  process.on("SIGTERM", () => {});
-  setTimeout(() => process.exit(0), 3000);
-}
+// The harness makes the forceful stop a no-op for a stubborn supervisor; this timer only
+// guarantees the process cannot outlive the test if that cleanup is ever missed.
+if (mode === "stubborn") setTimeout(() => process.exit(0), 15000);
 `;
 
 interface FakeOptions {
@@ -101,10 +98,21 @@ class FakeWindowsHost extends LocalProcessHost {
   protected override async helper(): Promise<ChildProcessWithoutNullStreams> {
     this.helperStarts++;
     if (this.options.helperThrows === true) throw new Error("supervisor source is unavailable");
-    return spawn(process.execPath, [this.script], {
+    const child = spawn(process.execPath, [this.script], {
       env: { ...process.env, PNP_FAKE: JSON.stringify(this.options) }, stdio: "pipe", shell: false,
     });
+    if (this.options.mode === "stubborn") {
+      // A wedged supervisor is the only way the process-id last resort is reached. Windows has no
+      // signal a child can ignore, so the resistance is modelled here instead of in the child: the
+      // forceful stop becomes a no-op and the real kill is kept for cleanup.
+      const real = child.kill.bind(child);
+      this.reap.push(() => { real("SIGKILL"); });
+      child.kill = () => true;
+    }
+    return child;
   }
+  /** Kills what the stubborn mode refused to kill, so a test never leaks a process. */
+  readonly reap: (() => void)[] = [];
   protected override runTool(file: string, args: readonly string[], _timeoutMs: number): Promise<{ code: number | null; stdout: string }> {
     void _timeoutMs;
     this.toolCalls.push({ file, args: [...args] });
@@ -170,7 +178,7 @@ test("a failed termination never re-opens the write channel and stays retryable"
     assert.equal(second.quiescent, false);
     assert.ok(host.toolCalls.length > callsBefore, "a failed stop must be retried, not cached");
     await assert.rejects(hosted.write("{\"still\":true}"), { code: "HOST_EXITED" });
-  } finally { await scope.stop(500); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(500); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
 });
 
 /* ------------------------------------------------- fix 2: graded reconciliation evidence */
@@ -243,7 +251,7 @@ test("an unavailable supervisor degrades to a plain spawn instead of refusing th
     assert.equal(record.mode, "degraded");
     assert.equal(record.imageName, "node.exe");
     assert.equal((await hosted.terminate()).quiescent, true);
-  } finally { await scope.stop(1000); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
 });
 
 test("a job that cannot be created degrades once the supervisor proves no engine exists", async () => {
@@ -258,7 +266,7 @@ test("a job that cannot be created degrades once the supervisor proves no engine
     assert.equal(record.mode, "degraded");
     assert.equal(record.helperPid, record.enginePid);
     assert.equal((await hosted.terminate()).quiescent, true);
-  } finally { await scope.stop(1000); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
 });
 
 test("the last resort kills by process id only and verifies with the process list", async () => {
@@ -283,7 +291,7 @@ test("the last resort kills by process id only and verifies with the process lis
       assert.equal(call.args.includes("/IM"), false, "killing by image name is forbidden");
     }
     assert.equal((await ownershipRecord(directory)).quiescent, true);
-  } finally { await scope.stop(1000); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
 });
 
 /* --------------------------------------------------------------- fix 4: the grace period */
@@ -301,7 +309,7 @@ test("termination asks for an orderly stop with a grace budget before anything i
     assert.equal(stop?.graceMs, 250, "the control frame must carry the grace budget");
     const launch = frames.find((frame) => (frame as { operation?: string }).operation === "launch");
     assert.equal((launch as { graceMs?: number } | undefined)?.graceMs, 250);
-  } finally { await scope.stop(1000); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
 });
 
 test("the native supervisor closes standard input and waits before destroying the job", async () => {
@@ -362,7 +370,7 @@ for (const shape of [
       assert.equal(exit.code, shape.expectedCode, "an undrained pipe must never replace the real exit code");
       assert.equal(exit.signal, null);
       assert.equal(evidence.quiescent, shape.expectedQuiescent);
-    } finally { await scope.stop(1000); await rm(directory, { recursive: true, force: true }); }
+    } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
   });
 }
 
@@ -381,7 +389,7 @@ test("an undrained trailing frame is discarded with a diagnostic, not raised as 
       const failure = await hosted.write("{}").then(() => undefined, (error: unknown) => error as Error);
       return failure !== undefined && /undrained trailing frame/.test(failure.message);
     });
-  } finally { await scope.stop(1000); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
 });
 
 /* ------------------------------------------------------- fix 6: the parent watchdog */
@@ -403,17 +411,13 @@ test("the inherited environment carries system identity and still no credentials
   const required = ["SystemDrive", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "CommonProgramFiles",
     "ProgramData", "ALLUSERSPROFILE", "USERNAME", "USERDOMAIN", "HOMEDRIVE", "HOMEPATH",
     "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS", "OS", "PUBLIC", "SESSIONNAME", "PSModulePath"];
-  const restore: [string, string | undefined][] = required.map((key) => [key, process.env[key]]);
-  process.env.PNP_FAKE_CREDENTIAL = "must-not-leak";
-  try {
-    for (const key of required) process.env[key] = `value-of-${key}`;
-    const environment = baseEnvironment();
-    for (const key of required) assert.equal(environment[key], `value-of-${key}`, key);
-    assert.equal(environment.PNP_FAKE_CREDENTIAL, undefined);
-  } finally {
-    delete process.env.PNP_FAKE_CREDENTIAL;
-    for (const [key, value] of restore) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
-  }
+  // A synthetic source instead of the real process environment: the real one already defines some of
+  // these on Windows, and mutating it made the assertion depend on the host machine.
+  const source: NodeJS.ProcessEnv = { PNP_FAKE_CREDENTIAL: "must-not-leak" };
+  for (const key of required) source[key] = `value-of-${key}`;
+  const environment = baseEnvironment(source);
+  for (const key of required) assert.equal(environment[key], `value-of-${key}`, key);
+  assert.equal(environment.PNP_FAKE_CREDENTIAL, undefined);
 });
 
 /* --------------------------------------- fix 8: one compilation unit with an artefact cache */
@@ -477,7 +481,7 @@ test("the engine process id from the ready frame is recorded as a second evidenc
     const hosted = await host.start(spec(directory, nodeExe, []), new AbortController().signal, scope);
     await waitFor(async () => Number((await ownershipRecord(directory)).enginePid) === 31337);
     await hosted.terminate();
-  } finally { await scope.stop(1000); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
 });
 
 /* ---------------------------------------------------- fix 11: redacted standard error tail */
@@ -494,7 +498,7 @@ test("standard error becomes a redacted bounded diagnostic instead of a bare exi
     assert.match(failure.message, /cannot find module/);
     assert.equal(/super-secret-value/.test(failure.message), false, "diagnostics must be redacted");
     assert.match(failure.message, /\[REDACTED\]/);
-  } finally { await scope.stop(1000); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
 });
 
 test("a bounded diagnostic keeps only the tail of a noisy engine", async () => {
@@ -507,7 +511,7 @@ test("a bounded diagnostic keeps only the tail of a noisy engine", async () => {
     assert.ok(failure !== undefined);
     assert.match(failure.message, /TAIL-MARKER/);
     assert.ok(failure.message.length < 4096, "the diagnostic must stay bounded");
-  } finally { await scope.stop(1000); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
 });
 
 /* --------------------------------------------------- fix 12: cancellation during startup */
@@ -521,7 +525,7 @@ test("cancellation during startup is reported as cancellation, not as a host exi
     const started = host.start(spec(directory, nodeExe, []), controller.signal, scope);
     setTimeout(() => controller.abort(), 60);
     await assert.rejects(started, { code: "EXECUTION_CANCELLED", status: 409 });
-  } finally { await scope.stop(1000); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
 });
 
 /* ----------------------------------------------------------- fix 13: idempotent teardown */
@@ -540,7 +544,7 @@ test("only a proven stop is cached, and repeat teardown has no further effect", 
     assert.equal(host.toolCalls.length, calls, "a proven stop has no side effects");
     assert.equal((await scope.stop(500)).quiescent, true, "closing a proven-silent channel also returns true");
     await assert.rejects(hosted.write("{}"), { code: "HOST_EXITED" });
-  } finally { await scope.stop(500); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(500); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
 });
 
 test("the resource scope shares one attempt, retries failures and survives a caller timeout", async () => {
