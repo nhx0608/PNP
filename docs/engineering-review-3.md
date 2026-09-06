@@ -129,3 +129,41 @@
 | 已在 PR #1 | §4 的九条 | 可按提交挑选合入 |
 
 以上判断均可用第 5 节的测试床一次性证伪；证伪不了的条目不必改。
+
+---
+
+## 7. 顶层裁决：GPT 提出需要架构级审定的五项策略
+
+裁决原则只有一条：**评测姿态下，"拒绝"的代价是整轮归零；"宽松"必须限定在部署边界之内并且可审计。** 凡是宽松只发生在"调用方给的名字/字段"层面、不扩大任何端点或权限面的，采纳；凡是会把未批准端点、未批准凭据或未批准路径放进来的，不采纳。
+
+| 条目 | 裁决 | 边界与记录 |
+|---|---|---|
+| **R1 单执行槽** | **按 `docs/spec/contracts.md` §3.1 已写明的规范落地**：全局一个活跃 Run；同会话第二个 `prompt_async` 409 `SESSION_BUSY`；跨会话请求进入有界 FIFO 队列等待，不立即拒绝；队列满才 409 `GATEWAY_BUSY`（带 `Retry-After`）。排队中不建 Run、不发 busy；deadline 从取得槽起算；排队中可 abort 且不产生 Run。 | 队列上限默认由 8 抬到 16（评测并发开会话时 8 偏小），`PNP_RUN_QUEUE_LIMIT` 可配。并发执行池不做——同桌面干扰是规范选择单槽的理由，评测证明需要并发前不推翻。 |
+| **R2 model 宽松映射** | **采纳**：不在配置档的 `model` 落到配置档默认模型。 | Run 记录写 `model.requested` 与 `model.resolution: "substituted"`，日志 warn；`PNP_MODEL_STRICT=1` 恢复 403。安全论证：配置档才是端点允许清单，调用方给的只是名字；替换到已批准端点不扩大任何访问面。 |
+| **R3 默认集成** | **采纳：集成是配置，不是代码交付**。默认读取交付包内的 `configured` 档；内网模型是档里的一个端点（`openai-chat` 或以 `protocol` 字段选择的 appid 变体）；`internal` 不再是独立的、可以"未实现"的 provider。 | 只有档缺失/无效或凭据环境变量缺失才拒绝启动，并指名是哪一项。凭据仍只走环境变量，不落盘、不进仓库。C 线交付的是档与协议变体，不是启动门禁。 |
+| **R4 自动创建 directory** | **采纳，有边界**：不存在则 `mkdir -p`（父目录可写）。 | 仍拒绝相对路径、指向文件的路径、位于 `PNP_DATA_DIR` 内或系统目录下的路径；会话记录 `directoryCreated: true`；删除会话永不删除该目录。 |
+| **R5 启动入口与默认 host** | **采纳**：`gateway.cmd`/`gateway.ps1` + `package.json#bin`；默认 host `localhost`。 | 允许的绑定地址集合不变（仍只有回环）。 |
+| **R6 围栏会话 abort** | 合并后 master 已是会话级（`gateway-core.ts:658-669`），**关闭**。 | — |
+| **R8 未知字段** | **采纳，限定范围**：评测方入站体（`POST /session`、`prompt_async`、两个 `reply`）忽略未知字段，必填字段类型仍校验。 | 管理/诊断端点保持严格。 |
+
+---
+
+## 8. 对 `224cfa9`（契约 1.1 `tool.observed`）的设计审查
+
+**认可**：驱动不再制造"失败的引擎结果"；`content`/`locations` 等部分事实以 patch 语义保存；恢复时给未闭合观察标 `result_unknown`；两种事件家族不混用；`ResourceScope.retire` 只在证据充分时移除。这些都对。
+
+**两处设计决定需要改**：
+
+**D1 未闭合的工具观察让整轮失败。** `drivers/acp/channel.ts:366-367` 在 `unresolved > 0` 时 `finish(..., "tool_result_missing", false)` → `state: "failed"`；Core 对 `completed` 且仍有非终态观察也抛 `ENGINE_PROTOCOL_ERROR`。真实引擎上只有 `write` 验证过会发终态更新；任何一个工具缺一条终态更新，用例即使给出了正确的最终答复也被判 failed，评测方拿到的是错误文本而不是引擎的答复。裁决：**轮次终态由引擎的 stopReason 决定**；未闭合的观察由 Core 追加 gateway-observation（`result_unknown`）——这正是 finally 块已有的语义——不改判轮次，也不由驱动伪造结果。"不伪造"与"不误判"可以同时成立。
+
+**D2 canonical 身份拒绝使用宣告标题。** OpenCode 的 ACP 更新没有 `name`，`tool_call` 宣告时 `title: "write"`（真机探测记录在 `docs/engines/opencode.md` §4.2）。在 `224cfa9` 的规则下，OpenCode 的轨迹**永远**没有 `tool_calls`、`info.finish: "tool-calls"` 和 `role: "tool"` 消息，只剩 parts 里的观察，冒烟断言也随之削弱为"不断言"。这与规范的参考消息形状分道扬镳，裁判模型读轨迹时看不到工具名。裁决：**canonical 名称 = `name` ?? 宣告时（phase `created`）的 title**，记录出处 `nameSource: "name" | "announced-title"`，之后的 title 变更永不改名。理由：引擎"以 write 这个标签宣告了这次调用"是真实观察，不是发明；驱动在权限侧已用同一规则（`policyName`），轨迹侧没有理由更严。随之恢复冒烟里被削弱的三条断言（`tool_calls` 含 `write`、`role: "tool"` 消息存在、`finish: "tool-calls"`）——它们此前在真实引擎上是通过的。
+
+**D3（小）**：观察 part 把 `title` 放在顶层；规范的 tool part 形状是 `tool` + `state.status` + `state.title`。镜像一份，不删原字段。
+
+验证要求：D1、D2 各配一条真实引擎冒烟断言与单元测试；仍以第 5 节的测试床为准。
+
+---
+
+## 9. 下一步
+
+用户确认第 7、8 节后：实现模型按 R1–R5、R8、D1–D3 落地，**每条一个独立提交并附一个测试床用例**（第 5 节的五条评测姿态断言随之补齐）；顶层模型只复审设计一致性与测试床结果，不逐行复审实现。
