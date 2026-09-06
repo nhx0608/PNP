@@ -2,16 +2,18 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { Json, StopEvidence } from "../../src/contracts/index.ts";
+import type { HostedProcess } from "../../src/contracts/host.ts";
 import { JsonlDecoder } from "../../src/runtime/jsonl.ts";
 import { OwnedResourceScope } from "../../src/runtime/resource-scope.ts";
 import { acquireInstanceLock } from "../../src/runtime/instance-lock.ts";
 import { LocalProcessHost, baseEnvironment, bootTimeMs, windowsHelperCommand } from "../../src/runtime/process-host.ts";
+import { removeTree } from "../kit/fs.ts";
 
 const nativeRoot = fileURLToPath(new URL("../../native/windows/", import.meta.url));
 
@@ -173,8 +175,9 @@ test("a failed termination never re-opens the write channel and stays retryable"
       ? { code: 0, stdout: taskRow(queriedPid(args)) } // still there, before and after the kill
       : { code: 0, stdout: "" } });
   const scope = new OwnedResourceScope();
+  let hosted: HostedProcess | undefined;
   try {
-    const hosted = await host.start(spec(directory, nodeExe, []), new AbortController().signal, scope);
+    hosted = await host.start(spec(directory, nodeExe, []), new AbortController().signal, scope);
     await hosted.write("{\"before\":true}");
     const first = await hosted.terminate();
     assert.equal(first.quiescent, false, "an unstoppable supervisor must not report quiescence");
@@ -184,7 +187,14 @@ test("a failed termination never re-opens the write channel and stays retryable"
     assert.equal(second.quiescent, false);
     assert.ok(host.toolCalls.length > callsBefore, "a failed stop must be retried, not cached");
     await assert.rejects(hosted.write("{\"still\":true}"), { code: "HOST_EXITED" });
-  } finally { await scope.stop(500); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
+  } finally {
+    await scope.stop(500);
+    for (const reap of host.reap) reap();
+    // The bounded scope stop returns while that third termination is still running; reaping the
+    // supervisor lets it finish and save the ownership record, so it is awaited before the tree goes.
+    await hosted?.terminate().catch(() => undefined);
+    await removeTree(directory);
+  }
 });
 
 /* ------------------------------------------------- fix 2: graded reconciliation evidence */
@@ -201,7 +211,7 @@ test("reconciliation grades evidence and never spawns a supervisor it does not n
     assert.equal((await host.reconcile(baseRecord({ helperPid: await reapedPid() }))).quiescent, true,
       "a dead supervisor already closed the job handle");
     assert.equal(host.helperStarts, 0, "none of the cheap verdicts may start an interpreter");
-  } finally { await rm(directory, { recursive: true, force: true }); }
+  } finally { await removeTree(directory); }
 });
 
 test("a missing Windows session id degrades the verdict instead of vetoing it", async () => {
@@ -213,7 +223,7 @@ test("a missing Windows session id degrades the verdict instead of vetoing it", 
     assert.equal((await host.reconcile(baseRecord({ windowsSessionId: 8 }))).quiescent, false,
       "a recorded session id that disagrees with the live one is still conclusive");
     assert.equal(host.helperStarts, 3);
-  } finally { await rm(directory, { recursive: true, force: true }); }
+  } finally { await removeTree(directory); }
 });
 
 test("a reused process id is decided by image name before the job is inspected", async () => {
@@ -228,14 +238,14 @@ test("a reused process id is decided by image name before the job is inspected",
     assert.equal((await matching.reconcile(baseRecord({}))).quiescent, false,
       "a live supervisor with a matching image and a non-empty job is not quiescent");
     assert.equal(matching.helperStarts, 1);
-  } finally { await rm(directory, { recursive: true, force: true }); }
+  } finally { await removeTree(directory); }
 });
 
 test("an unreadable process list is unknown liveness, never stop evidence", async () => {
   const { directory, script } = await workspace("unknown");
   const host = new FakeWindowsHost(directory, script, { inspectQuiescent: false, tool: () => ({ code: 1, stdout: "" }) });
   try { assert.equal((await host.reconcile(baseRecord({}))).quiescent, false); }
-  finally { await rm(directory, { recursive: true, force: true }); }
+  finally { await removeTree(directory); }
 });
 
 /* ------------------------------------------- fix 3: degraded mode and the taskkill path */
@@ -257,7 +267,7 @@ test("an unavailable supervisor degrades to a plain spawn instead of refusing th
     assert.equal(record.mode, "degraded");
     assert.equal(record.imageName, "node.exe");
     assert.equal((await hosted.terminate()).quiescent, true);
-  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await removeTree(directory); }
 });
 
 test("a job that cannot be created degrades once the supervisor proves no engine exists", async () => {
@@ -272,7 +282,7 @@ test("a job that cannot be created degrades once the supervisor proves no engine
     assert.equal(record.mode, "degraded");
     assert.equal(record.helperPid, record.enginePid);
     assert.equal((await hosted.terminate()).quiescent, true);
-  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await removeTree(directory); }
 });
 
 test("the last resort kills by process id only and verifies with the process list", async () => {
@@ -297,7 +307,7 @@ test("the last resort kills by process id only and verifies with the process lis
       assert.equal(call.args.includes("/IM"), false, "killing by image name is forbidden");
     }
     assert.equal((await ownershipRecord(directory)).quiescent, true);
-  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await removeTree(directory); }
 });
 
 /* --------------------------------------------------------------- fix 4: the grace period */
@@ -315,7 +325,7 @@ test("termination asks for an orderly stop with a grace budget before anything i
     assert.equal(stop?.graceMs, 250, "the control frame must carry the grace budget");
     const launch = frames.find((frame) => (frame as { operation?: string }).operation === "launch");
     assert.equal((launch as { graceMs?: number } | undefined)?.graceMs, 250);
-  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await removeTree(directory); }
 });
 
 test("the native supervisor closes standard input and waits before destroying the job", async () => {
@@ -353,7 +363,7 @@ test("process exit is decided by the exit event, not by a pipe a grandchild stil
       new Promise<{ code: number | null }>((resolve) => setTimeout(() => resolve({ code: -1 }), 3000)),
     ]);
     assert.equal(exit.code, 9, "a grandchild holding the pipe must not hide the engine exit");
-  } finally { await scope.stop(2000); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(2000); await removeTree(directory); }
 });
 
 for (const shape of [
@@ -376,7 +386,7 @@ for (const shape of [
       assert.equal(exit.code, shape.expectedCode, "an undrained pipe must never replace the real exit code");
       assert.equal(exit.signal, null);
       assert.equal(evidence.quiescent, shape.expectedQuiescent);
-    } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
+    } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await removeTree(directory); }
   });
 }
 
@@ -395,7 +405,7 @@ test("an undrained trailing frame is discarded with a diagnostic, not raised as 
       const failure = await hosted.write("{}").then(() => undefined, (error: unknown) => error as Error);
       return failure !== undefined && /undrained trailing frame/.test(failure.message);
     });
-  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await removeTree(directory); }
 });
 
 /* ------------------------------------------------------- fix 6: the parent watchdog */
@@ -474,7 +484,7 @@ test("a lock whose owner is proven dead is taken over instead of blocking every 
     // Unreadable content cannot prove ownership either.
     await writeFile(lock, "not json at all");
     await (await acquireInstanceLock(lock))();
-  } finally { await rm(directory, { recursive: true, force: true }); }
+  } finally { await removeTree(directory); }
 });
 
 /* ---------------------------------------------------------- fix 10: the engine process id */
@@ -489,7 +499,7 @@ test("the engine process id from the ready frame is recorded as a second evidenc
     // loaded Windows runner is not fast, so the budget is generous rather than tight.
     await waitFor(async () => Number((await ownershipRecord(directory)).enginePid) === 31337, 20_000);
     await hosted.terminate();
-  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await removeTree(directory); }
 });
 
 /* ---------------------------------------------------- fix 11: redacted standard error tail */
@@ -506,7 +516,7 @@ test("standard error becomes a redacted bounded diagnostic instead of a bare exi
     assert.match(failure.message, /cannot find module/);
     assert.equal(/super-secret-value/.test(failure.message), false, "diagnostics must be redacted");
     assert.match(failure.message, /\[REDACTED\]/);
-  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await removeTree(directory); }
 });
 
 test("a bounded diagnostic keeps only the tail of a noisy engine", async () => {
@@ -519,7 +529,7 @@ test("a bounded diagnostic keeps only the tail of a noisy engine", async () => {
     assert.ok(failure !== undefined);
     assert.match(failure.message, /TAIL-MARKER/);
     assert.ok(failure.message.length < 4096, "the diagnostic must stay bounded");
-  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await removeTree(directory); }
 });
 
 /* --------------------------------------------------- fix 12: cancellation during startup */
@@ -533,7 +543,7 @@ test("cancellation during startup is reported as cancellation, not as a host exi
     const started = host.start(spec(directory, nodeExe, []), controller.signal, scope);
     setTimeout(() => controller.abort(), 60);
     await assert.rejects(started, { code: "EXECUTION_CANCELLED", status: 409 });
-  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await removeTree(directory); }
 });
 
 /* ----------------------------------------------------------- fix 13: idempotent teardown */
@@ -552,7 +562,7 @@ test("only a proven stop is cached, and repeat teardown has no further effect", 
     assert.equal(host.toolCalls.length, calls, "a proven stop has no side effects");
     assert.equal((await scope.stop(500)).quiescent, true, "closing a proven-silent channel also returns true");
     await assert.rejects(hosted.write("{}"), { code: "HOST_EXITED" });
-  } finally { await scope.stop(500); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
+  } finally { await scope.stop(500); for (const reap of host.reap) reap(); await removeTree(directory); }
 });
 
 test("the resource scope shares one attempt, retries failures and survives a caller timeout", async () => {

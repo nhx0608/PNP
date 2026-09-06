@@ -1,12 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { instructionAssetTargetPath, projectOpenCodeAssets, skillAssetTargetPaths } from "../../../src/engines/opencode/assets.ts";
 import { parseOpenCodeEngineConfig, type OpenCodeEngineConfig } from "../../../src/engines/opencode/config.ts";
 import type { AssetBinding, Session } from "../../../src/contracts/index.ts";
+import { removeTree } from "../../kit/fs.ts";
 
 function config(): OpenCodeEngineConfig {
   return parseOpenCodeEngineConfig({
@@ -53,7 +54,7 @@ test("a required asset of an unsupported kind fails before anything is written",
     );
     await assert.rejects(readFile(path.join(nativeDataDirectory, "opencode", "home", ".config", "opencode", "opencode.json")));
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeTree(root);
   }
 });
 
@@ -67,7 +68,7 @@ test("an optional asset of an unsupported kind is skipped, not silently dropped 
     assert.deepEqual(result.skipped, ["ext-1"]);
     assert.deepEqual(result.projected, []);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeTree(root);
   }
 });
 
@@ -90,7 +91,7 @@ test("a skill asset is mirrored to every candidate config root, never into the w
       assert.equal(await readFile(target, "utf8"), "# Office skill\n");
     }
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeTree(root);
   }
 });
 
@@ -105,6 +106,6 @@ test("an instruction asset is copied to its canonical target and matches instruc
     assert.deepEqual(result.projected[0]!.targets, [expected]);
     assert.equal(await readFile(expected, "utf8"), "Follow the rules.\n");
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeTree(root);
   }
 });

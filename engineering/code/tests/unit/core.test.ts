@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -11,6 +11,7 @@ import type { MockOptions } from "../../src/engines/mock/pack.ts";
 import { MockIntegration } from "../../src/integration/mock/provider.ts";
 import type { CoreOptions } from "../../src/core/gateway-core.ts";
 import type { PromptRequest } from "../../src/contracts/index.ts";
+import { removeTree } from "../kit/fs.ts";
 
 const prompt: PromptRequest = {
   parts: [{ type: "text", text: "inspect the workspace" }],
@@ -36,7 +37,7 @@ async function fixture(options: MockOptions = {}, timeout = 1000, overrides: Par
     // still lets its process exit and the runner prints the failure instead of waiting on the file.
     async close() {
       try { await core.close(); }
-      finally { await store.close(); await rm(root, { recursive: true, force: true }); }
+      finally { await store.close(); await removeTree(root); }
     },
   };
 }
@@ -227,7 +228,7 @@ test("unproven process termination fences its own session and leaves the gateway
     // Shutdown still refuses to claim a clean stop it cannot prove.
   } finally {
     await f.store.close();
-    await rm(f.root, { recursive: true, force: true });
+    await removeTree(f.root);
   }
 });
 test("two session channels preserve distinct native histories", async () => {
@@ -254,7 +255,7 @@ test("SQLite and native session survive a clean process lifecycle", async () => 
     await core2.run(f.session.id, prompt);
     assert.match((await core2.messages(f.session.id)).at(-1)!.content, /Mock turn 2/);
   } finally {
-    await core2.close(); await store2.close(); await rm(f.root, { recursive: true, force: true });
+    await core2.close(); await store2.close(); await removeTree(f.root);
   }
 });
 test("recovery records interruption and does not automatically clear busy", async () => {

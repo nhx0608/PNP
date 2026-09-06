@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { StateStore } from "../../src/storage/store.ts";
@@ -8,9 +8,11 @@ import { GatewayCore } from "../../src/core/gateway-core.ts";
 import { MockPack } from "../../src/engines/mock/pack.ts";
 import { MockIntegration } from "../../src/integration/mock/provider.ts";
 import { normalizeWorkspace } from "../../src/security/workspace.ts";
+import { removeTree } from "../kit/fs.ts";
 
 async function bed() {
-  const root = await mkdtemp(path.join(tmpdir(), "pnp-workspace-"));
+  // On Windows tmpdir() can be an 8.3 short name while the session records the real path.
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), "pnp-workspace-")));
   const dataDirectory = path.join(root, "data");
   await mkdir(dataDirectory, { recursive: true });
   return { root, dataDirectory, options: { dataDirectory } };
@@ -31,7 +33,7 @@ test("a working directory that does not exist yet is created rather than refused
     const again = await normalizeWorkspace(target, b.options);
     assert.equal(again.created, false);
     assert.equal(again.directory, normalized.directory);
-  } finally { await rm(b.root, { recursive: true, force: true }); }
+  } finally { await removeTree(b.root); }
 });
 
 test("creation stops at the boundaries: root, the data directory, a file and a relative path", async () => {
@@ -50,7 +52,7 @@ test("creation stops at the boundaries: root, the data directory, a file and a r
     await assert.rejects(normalizeWorkspace(path.join(file, "under-a-file"), b.options),
       { code: "VALIDATION_ERROR", status: 400 });
     await assert.rejects(normalizeWorkspace("relative/workspace", b.options), { code: "VALIDATION_ERROR", status: 400 });
-  } finally { await rm(b.root, { recursive: true, force: true }); }
+  } finally { await removeTree(b.root); }
 });
 
 test("a created directory is recorded on the session and survives its deletion", async () => {
@@ -77,6 +79,6 @@ test("a created directory is recorded on the session and survives its deletion",
   } finally {
     await core.close();
     await store.close();
-    await rm(b.root, { recursive: true, force: true });
+    await removeTree(b.root);
   }
 });

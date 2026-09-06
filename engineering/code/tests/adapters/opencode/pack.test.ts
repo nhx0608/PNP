@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { OpenCodePack } from "../../../src/engines/opencode/pack.ts";
@@ -8,6 +8,7 @@ import type {
   EngineOpenInput, IntegrationContext, ProcessHost, ResourceScope, Session, StopEvidence,
 } from "../../../src/contracts/index.ts";
 import type { HostedProcess, LaunchSpec } from "../../../src/contracts/host.ts";
+import { removeTree } from "../../kit/fs.ts";
 
 /**
  * This suite proves OpenCodePack.open() correctly builds the launch request, writes the private native config,
@@ -160,7 +161,7 @@ test("open() launches the resolved executable with just the ACP subcommand and r
       }
     });
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeTree(root);
   }
 });
 
@@ -187,7 +188,7 @@ test("open() fails with a clear executable-resolution error and never starts a p
       "ENGINE_SCRIPT_NOT_FOUND",
     );
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeTree(root);
   }
 });
 
@@ -207,6 +208,6 @@ test("open() fails before any process starts when a required asset kind has no n
       assert.equal(host.launched.length, 0, "a required-asset projection failure must never reach the process host");
     });
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeTree(root);
   }
 });

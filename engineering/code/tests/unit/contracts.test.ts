@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, readFile, writeFile, access } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -15,6 +15,7 @@ import { Redactor } from "../../src/security/redaction.ts";
 import type { CoreOptions } from "../../src/core/gateway-core.ts";
 import type { EnginePack, IntegrationProvider, PromptRequest, Json } from "../../src/contracts/index.ts";
 import type { Operation, Operations } from "../../src/storage/protocol.ts";
+import { removeTree } from "../kit/fs.ts";
 const request: PromptRequest = { parts: [{ type: "text", text: "test" }], model: { providerID: "test", modelID: "test" } };
 async function create(pack: EnginePack = new MockPack(), provider: IntegrationProvider = new MockIntegration(), options: Partial<CoreOptions> = {},
   makeStore: (databasePath: string) => StateStore = (databasePath) => new StateStore(databasePath)) {
@@ -30,14 +31,15 @@ async function create(pack: EnginePack = new MockPack(), provider: IntegrationPr
     // core's uncertainty must still let its process exit, or the runner waits on the file instead of
     // printing the failure.
     try { if (uncertain) await assert.rejects(core.close()); else await core.close(); }
-    finally { await store.close(); await rm(root, { recursive: true, force: true }); }
+    finally { await store.close(); await removeTree(root); }
   } };
 }
 async function waitFor(fn: () => Promise<boolean>) { for (let i=0;i<100;i++) { if (await fn()) return; await sleep(5); } assert.fail("condition not reached"); }
 
 test("late channel after startup timeout is terminated and its proof lifts the session fence", async () => {
+  const gate = deferred<void>();
   const pack = new MockPack(); const open = pack.open.bind(pack); let cleanup = 0;
-  pack.open = async (input) => { await sleep(100); const channel = await open(input); channel.terminate = async () => { cleanup++; return { quiescent: true, method: "process-tree" }; }; return channel; };
+  pack.open = async (input) => { await gate.promise; const channel = await open(input); channel.terminate = async () => { cleanup++; return { quiescent: true, method: "process-tree" }; }; return channel; };
   const f = await create(pack, new MockIntegration(), { openTimeoutMs: 20 });
   try {
     await assert.rejects(f.core.run(f.session.id, request));
@@ -45,9 +47,12 @@ test("late channel after startup timeout is terminated and its proof lifts the s
     assert.equal(f.core.readiness, true);
     await assert.rejects(f.core.run(f.session.id, request), { code: "SESSION_UNAVAILABLE" });
     assert.equal((await f.core.getSession(f.session.id)).recovery, "blocked");
-    // The late channel arrives ~100 ms in, then its termination, the scope stop and the fence lift each
-    // hit storage; on a loaded Windows runner that is more than a fixed 130 ms, so the evidence is
-    // awaited rather than assumed to have landed by then.
+    // The channel arrives when this line releases it rather than after a fixed delay: a runner slow
+    // enough to finish the failed run first would lift the fence before the refused request above and
+    // silently turn this into a different case.
+    gate.resolve();
+    // Its termination, the scope stop and the fence lift each hit storage, so the evidence is awaited
+    // rather than assumed to have landed by any particular moment.
     await waitFor(async () => cleanup === 1 && (await f.core.getSession(f.session.id)).recovery === "ready");
     assert.equal(cleanup, 1);
     assert.equal((await f.core.diagnostics()).degraded, false);
@@ -542,7 +547,7 @@ test("online diagnostics remain safely readable after storage becomes unavailabl
     assert.equal(diagnostics.ready, false);
     assert.equal(diagnostics.sessions, null);
     assert.ok(Array.isArray(diagnostics.storage));
-  } finally { await rm(f.root, { recursive: true, force: true }); }
+  } finally { await removeTree(f.root); }
 });
 test("streaming known secret prefixes are held until they can be redacted", () => {
   const redactor = new Redactor(["secret-long-key"]);
@@ -571,7 +576,7 @@ test("real local process transport buffers early output and terminates owned gro
     await waitFor(async () => frames.some((f) => f.includes('"echo"')));
     assert.equal(frames[0], "ready");
     assert.equal((await processHandle.terminate()).quiescent, true);
-  } finally { await scope.stop(2000); await rm(dir, { recursive: true, force: true }); }
+  } finally { await scope.stop(2000); await removeTree(dir); }
 });
 test("runtime recovery fences admission until interrupted ownership is reconciled", async () => {
   const f = await create();

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { StateStore } from "../../src/storage/store.ts";
@@ -8,6 +8,7 @@ import { GatewayCore } from "../../src/core/gateway-core.ts";
 import { MockPack } from "../../src/engines/mock/pack.ts";
 import { MockIntegration } from "../../src/integration/mock/provider.ts";
 import { buildApp } from "../../src/gateway/app.ts";
+import { removeTree } from "../kit/fs.ts";
 
 test("real SSE delivers connection and persisted terminal events alongside a blocking prompt", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "pnp-sse-"));
@@ -45,7 +46,7 @@ test("real SSE delivers connection and persisted terminal events alongside a blo
     } finally { clearTimeout(timer); }
   } finally {
     await reader?.cancel().catch(() => undefined); controller.abort();
-    await app.close(); await store.close(); await rm(root, { recursive: true, force: true });
+    await app.close(); await store.close(); await removeTree(root);
   }
 });
 
@@ -90,6 +91,6 @@ test("a reconnect with Last-Event-ID replays the gap in order and without duplic
     assert.deepEqual(ids, committed.filter((event) => event.sequence > resumeFrom).map((event) => event.sequence));
   } finally {
     controller.abort();
-    await app.close(); await store.close(); await rm(root, { recursive: true, force: true });
+    await app.close(); await store.close(); await removeTree(root);
   }
 });

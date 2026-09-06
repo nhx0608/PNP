@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { StateStore } from "../../src/storage/store.ts";
@@ -9,6 +9,7 @@ import { MockPack } from "../../src/engines/mock/pack.ts";
 import { MockIntegration } from "../../src/integration/mock/provider.ts";
 import { ConfiguredIntegration } from "../../src/integration/configured/provider.ts";
 import { buildApp } from "../../src/gateway/app.ts";
+import { removeTree } from "../kit/fs.ts";
 
 test("original northbound create/prompt/message/status/delete contract", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "pnp-http-"));
@@ -42,7 +43,7 @@ test("original northbound create/prompt/message/status/delete contract", async (
     assert.equal(statuses.json()[id].type, "idle");
     assert.equal((await app.inject({ method: "DELETE", url: `/session/${id}` })).statusCode, 200);
   } finally {
-    await app.close(); await store.close(); await rm(root, { recursive: true, force: true });
+    await app.close(); await store.close(); await removeTree(root);
   }
 });
 
@@ -76,7 +77,7 @@ test("HTTP input failures preserve safe 400, 413, and 415 semantics", async () =
       headers: { "content-type": "application/json" }, payload: "" });
     assert.equal(emptyAbort.statusCode, 200);
   } finally {
-    await app.close(); await store.close(); await rm(root, { recursive: true, force: true });
+    await app.close(); await store.close(); await removeTree(root);
   }
 });
 
@@ -116,7 +117,7 @@ test("an unrecognised model runs on the configured default and is published as m
       payload: { parts: [{ type: "text", text: "again" }], model: { providerID: "competition", modelID: "default" } } })).statusCode, 204);
     assert.equal((await core.eventsSince(0)).filter((event) => event.type === "model.resolved").at(-1)?.properties.resolution, "exact");
   } finally {
-    await app.close(); await store.close(); await rm(root, { recursive: true, force: true });
+    await app.close(); await store.close(); await removeTree(root);
   }
 });
 
@@ -156,6 +157,6 @@ test("evaluator-facing bodies ignore unknown fields but still require the docume
     assert.equal(wrongType.statusCode, 400);
     assert.equal(wrongType.json().code, "VALIDATION_ERROR");
   } finally {
-    await app.close(); await store.close(); await rm(root, { recursive: true, force: true });
+    await app.close(); await store.close(); await removeTree(root);
   }
 });

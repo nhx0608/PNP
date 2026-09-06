@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -19,6 +19,7 @@ import { MockPack } from "../../src/engines/mock/pack.ts";
 import { MockIntegration } from "../../src/integration/mock/provider.ts";
 import { GatewayCore } from "../../src/core/gateway-core.ts";
 import { PnpError } from "../../src/core/errors.ts";
+import { removeTree } from "../kit/fs.ts";
 
 test("JSONL preserves unicode separators and splits only on LF", () => {
   const decoder = new JsonlDecoder();
@@ -55,7 +56,7 @@ test("data-directory lock rejects concurrent ownership", async () => {
     await assert.rejects(acquireInstanceLock(path.join(dir, "gateway.lock")), { code: "INSTANCE_LOCKED" });
     await unlock();
     await (await acquireInstanceLock(path.join(dir, "gateway.lock")))();
-  } finally { await rm(dir, { recursive: true, force: true }); }
+  } finally { await removeTree(dir); }
 });
 test("SQLite constraint conflicts keep their identity without reporting storage as unavailable", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "pnp-sqlite-diagnostic-"));
@@ -72,7 +73,7 @@ test("SQLite constraint conflicts keep their identity without reporting storage 
     assert.match(diagnostic?.code ?? "", /^(?:ERR_)?SQLITE_/);
     assert.equal(diagnostic?.outcome, "known-failed");
     assert.equal(store.available, true);
-  } finally { await store.close(); await rm(dir, { recursive: true, force: true }); }
+  } finally { await store.close(); await removeTree(dir); }
 });
 test("deadline ends a never-resolving operation", async () => {
   await assert.rejects(bounded(new Promise<never>(() => undefined), 5), { code: "DEADLINE_EXCEEDED" });
@@ -119,7 +120,7 @@ test("Windows Job host reports the owned engine exit instead of the supervisor e
     assert.deepEqual(exit, { code: 7, signal: null });
     assert.equal((await scope.stop(5_000)).quiescent, true);
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await removeTree(directory);
   }
 });
 
@@ -147,7 +148,7 @@ test("Windows launch failure records recoverable namespace and stop evidence", {
     assert.equal(Number.isInteger(record.windowsSessionId), true);
     assert.equal(record.quiescent, true);
     assert.equal((await host.reconcile(record)).quiescent, true);
-  } finally { await rm(directory, { recursive: true, force: true }); }
+  } finally { await removeTree(directory); }
 });
 
 test("recovery confirms a blocked session only when every retained host is quiescent", async () => {
@@ -173,7 +174,7 @@ test("recovery confirms a blocked session only when every retained host is quies
     assert.equal((await store.call("getRun", { runId: "interrupted" }))?.state, "interrupted");
     assert.match(JSON.stringify((await store.call("messages", { sessionId: session.id })).find((message) => message.id === "partial-tool")?.parts), /gateway-recovery/);
     assert.equal((await core.getSession(session.id)).status, "idle");
-  } finally { await core.close(); await store.close(); await rm(root, { recursive: true, force: true }); }
+  } finally { await core.close(); await store.close(); await removeTree(root); }
 });
 
 test("recovery quarantines an ownerless host record instead of fencing every session", async () => {
@@ -201,7 +202,7 @@ test("recovery quarantines an ownerless host record instead of fencing every ses
     assert.equal((await readdir(path.join(directory, "hosts", "quarantine"))).length, 1);
   } finally {
     await core.close();
-    await store.close(); await rm(root, { recursive: true, force: true });
+    await store.close(); await removeTree(root);
   }
 });
 
@@ -261,7 +262,7 @@ test("Windows process-lifetime guard excludes a second owner and releases on pro
   } finally {
     first.child.kill();
     await bounded(first.exited, 10_000).catch(() => undefined);
-    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    await removeTree(directory);
   }
 });
 
@@ -291,5 +292,5 @@ test("a launch whose executable does not exist fails fast and records that nothi
     const record = JSON.parse(await readFile(path.join(directory, "hosts", files[0]!), "utf8"));
     assert.equal(record.quiescent, true);
     assert.equal((await host.reconcile(record)).quiescent, true);
-  } finally { await rm(directory, { recursive: true, force: true }); }
+  } finally { await removeTree(directory); }
 });

@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { GatewayCore } from "../../src/core/gateway-core.ts";
 import { StateStore } from "../../src/storage/store.ts";
 import type { EnginePack, IntegrationProvider, PromptRequest } from "../../src/contracts/index.ts";
+import { removeTree } from "./fs.ts";
 export function engineContract(name: string, factory: () => Promise<{ pack: EnginePack; integration: IntegrationProvider; request: PromptRequest }>): void {
   test(`${name}: public engine contract`, { timeout: 120_000 }, async () => {
     const { pack, integration, request } = await factory();
@@ -27,6 +28,6 @@ export function engineContract(name: string, factory: () => Promise<{ pack: Engi
       assert.equal((await core.messages(s.id)).filter((m) => m.role === "user").length, 2);
       await core.deleteSession(s.id);
       await assert.rejects(core.getSession(s.id), { code: "NOT_FOUND" });
-    } finally { await core.close(); await store.close(); await rm(root, { recursive: true, force: true }); }
+    } finally { await core.close(); await store.close(); await removeTree(root); }
   });
 }

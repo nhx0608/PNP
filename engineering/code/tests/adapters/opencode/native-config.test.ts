@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -11,6 +11,7 @@ import {
   parseOpenCodeEngineConfig, type OpenCodeEngineConfig, type OpenCodeNativePermissions,
 } from "../../../src/engines/opencode/config.ts";
 import type { Json, ResolvedModel } from "../../../src/contracts/index.ts";
+import { removeTree } from "../../kit/fs.ts";
 
 const PREFIX = "PNP_OPENCODE_HEADER_";
 const BEARER_TOKEN = "super-secret-token-value";
@@ -207,7 +208,7 @@ test("writeNativeConfig points OPENCODE_CONFIG at the private file and mirrors i
     assert.doesNotMatch(primary, /:\s*"\$[A-Za-z_]/);
     assert.equal(written.secretEnv[`${PREFIX}API_KEY`], BEARER_TOKEN);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeTree(root);
   }
 });
 
@@ -222,7 +223,7 @@ test("writeNativeConfig carries nativePermissions from the engine config into th
     const defaultedJson = JSON.parse(await readFile(defaulted.primaryConfigPath, "utf8")) as Record<string, unknown>;
     assert.equal("permission" in defaultedJson, false);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeTree(root);
   }
 });
 
@@ -237,6 +238,6 @@ test("writeNativeConfig lists projected instruction paths in every copy of the c
       assert.deepEqual(parsed.instructions, [instructionPath]);
     }
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeTree(root);
   }
 });

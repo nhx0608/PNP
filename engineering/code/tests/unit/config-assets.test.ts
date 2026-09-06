@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { resolveAsset } from "../../src/assets/resolver.ts";
@@ -8,6 +8,7 @@ import { selectEngine, loadEngine } from "../../src/registry/index.ts";
 import { ConfiguredIntegration } from "../../src/integration/configured/provider.ts";
 import { DEFAULT_CONFIGURED_PROFILE, loadIntegration, probeIntegration } from "../../src/integration/index.ts";
 import type { ModelSelection, Session } from "../../src/contracts/index.ts";
+import { removeTree } from "../kit/fs.ts";
 
 test("engine selection requires explicit input and rejects conflicting selectors", async () => {
   assert.equal(selectEngine(undefined, "pi"), "pi");
@@ -29,7 +30,7 @@ test("assets are content-addressed and cannot leave an approved root", async () 
     assert.equal(asset.sha256.length, 64);
     await assert.rejects(resolveAsset(base, { ...asset, sha256: "invalid" }));
     await assert.rejects(resolveAsset(base, { ...asset, path: "../outside.md", sha256: undefined }));
-  } finally { await rm(dir, { recursive: true, force: true }); }
+  } finally { await removeTree(dir); }
 });
 
 test("model profiles reject unapproved models, credentials in URL, and insecure remote transport", async () => {
@@ -93,7 +94,7 @@ test("configured integration is explicit and strict, and mock never substitutes 
     assert.equal((await selected.authorize({ kind: "permission", operation: "file.write", payload: {} })).effect, "deny");
     await assert.rejects(loadIntegration({ kind: "unknown", development: true, engineDevelopmentOnly: false }),
       { code: "INTEGRATION_NOT_FOUND" });
-  } finally { await rm(dir, { recursive: true, force: true }); }
+  } finally { await removeTree(dir); }
 });
 
 test("an empty AGENT_ENGINE is unset, not a value", () => {
@@ -158,7 +159,7 @@ test("PNP_MODEL_STRICT selects the strict provider where the configured integrat
     const strict = await loadIntegration({ kind: "configured", development: false, engineDevelopmentOnly: false,
       configuredProfile: profile, environment: { TEST_AUTH: "secret", PNP_MODEL_STRICT: "1" } });
     await assert.rejects(strict.prepare({ session, request, signal: new AbortController().signal }), { code: "MODEL_NOT_ALLOWED" });
-  } finally { await rm(dir, { recursive: true, force: true }); }
+  } finally { await removeTree(dir); }
 });
 
 test("a real engine defaults to the shipped profile, which names its endpoint and credential by variable", async () => {
@@ -235,7 +236,7 @@ test("endpointEnvironment is parsed as an alternative to a literal endpoint, and
       configuredProfile: both, environment: {} }), { code: "INTEGRATION_CONFIG_INVALID" });
     await assert.rejects(loadIntegration({ kind: "configured", development: false, engineDevelopmentOnly: false,
       configuredProfile: neither, environment: {} }), { code: "INTEGRATION_CONFIG_INVALID" });
-  } finally { await rm(dir, { recursive: true, force: true }); }
+  } finally { await removeTree(dir); }
 });
 
 test("PNP_CONFIGURED_POLICY_OVERRIDES adds a deployment policy without forking the shipped profile", async () => {
