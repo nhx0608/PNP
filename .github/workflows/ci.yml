@@ -1,6 +1,10 @@
 name: PNP shared-contract checks
 on:
   pull_request:
+  # Work now lands on master directly, so a push there must run the same gate a PR would:
+  # a master that no CI has seen is a master nobody has verified on Linux.
+  push:
+    branches: [master]
   workflow_dispatch:
 jobs:
   shared-contract:

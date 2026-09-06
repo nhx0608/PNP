@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -125,10 +125,15 @@ async function workspace(name: string): Promise<{ directory: string; script: str
   const directory = await mkdtemp(path.join(tmpdir(), `pnp-${name}-`));
   const script = path.join(directory, "fake-helper.cjs");
   await writeFile(script, fakeHelper);
-  // Reuse the running Node executable. Creating a `.exe` symlink requires Windows
-  // Developer Mode or administrator rights and would make the normal test gate fail
-  // on an otherwise supported assessor machine.
-  return { directory, script, nodeExe: process.execPath };
+  // The fake host enforces the Windows rule that an executable ends in `.exe`. On Windows the
+  // running Node already does, and creating a `.exe` symlink there needs Developer Mode or
+  // administrator rights, so the executable is reused as is. Elsewhere `process.execPath` has no
+  // suffix, and a symlink named `node.exe` is the cheap way to satisfy the rule without copying
+  // the runtime; symlinks need no privilege on those platforms.
+  if (process.platform === "win32") return { directory, script, nodeExe: process.execPath };
+  const nodeExe = path.join(directory, "node.exe");
+  await symlink(process.execPath, nodeExe);
+  return { directory, script, nodeExe };
 }
 async function ownershipRecord(directory: string): Promise<Record<string, Json>> {
   const files = (await readdir(path.join(directory, "hosts"))).filter((file) => file.endsWith(".json"));
