@@ -82,8 +82,8 @@
     }
   ],
   "externalActions": {
-    "githubPush": false,
-    "giteePush": false,
+    "githubPush": true,
+    "giteePush": true,
     "internalServiceCalls": false
   },
   "qualification": "Common framework and required A-line OpenCode/ACP source implementation are verified locally; Pi and authorized per-engine internal acceptance still block a certified competition release."

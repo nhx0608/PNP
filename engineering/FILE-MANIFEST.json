@@ -1,6 +1,6 @@
 {
   "contractVersion": "1.1.0",
-  "payloadFileCount": 155,
+  "payloadFileCount": 156,
   "files": [
     {
       "path": ".gitattributes",
@@ -913,11 +913,18 @@
       "sha256": "7c21067afa1d7bc1c4c53fc285f9f04c3746a30d16fadfcc61813ae1b356b079"
     },
     {
+      "path": "docs/team/handoff-current.md",
+      "owner": "共同",
+      "category": "分工与协作",
+      "bytes": 10567,
+      "sha256": "ac769dd5f0bb7c1182871f7af2e398f426f482c4320d607b87a991b6ec8736b7"
+    },
+    {
       "path": "docs/team/handoff-template.md",
       "owner": "共同",
       "category": "分工与协作",
       "bytes": 1130,
-      "sha256": "be5b0e9664608249f337fe0cb8dfd380bb95d7cf81ca675d9da90e6ef3199b84"
+      "sha256": "42c34d043c29680b64249a3e506487fcbc35fecfba5a009e1ce2039b8191db3e"
     },
     {
       "path": "docs/team/ownership.json",
@@ -1077,8 +1084,8 @@
       "path": "verification/results.json",
       "owner": "共同",
       "category": "验证证据",
-      "bytes": 2968,
-      "sha256": "bdfc0db6c4fc44cdc1949fc0b5e6375d3fcc774fa298e9a6d8e898e14eeef969"
+      "bytes": 2966,
+      "sha256": "8c1a3130016aa7315152bbe8aeabaa1b0616cb74ad348e78c6a35e81d04fb6be"
     },
     {
       "path": "VERIFY.mjs",
