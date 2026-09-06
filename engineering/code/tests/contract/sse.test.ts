@@ -46,3 +46,46 @@ test("real SSE delivers connection and persisted terminal events alongside a blo
     await app.close(); await store.close(); await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("a reconnect with Last-Event-ID replays the gap in order and without duplicates", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "pnp-sse-resume-"));
+  const store = new StateStore(path.join(directory, "pnp.db"));
+  const core = new GatewayCore(store, new MockPack(), new MockIntegration(), { dataDirectory: directory });
+  const app = buildApp(core);
+  const controller = new AbortController();
+  try {
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address();
+    assert.ok(address && typeof address === "object");
+    const base = `http://127.0.0.1:${address.port}`;
+    // Publish while nobody is listening: exactly the gap a dropped connection leaves behind.
+    const session = await core.createSession(directory);
+    await core.run(session.id, { parts: [{ type: "text", text: "one" }], model: { providerID: "test", modelID: "test" } });
+    const committed = await core.journal.since(0, 1000);
+    assert.ok(committed.length > 2, "the run must have committed events to resume from");
+    const resumeFrom = committed[0]!.sequence;
+
+    const response = await fetch(`${base}/event`, { signal: controller.signal, headers: { "Last-Event-ID": String(resumeFrom) } });
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let received = "";
+    const deadline = setTimeout(() => controller.abort(), 5000);
+    try {
+      const last = committed.at(-1)!.sequence;
+      while (!received.includes(`id: ${last}\n`)) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        received += decoder.decode(chunk.value, { stream: true });
+      }
+    } finally { clearTimeout(deadline); }
+
+    const ids = [...received.matchAll(/^id: (\d+)$/gm)].map((match) => Number(match[1]));
+    assert.deepEqual(ids, [...ids].sort((a, b) => a - b), "replayed events must stay in sequence order");
+    assert.equal(new Set(ids).size, ids.length, "a resume must not duplicate an event");
+    assert.equal(ids.includes(resumeFrom), false, "Last-Event-ID is exclusive");
+    assert.deepEqual(ids, committed.filter((event) => event.sequence > resumeFrom).map((event) => event.sequence));
+  } finally {
+    controller.abort();
+    await app.close(); await store.close(); await rm(directory, { recursive: true, force: true });
+  }
+});

@@ -22,17 +22,31 @@ function isContentEvent(type: string): boolean {
   return CONTENT_EVENT_TYPES.has(type);
 }
 
+/** Upper bound on a single resume so one reconnect cannot walk the whole event table. */
+const REPLAY_PAGE = 256;
+const REPLAY_LIMIT = 4096;
 /**
- * TODO(core): wire this to a storage-backed `eventsSince(sequence)` query once the core/storage
- * layer exposes one (see docs/spec/contracts.md §3 GET /event and
- * docs/engineering-review-2.md §6.1). When available, call it here — before `core.journal.subscribe`
- * runs below — and replay the missed events (in ascending sequence order) through `emit` so a
- * reconnecting client with a `Last-Event-ID` header does not lose events published while it was
- * disconnected. Left unimplemented for now; `lastEventId` is parsed and threaded through so the
- * only remaining work is the storage query itself.
+ * Replays committed events after `lastEventId` in ascending sequence order. The caller subscribes
+ * first and buffers live events, so this can never leave a gap between the replay and the stream.
+ * Returns the highest sequence written, which the caller uses to drop live duplicates.
  */
-function replayMissedEvents(_lastEventId: number | undefined, _emit: (event: PublicEvent) => void): void {
-  // Intentionally a no-op: no eventsSince() query exists yet on EventJournal/GatewayCore.
+async function replayMissedEvents(
+  core: GatewayCore, lastEventId: number, emit: (event: PublicEvent) => void, stopped: () => boolean,
+): Promise<number> {
+  let cursor = lastEventId;
+  let written = 0;
+  while (!stopped() && written < REPLAY_LIMIT) {
+    const page = await core.journal.since(cursor, REPLAY_PAGE);
+    if (page.length === 0) break;
+    for (const event of page) {
+      if (stopped()) break;
+      emit(event);
+      cursor = event.sequence;
+      written += 1;
+    }
+    if (page.length < REPLAY_PAGE) break;
+  }
+  return cursor;
 }
 function parseLastEventId(header: string | string[] | undefined): number | undefined {
   const raw = Array.isArray(header) ? header[0] : header;
@@ -227,14 +241,29 @@ export function buildApp(core: GatewayCore, options: BuildAppOptions = {}) {
       // A false result means this frame was accepted into Node's buffer. Queue only later frames.
       if (!reply.raw.write(frame)) backpressured = true;
     };
-    const unsubscribe = core.journal.subscribe(send);
+    // Live events are held until the replay finishes, so the client never sees a newer sequence
+    // before an older one. Duplicates are dropped by sequence rather than by guessing.
+    let replaying = lastEventId !== undefined;
+    const pendingLive: PublicEvent[] = [];
+    const receive = (event: PublicEvent) => {
+      if (!replaying) { send(event); return; }
+      if (pendingLive.length < REPLAY_LIMIT) pendingLive.push(event);
+    };
+    const unsubscribe = core.journal.subscribe(receive);
     const timer = setInterval(() => send({ type: "server.heartbeat", properties: {} }), 15_000);
     closeStreams.add(cleanup);
     reply.raw.once("close", cleanup);
     reply.raw.once("error", cleanup);
     reply.raw.on("drain", onDrain);
-    replayMissedEvents(lastEventId, send);
     send({ type: "server.connected", properties: {} });
+    if (lastEventId !== undefined) {
+      let resumed = lastEventId;
+      // A failed resume degrades to the live stream: losing history beats losing the only connection.
+      try { resumed = await replayMissedEvents(core, lastEventId, send, () => closed); }
+      catch { /* The client can ask again; the stream itself stays up. */ }
+      replaying = false;
+      for (const event of pendingLive.splice(0)) if (event.sequence > resumed) send(event);
+    }
   });
   app.addHook("preClose", async () => {
     try { await core.close(); } finally { for (const cleanup of closeStreams) cleanup(); }
