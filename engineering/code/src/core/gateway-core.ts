@@ -106,11 +106,32 @@ export class GatewayCore {
     if (this.fenced.has(sessionId)) throw new PnpError("SESSION_UNAVAILABLE", "Session is fenced until its execution stop is proven.", 409);
   }
   /**
+   * The recorded session itself, on the same terms the run will demand of it. A request naming a
+   * session that does not exist, belongs to another engine channel or cannot accept execution is
+   * answered by that fact, and it is worth nothing more after a wait than before one.
+   */
+  private async assertSessionRunnable(sessionId: string): Promise<Session> {
+    const session = await this.getSession(sessionId);
+    if (session.engineId !== this.engineId || session.channelId !== this.channelId) {
+      throw new PnpError("ENGINE_SESSION_MISMATCH", "Session belongs to another engine channel.", 409);
+    }
+    if (session.status !== "idle" || session.recovery === "blocked" || session.lifecycle !== "active") {
+      throw new PnpError("SESSION_UNAVAILABLE", "Session cannot accept execution.", 409);
+    }
+    return session;
+  }
+  /**
    * Admission to the single execution slot. A second request for the same session is refused at
    * once, whether the first is running or still queued. A request for another session waits its
    * turn instead of failing: `prompt_async` is a blocking call, so concurrent assessment cases are
    * slow, not lost. Waiting writes nothing — no Run, no busy status, no deadline — and the checks
    * are taken again on the way out, because a session can be deleted or fenced while it waits.
+   *
+   * The session is read before the request is allowed to queue as well. A prompt for a session that
+   * does not exist used to hold a place in the queue and answer 404 only when it reached the front,
+   * which delays the caller's own error behind work that has nothing to do with it and lets an
+   * unrunnable request crowd out a runnable one. The gateway-wide and claim checks still come first,
+   * so a same-session conflict is still `SESSION_BUSY` and never the session's stored busy status.
    */
   private async admit(sessionId: string): Promise<void> {
     this.assertAdmissible(sessionId);
@@ -119,6 +140,7 @@ export class GatewayCore {
     }
     this.claimed.add(sessionId);
     try {
+      await this.assertSessionRunnable(sessionId);
       if (!this.reserved) {
         this.reserved = true;
         return;
@@ -352,13 +374,8 @@ export class GatewayCore {
     let lastTextCheckpoint = 0;
     let checkpointBytes = 0;
     try {
-      const session = await this.getSession(sessionId);
-      if (session.engineId !== this.engineId || session.channelId !== this.channelId) {
-        throw new PnpError("ENGINE_SESSION_MISMATCH", "Session belongs to another engine channel.", 409);
-      }
-      if (session.status !== "idle" || session.recovery === "blocked" || session.lifecycle !== "active") {
-        throw new PnpError("SESSION_UNAVAILABLE", "Session cannot accept execution.", 409);
-      }
+      // Taken again now the slot is held: a session can be deleted, fenced or restarted while it waits.
+      const session = await this.assertSessionRunnable(sessionId);
       const preparing = this.integration.prepare({ session, request, signal: ctx.controller.signal });
       try { integration = await bounded(preparing, this.options.openTimeoutMs); }
       catch (error) {

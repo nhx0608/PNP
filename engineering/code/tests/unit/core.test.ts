@@ -106,6 +106,27 @@ test("another session waits for the execution slot and runs after the active tur
     assert.deepEqual((await f.core.diagnostics()).queued, { count: 0, sessions: [] });
   } finally { await f.close(); }
 });
+test("a prompt for a session that does not exist is refused now, not after the queue", async () => {
+  const f = await fixture({ delayMs: 200 });
+  try {
+    const first = f.core.run(f.session.id, prompt);
+    await waitBusy(f);
+    // The slot is taken, so this request would queue if it were admissible at all. It is not: the
+    // session it names does not exist, and waiting behind a run it has nothing to do with would only
+    // delay the 404 and hold a queue place a runnable request could have used.
+    let firstSettled = false;
+    void first.then(() => { firstSettled = true; }, () => { firstSettled = true; });
+    const missing = "ses_00000000-0000-4000-8000-000000000000";
+    const refused = assert.rejects(f.core.run(missing, prompt), { code: "NOT_FOUND" });
+    // Sampled while that request is in flight: it must never appear as work the gateway is holding.
+    assert.deepEqual((await f.core.diagnostics()).queued, { count: 0, sessions: [] });
+    await refused;
+    assert.equal(firstSettled, false, "the refusal must not have waited for the running turn");
+    assert.deepEqual((await f.core.diagnostics()).queued, { count: 0, sessions: [] });
+    await first;
+    assert.equal(f.pack.executions, 1);
+  } finally { await f.close(); }
+});
 test("the queue is bounded and a full queue is the only remaining GATEWAY_BUSY", async () => {
   const f = await fixture({ delayMs: 80 }, 1000, { runQueueLimit: 1 });
   try {
