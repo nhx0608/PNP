@@ -5,7 +5,7 @@
     "hermes"
   ],
   "minimumDistinctEngines": 2,
-  "contractVersion": "1.0.0",
+  "contractVersion": "1.1.0",
   "gatewayProtocol": "generic-6217",
   "mockAllowed": false
 }

@@ -35,6 +35,7 @@ export interface CoreOptions {
 const makeMessage = (role: Message["role"], content: string): Message => ({
   id: randomUUID(), role, content, created_at: new Date().toISOString(),
 });
+const owns = (value: object, key: PropertyKey): boolean => Object.hasOwn(value, key);
 
 /** Owns run truth and event ordering; adapters cannot mutate storage or HTTP state. */
 export class GatewayCore {
@@ -174,7 +175,18 @@ export class GatewayCore {
     let failure: PnpError | undefined;
     let acceptingEvents = true;
     let eventTail = Promise.resolve();
-    const tools = new Map<string, { name: string; message: Message; finished: boolean }>();
+    const tools = new Map<string, {
+      family: "legacy" | "observed";
+      name?: string;
+      input?: Json;
+      inputObserved: boolean;
+      message: Message;
+      canonical: boolean;
+      terminal: boolean;
+      terminalOutputObserved: boolean;
+      outputPersisted: boolean;
+      status?: "pending" | "running" | "completed" | "failed";
+    }>();
     const finalId = randomUUID();
     let redactor = new Redactor();
     let lastTextCheckpoint = 0;
@@ -253,24 +265,32 @@ export class GatewayCore {
                 message: { ...makeMessage("assistant", text), id: finalId, parts: [{ type: "text", content: text }] } });
               properties.part = { type: "text", content: text };
             } else if (event.type === "tool.started") {
-              if (tools.has(event.callId)) throw new PnpError("DUPLICATE_TOOL", "Duplicate tool identity.", 502);
+              const existing = tools.get(event.callId);
+              if (existing?.family === "observed") throw new PnpError("ENGINE_PROTOCOL_ERROR", "Tool event families cannot be mixed.", 502);
+              if (existing !== undefined) throw new PnpError("DUPLICATE_TOOL", "Duplicate tool identity.", 502);
               const item = makeMessage("assistant", "");
               item.tool_calls = [{ id: event.callId, name: event.name, arguments: redactor.json(event.input) }];
               item.info = { role: "assistant", finish: "tool-calls" };
               item.parts = [{ type: "tool", tool: event.name, callID: event.callId, state: { status: "running", title: event.name } }];
-              tools.set(event.callId, { name: event.name, message: item, finished: false });
+              tools.set(event.callId, { family: "legacy", name: event.name, input: redactor.json(event.input), inputObserved: true,
+                message: item, canonical: true, terminal: false, terminalOutputObserved: false, outputPersisted: false,
+                status: "running" });
               await this.store.call("appendMessage", { sessionId, runId: run.id, message: item });
               properties.messageID = item.id;
               properties.part = item.parts[0]!;
             } else if (event.type === "tool.updated") {
               const tool = tools.get(event.callId);
-              if (tool === undefined || tool.finished) throw new PnpError("UNMATCHED_TOOL_UPDATE", "Tool is not active.", 502);
+              if (tool?.family === "observed") throw new PnpError("ENGINE_PROTOCOL_ERROR", "Tool event families cannot be mixed.", 502);
+              if (tool === undefined || tool.terminal || tool.name === undefined) throw new PnpError("UNMATCHED_TOOL_UPDATE", "Tool is not active.", 502);
               properties.messageID = tool.message.id;
               properties.part = { type: "tool", tool: tool.name, callID: event.callId, state: { status: "running", title: redactor.text(event.title) } };
             } else if (event.type === "tool.finished") {
               const tool = tools.get(event.callId);
-              if (tool === undefined || tool.finished) throw new PnpError("UNMATCHED_TOOL_RESULT", "Tool result has no active call.", 502);
-              tool.finished = true;
+              if (tool?.family === "observed") throw new PnpError("ENGINE_PROTOCOL_ERROR", "Tool event families cannot be mixed.", 502);
+              if (tool === undefined || tool.terminal || !tool.canonical || tool.name === undefined) throw new PnpError("UNMATCHED_TOOL_RESULT", "Tool result has no active call.", 502);
+              tool.terminal = true;
+              tool.status = event.failed ? "failed" : "completed";
+              tool.outputPersisted = true;
               const item = makeMessage("tool", JSON.stringify(redactor.json(event.output)));
               item.tool_call_id = event.callId;
               item.tool_name = tool.name;
@@ -280,6 +300,70 @@ export class GatewayCore {
               await this.store.call("appendMessage", { sessionId, runId: run.id, message: item });
               properties.messageID = tool.message.id;
               properties.part = tool.message.parts[0]!;
+            } else if (event.type === "tool.observed") {
+              const name = event.name;
+              const hasName = owns(event, "name") && typeof name === "string";
+              const hasInput = owns(event, "input") && event.input !== undefined;
+              const hasOutput = owns(event, "output") && event.output !== undefined;
+              const hasContent = owns(event, "content") && event.content !== undefined;
+              const hasLocations = owns(event, "locations") && event.locations !== undefined;
+              let tool = tools.get(event.callId);
+              if (tool === undefined) {
+                tool = { family: "observed", message: makeMessage("assistant", ""), inputObserved: false, canonical: false,
+                  terminal: false, terminalOutputObserved: false, outputPersisted: false };
+                tools.set(event.callId, tool);
+              }
+              if (tool.family !== "observed") throw new PnpError("ENGINE_PROTOCOL_ERROR", "Tool event families cannot be mixed.", 502);
+              if (hasName) {
+                if (tool.name !== undefined && tool.name !== name) throw new PnpError("ENGINE_PROTOCOL_ERROR", "Tool identity changed during execution.", 502);
+                tool.name = name;
+              }
+              if (hasInput) {
+                tool.input = redactor.json(event.input ?? null);
+                tool.inputObserved = true;
+              }
+              if (!tool.canonical && tool.name !== undefined && tool.inputObserved) {
+                tool.canonical = true;
+                tool.message.tool_calls = [{ id: event.callId, name: tool.name, arguments: tool.input ?? null }];
+                tool.message.info = { role: "assistant", finish: "tool-calls" };
+              } else if (tool.canonical && hasInput && tool.message.tool_calls?.[0] !== undefined) {
+                tool.message.tool_calls[0].arguments = tool.input ?? null;
+              }
+              const observedTerminal = event.status === "completed" || event.status === "failed";
+              if (observedTerminal && hasOutput) tool.terminalOutputObserved = true;
+              if (!tool.terminal && event.status !== undefined) tool.status = event.status;
+              if (!tool.terminal && observedTerminal) tool.terminal = true;
+              const status = tool.terminal ? (tool.status ?? "failed") : (event.status ?? tool.status ?? "pending");
+              const observation: { [key: string]: Json } = {
+                type: "tool", callID: event.callId, source: event.source, phase: event.phase,
+                state: {
+                  status,
+                  ...(observedTerminal && !tool.terminalOutputObserved ? { terminalStatus: "result_unknown" } : {}),
+                  ...(event.nativeStatus === undefined ? {} : { nativeStatus: redactor.text(event.nativeStatus) }),
+                  ...(event.nativeType === undefined ? {} : { nativeType: redactor.text(event.nativeType) }),
+                },
+              };
+              if (hasName) observation.tool = redactor.text(event.name!);
+              if (event.title !== undefined) observation.title = redactor.text(event.title);
+              if (hasInput) observation.input = redactor.json(event.input ?? null);
+              if (hasOutput) observation.output = redactor.json(event.output ?? null);
+              if (hasContent) observation.content = redactor.json(event.content ?? []);
+              if (hasLocations) observation.locations = redactor.json(event.locations ?? []);
+              if (event.nativeType !== undefined) observation.nativeType = redactor.text(event.nativeType);
+              if (event.nativeStatus !== undefined) observation.nativeStatus = redactor.text(event.nativeStatus);
+              tool.message.parts = [...(tool.message.parts ?? []), observation];
+              await this.store.call("appendMessage", { sessionId, runId: run.id, message: tool.message });
+              properties.messageID = tool.message.id;
+              properties.part = observation;
+              // An observation can carry native output without proving a canonical tool result.
+              // Null is an observed output; only a missing property is missing output.
+              if (observedTerminal && tool.canonical && tool.name !== undefined && hasOutput && !tool.outputPersisted) {
+                tool.outputPersisted = true;
+                const item = makeMessage("tool", JSON.stringify(redactor.json(event.output ?? null)));
+                item.tool_call_id = event.callId;
+                item.tool_name = tool.name;
+                await this.store.call("appendMessage", { sessionId, runId: run.id, message: item });
+              }
             } else if (event.type === "usage") {
               await this.journal.publish("run.usage", { ...properties, ...event });
               return;
@@ -336,7 +420,7 @@ export class GatewayCore {
       }
       await eventTail;
       acceptingEvents = false;
-      if (state === "completed" && [...tools.values()].some((t) => !t.finished)) {
+      if (state === "completed" && [...tools.values()].some((t) => !t.terminal)) {
         throw new PnpError("ENGINE_PROTOCOL_ERROR", "Engine ended with unresolved tool states.", 502);
       }
     } catch (error) {
@@ -370,13 +454,14 @@ export class GatewayCore {
           await this.interactions.endRun(ctx.runId);
           // Record an observation, not a fabricated tool response or success.
           for (const [callId, tool] of tools) {
-            if (tool.finished) continue;
-            tool.message.parts = [{ type: "tool", tool: tool.name, callID: callId,
+            if (tool.terminal) continue;
+            tool.message.parts = [...(tool.message.parts ?? []), { type: "tool", ...(tool.name === undefined ? {} : { tool: tool.name }), callID: callId,
               state: { status: "error", terminalStatus: state === "cancelled" ? "cancelled" : "result_unknown",
                 source: "gateway-observation", quiescent, title: "No complete engine tool result was received." } }];
+            tool.terminal = true;
             await this.store.call("appendMessage", { sessionId, runId: ctx.runId, message: tool.message });
             await this.journal.publish("message.part.updated", { sessionID: sessionId, runID: ctx.runId,
-              messageID: tool.message.id, part: tool.message.parts[0]! });
+              messageID: tool.message.id, part: tool.message.parts.at(-1)! });
           }
           const message = { ...makeMessage("assistant", text || failure?.message || ""), id: finalId };
           message.info = { role: "assistant", finish, ...(nativeStopReason === undefined ? {} : { nativeFinish: nativeStopReason }) };

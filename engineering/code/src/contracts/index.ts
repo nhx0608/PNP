@@ -1,6 +1,6 @@
 import type { ProcessHost } from "./host.ts";
 /** PNP public implementation boundary. Breaking changes require a contract version change. */
-export const CONTRACT_VERSION = "1.0.0";
+export const CONTRACT_VERSION = "1.1.0";
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type RunState = "running" | "cancelling" | "completed" | "failed" | "cancelled" | "interrupted";
 export type TerminalState = Exclude<RunState, "running" | "cancelling">;
@@ -66,6 +66,27 @@ export type DriverEvent =
   | { type: "tool.started"; callId: string; name: string; input: Json }
   | { type: "tool.updated"; callId: string; title: string }
   | { type: "tool.finished"; callId: string; name: string; output: Json; failed: boolean }
+  /**
+   * A driver observation is not necessarily a completed canonical tool result.
+   * `content` and `locations` preserve native partial facts for clients that
+   * understand them; their presence (including an empty array) is meaningful.
+   */
+  | ({
+    type: "tool.observed";
+    callId: string;
+    source: "engine";
+    title?: string;
+    name?: string;
+    input?: Json;
+    output?: Json;
+    content?: Json[];
+    locations?: Json[];
+    nativeType?: string;
+    nativeStatus?: string;
+  } & (
+    | { phase: "created" | "updated"; status?: "pending" | "running" | "completed" | "failed" }
+    | { phase: "terminal"; status: "completed" | "failed" }
+  ))
   | { type: "usage"; inputTokens?: number; outputTokens?: number; source: "provider" | "engine" | "estimate" }
   | { type: "native"; namespace: string; eventName: string; payload: Json };
 export interface EventSink {
@@ -170,6 +191,8 @@ export interface IntegrationProvider {
 export interface ResourceScope {
   /** Register before acquiring a resource. A closed scope rejects further acquisition. */
   register(id: string, stop: () => Promise<StopEvidence>): void;
+  /** Drop an owned resource only after its caller has obtained quiescent evidence. */
+  retire?(id: string, evidence: StopEvidence): void;
   readonly closed: boolean;
 }
 export interface EngineOpenInput {

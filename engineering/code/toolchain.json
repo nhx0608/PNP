@@ -3,5 +3,5 @@
   "typescript": "5.8.3",
   "targetPlatform": "win32",
   "architecture": "x64",
-  "contractVersion": "1.0.0"
+  "contractVersion": "1.1.0"
 }

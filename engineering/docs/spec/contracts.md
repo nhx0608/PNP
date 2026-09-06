@@ -1,6 +1,6 @@
 # 公共接口与行为契约
 
-契约版本：`1.0.0`。类型源为 [`code/src/contracts/index.ts`](../../code/src/contracts/index.ts) 与 [`host.ts`](../../code/src/contracts/host.ts)。本文规定行为，不维护第二份 TypeScript 接口。
+契约版本：`1.1.0`。类型源为 [`code/src/contracts/index.ts`](../../code/src/contracts/index.ts) 与 [`host.ts`](../../code/src/contracts/host.ts)。本文规定行为，不维护第二份 TypeScript 接口。
 
 ## 1. 接口所有权
 
@@ -14,7 +14,7 @@
 | IntegrationProvider.prepare | Core | C | 按本轮请求解析模型、工具、资产和授权 |
 | IntegrationProvider.release | Core | C | 回收本轮临时凭据或临时配置，不删除原生对话历史 |
 | ProcessHost.start | Adapter | 公共框架 | 结构化启动、stdio、所有权、退出和有界终止 |
-| ResourceScope.register | Host/Adapter | 公共框架 | 在申请资源前登记停止函数；关闭后禁止新申请 |
+| ResourceScope.register / retire | Host/Adapter | 公共框架 | 在申请资源前登记停止函数；取得 `quiescent=true` 证据后由所有者 retire，关闭后禁止新申请 |
 | EventSink.emit | Adapter | 公共框架 | 有序且可等待的事件提交，失败必须传播 |
 | DriverServices.interact | Adapter | 公共框架 + C策略 | 审批/反问持久化、回传、取消与过期 |
 
@@ -28,6 +28,7 @@
 - 事件回调必须返回并等待 `emit()`；不得 fire-and-forget 或吞掉持久化异常。
 - `quiescent=true` 仅表示可归属的执行资源停止；不表示外部事务已撤销。
 - `terminate`、`close` 与 `ResourceScope` 收尾必须幂等；并发调用共享同一次进行中的核验。只有 `quiescent=true` 可以缓存，超时、异常或 `quiescent=false` 后必须允许再次核验，且不得并发启动第二次收尾。
+- `ResourceScope.retire(id, evidence)` 只接受已登记资源且 `evidence.quiescent=true`；未知 id、未证明停止或仍在收尾中的资源必须失败并保留登记。Adapter 在完成自身的 `HostedProcess.terminate()`/核验后负责 retire，避免驻留 Session Scope 持有每轮已结束 Host 的 closure。
 
 ## 3. 北向 HTTP
 
@@ -56,6 +57,8 @@
 `EngineResult.state` 与 `finish` 必须一致。正常完成为 completed/stop；工具调用阶段不是最终结果；长度限制、内容过滤、取消和错误保留各自停止原因。`taskOutcome` 未经工具或环境验证必须为 unknown。
 
 正常轨迹：user → assistant/tool 若干轮 → final assistant。`step-finish` 不单独证明完成。错误/中断轨迹不能补造 `finish=stop`。
+
+Driver 可使用 `tool.observed` 保留引擎的部分工具事实：`content`、`locations`、原生类型和状态都按实际收到的值持久化。它不是工具结果的替代品：只有同一 call 的真实 `name` 与 `input` 才建立 canonical tool call，且只有该 canonical call 的真实 `output` 才建立 role=tool 消息；字段缺失与显式 `null` 必须区分。`completed`/`failed` 是终态，即使没有 output 也记录 `result_unknown` 事实；终态后的元数据不得重新打开调用。正常完成时仍有非终态观察必须按协议错误处理。
 
 取消后允许有效收尾事件。运行终态提交后，迟到事件只能被隔离诊断，不能修改已提交轨迹或影响下一轮。调用方断线不等于中止任务；显式 abort 或执行 deadline 才触发取消。
 

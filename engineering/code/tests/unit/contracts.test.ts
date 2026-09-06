@@ -52,6 +52,119 @@ test("cancelled tool has gateway observation without a fabricated tool result", 
     assert.equal(messages.at(-1)?.info?.finish, "cancelled");
   } finally { await f.clean(); }
 });
+test("terminal tool observation preserves partial facts without inventing a tool result", async () => {
+  const pack = new MockPack(); const open = pack.open.bind(pack);
+  pack.open = async (input) => {
+    const channel = await open(input); const run = channel.run.bind(channel);
+    channel.run = async (runInput) => {
+      await runInput.services.events.emit({ type: "tool.observed", source: "engine", callId: "partial", phase: "created", status: "completed",
+        name: "workspace.inspect", input: null, content: [{ type: "text", text: "partial native fact" }], locations: [{ path: "C:/work/file.txt", line: 3 }],
+        nativeType: "tool_call", nativeStatus: "done" });
+      await runInput.services.events.emit({ type: "tool.observed", source: "engine", callId: "partial", phase: "updated", status: "running",
+        title: "Late metadata", content: [{ type: "text", text: "still terminal" }] });
+      await runInput.services.events.emit({ type: "tool.observed", source: "engine", callId: "undefined-fields", phase: "terminal",
+        status: "completed", name: "not-canonical", input: undefined, output: undefined });
+      return run(runInput);
+    };
+    return channel;
+  };
+  const f = await create(pack);
+  try {
+    await f.core.run(f.session.id, request);
+    const messages = await f.core.messages(f.session.id);
+    const observed = messages.find((message) => message.tool_calls?.[0]?.id === "partial")!;
+    assert.deepEqual(observed.tool_calls?.[0], { id: "partial", name: "workspace.inspect", arguments: null });
+    assert.equal(messages.some((message) => message.role === "tool" && message.tool_call_id === "partial"), false);
+    assert.equal(messages.some((message) => message.tool_calls?.[0]?.id === "undefined-fields"), false);
+    assert.match(JSON.stringify(observed.parts), /partial native fact/);
+    assert.ok(JSON.stringify(observed.parts).includes("C:/work/file.txt"));
+    assert.match(JSON.stringify(observed.parts), /result_unknown/);
+    assert.match(JSON.stringify(observed.parts), /"status":"completed"/);
+  } finally { await f.clean(); }
+});
+test("output observed before a canonical identity remains an observation, not an orphaned tool result", async () => {
+  const pack = new MockPack(); const open = pack.open.bind(pack);
+  pack.open = async (input) => {
+    const channel = await open(input); const run = channel.run.bind(channel);
+    channel.run = async (runInput) => {
+      await runInput.services.events.emit({ type: "tool.observed", source: "engine", callId: "late-identity", phase: "created", status: "running",
+        output: { partial: true }, content: [{ type: "text", text: "output came first" }] });
+      await runInput.services.events.emit({ type: "tool.observed", source: "engine", callId: "late-identity", phase: "terminal", status: "completed",
+        name: "late.tool", input: { value: 1 }, locations: [{ path: "C:/work/late.txt" }] });
+      return run(runInput);
+    };
+    return channel;
+  };
+  const f = await create(pack);
+  try {
+    await f.core.run(f.session.id, request);
+    const messages = await f.core.messages(f.session.id);
+    const observed = messages.find((message) => message.tool_calls?.[0]?.id === "late-identity")!;
+    assert.deepEqual(observed.tool_calls?.[0], { id: "late-identity", name: "late.tool", arguments: { value: 1 } });
+    assert.match(JSON.stringify(observed.parts), /output came first/);
+    assert.equal(messages.some((message) => message.role === "tool" && message.tool_call_id === "late-identity"), false);
+  } finally { await f.clean(); }
+});
+test("split tool identity accumulates while only terminal output becomes the canonical result", async () => {
+  const pack = new MockPack(); const open = pack.open.bind(pack);
+  pack.open = async (input) => {
+    const channel = await open(input); const run = channel.run.bind(channel);
+    channel.run = async (runInput) => {
+      await runInput.services.events.emit({ type: "tool.observed", source: "engine", callId: "split", phase: "created",
+        status: "pending", name: "split.tool" });
+      await runInput.services.events.emit({ type: "tool.observed", source: "engine", callId: "split", phase: "updated",
+        status: "running", input: { value: 1 }, output: { partial: true } });
+      await runInput.services.events.emit({ type: "tool.observed", source: "engine", callId: "split", phase: "terminal",
+        status: "completed", output: { final: true } });
+      return run(runInput);
+    };
+    return channel;
+  };
+  const f = await create(pack);
+  try {
+    await f.core.run(f.session.id, request);
+    const messages = await f.core.messages(f.session.id);
+    assert.deepEqual(messages.find((message) => message.tool_calls?.[0]?.id === "split")?.tool_calls?.[0],
+      { id: "split", name: "split.tool", arguments: { value: 1 } });
+    const result = messages.find((message) => message.role === "tool" && message.tool_call_id === "split");
+    assert.deepEqual(JSON.parse(result?.content ?? "null"), { final: true });
+  } finally { await f.clean(); }
+});
+test("a tool call cannot mix observed and legacy event families", async () => {
+  const pack = new MockPack(); const open = pack.open.bind(pack);
+  pack.open = async (input) => {
+    const channel = await open(input);
+    channel.run = async (runInput) => {
+      await runInput.services.events.emit({ type: "tool.observed", source: "engine", callId: "mixed", phase: "created",
+        status: "running", name: "mixed.tool", input: null });
+      await runInput.services.events.emit({ type: "tool.finished", callId: "mixed", name: "mixed.tool", output: null, failed: false });
+      throw new Error("unreachable");
+    };
+    return channel;
+  };
+  const f = await create(pack);
+  try { await assert.rejects(f.core.run(f.session.id, request), { code: "ENGINE_PROTOCOL_ERROR" }); }
+  finally { await f.clean(); }
+});
+test("normal completion rejects an observation whose actual status remains nonterminal", async () => {
+  const pack = new MockPack(); const open = pack.open.bind(pack);
+  pack.open = async (input) => {
+    const channel = await open(input); const run = channel.run.bind(channel);
+    channel.run = async (runInput) => {
+      await runInput.services.events.emit({ type: "tool.observed", source: "engine", callId: "unfinished", phase: "created", status: "running",
+        content: [{ type: "text", text: "no canonical identity" }], locations: [] });
+      return run(runInput);
+    };
+    return channel;
+  };
+  const f = await create(pack);
+  try {
+    await assert.rejects(f.core.run(f.session.id, request), { code: "ENGINE_PROTOCOL_ERROR" });
+    const observation = (await f.core.messages(f.session.id)).find((message) => JSON.stringify(message.parts ?? []).includes("no canonical identity"))!;
+    assert.equal(observation.tool_calls, undefined);
+    assert.equal((await f.core.messages(f.session.id)).some((message) => message.role === "tool" && message.tool_call_id === "unfinished"), false);
+  } finally { await f.clean(); }
+});
 test("channel mismatch rejects reuse even when the engine id matches", async () => {
   const f = await create();
   try {
@@ -163,6 +276,29 @@ test("resource scope closes registered resources and rejects later acquisition",
   assert.equal((await scope.stop(50)).quiescent, true);
   await scope.stop(50); assert.equal(calls, 1);
   assert.throws(() => scope.register("y", async () => ({ quiescent: true, method: "not-running" })), { code: "RESOURCE_SCOPE_CLOSED" });
+});
+test("resource scope retires only a known resource with independently proven quiescence", async () => {
+  const scope = new OwnedResourceScope(); let calls = 0;
+  scope.register("x", async () => { calls++; return { quiescent: true, method: "not-running" }; });
+  assert.throws(() => scope.retire("x", { quiescent: false, method: "not-running" }), { code: "RESOURCE_UNPROVEN" });
+  assert.throws(() => scope.retire("missing", { quiescent: true, method: "not-running" }), { code: "RESOURCE_UNKNOWN" });
+  scope.retire("x", { quiescent: true, method: "not-running" });
+  assert.equal((await scope.stop(50)).quiescent, true);
+  assert.equal(calls, 0);
+  assert.throws(() => scope.retire("x", { quiescent: true, method: "not-running" }), { code: "RESOURCE_UNKNOWN" });
+});
+test("resource scope forbids retirement while a cleanup attempt remains unresolved", async () => {
+  const scope = new OwnedResourceScope(); let release: (() => void) | undefined;
+  scope.register("x", async () => {
+    await new Promise<void>((resolve) => { release = resolve; });
+    return { quiescent: true, method: "not-running" };
+  });
+  const stopping = scope.stop(1000);
+  await sleep(0);
+  assert.throws(() => scope.retire("x", { quiescent: true, method: "not-running" }), { code: "RESOURCE_STOPPING" });
+  release!();
+  assert.equal((await stopping).quiescent, true);
+  assert.throws(() => scope.retire("x", { quiescent: true, method: "not-running" }), { code: "RESOURCE_UNKNOWN" });
 });
 test("resource scope shares an active stop attempt and retries only unproven resources", async () => {
   const scope = new OwnedResourceScope(); let calls = 0; let release: (() => void) | undefined;

@@ -147,6 +147,10 @@ test("recovery confirms a blocked session only when every retained host is quies
   try {
     await store.call("startRun", { run: { id: "interrupted", sessionId: session.id, state: "running", requestHash: "x", startedAt: new Date().toISOString() },
       message: { id: "user", role: "user", content: "do not replay", created_at: new Date().toISOString() } });
+    await store.call("appendMessage", { sessionId: session.id, runId: "interrupted", message: {
+      id: "partial-tool", role: "assistant", content: "", created_at: new Date().toISOString(),
+      parts: [{ type: "tool", callID: "nameless", source: "engine", phase: "created", state: { status: "pending" } }],
+    } });
     await mkdir(path.join(directory, "hosts"));
     await writeFile(path.join(directory, "hosts", "owned.json"), JSON.stringify({ sessionId: session.id, quiescent: true }));
     const summary = await recoverOwnedState(store, { start: async () => { throw new Error("not used"); },
@@ -154,6 +158,7 @@ test("recovery confirms a blocked session only when every retained host is quies
     assert.equal(summary.interrupted, 1);
     assert.equal(summary.confirmedSessions, 1);
     assert.equal((await store.call("getRun", { runId: "interrupted" }))?.state, "interrupted");
+    assert.match(JSON.stringify((await store.call("messages", { sessionId: session.id })).find((message) => message.id === "partial-tool")?.parts), /gateway-recovery/);
     assert.equal((await core.getSession(session.id)).status, "idle");
   } finally { await core.close(); await store.close(); await rm(directory, { recursive: true, force: true }); }
 });

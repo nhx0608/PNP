@@ -220,16 +220,20 @@ function handle(request: WorkerRequest): unknown {
           saveRun(current);
           for (const stored of db.prepare("SELECT document FROM messages WHERE run_id=?").all(current.id)) {
             const item = parse<Message>(stored)!;
-            if (item.tool_calls !== undefined) {
-              item.parts = (item.parts ?? []).map((part) => {
-                if (part !== null && typeof part === "object" && !Array.isArray(part) && part.type === "tool") {
-                  const value = part.state;
-                  if (value !== null && typeof value === "object" && !Array.isArray(value) && value.status === "running") {
-                    return { ...part, state: { status: "error", terminalStatus: "result_unknown", source: "gateway-recovery" } };
-                  }
-                }
-                return part;
-              });
+            const parts = item.parts ?? [];
+            const observed = new Map<string, boolean>();
+            for (const part of parts) {
+              if (part === null || typeof part !== "object" || Array.isArray(part) || part.type !== "tool"
+                || typeof part.callID !== "string") continue;
+              const value = part.state;
+              if (value === null || typeof value !== "object" || Array.isArray(value) || typeof value.status !== "string") continue;
+              if (["completed", "failed", "error"].includes(value.status)) observed.set(part.callID, true);
+              else if (["pending", "running"].includes(value.status) && observed.get(part.callID) !== true) observed.set(part.callID, false);
+            }
+            const unresolved = [...observed].filter(([, terminal]) => !terminal).map(([callID]) => callID);
+            if (unresolved.length > 0) {
+              item.parts = [...parts, ...unresolved.map((callID) => ({ type: "tool", callID,
+                state: { status: "error", terminalStatus: "result_unknown", source: "gateway-recovery" } }))];
               message(current.sessionId, current.id, item);
             }
           }

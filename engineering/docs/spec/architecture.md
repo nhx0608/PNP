@@ -115,9 +115,9 @@ Driver 保留原生停止原因并映射 `stop / length / error / content-filter
 
 取消有三项独立责任：接收取消请求、在有界时间内结束调用方等待、确认实际执行停止。协议取消 ACK 只完成第一项。
 
-Core 发送取消、继续接收有效收尾事件、等待停止证据；无响应时调用资源终止。超时或取消时尚无结果的工具记录 `gateway-observation` 和 `result_unknown/cancelled`，不伪造引擎工具结果。停止仍不确定则阻断后续执行。
+Core 发送取消、继续接收有效收尾事件、等待停止证据；无响应时调用资源终止。超时或取消时尚无结果的工具记录 `gateway-observation` 和 `result_unknown/cancelled`，不伪造引擎工具结果。`tool.observed` 的 content、locations 与原生元数据作为部分事实保留，但只在真实 name/input 和同一调用的真实 output 都具备相应证据时投影 canonical tool call/tool result；显式 null 不等于字段缺失。停止仍不确定则阻断后续执行。
 
-每次打开 Channel 前建立 ResourceScope。Host 在启动进程前登记清理函数和归属记录。启动超时后迟到的 Channel 仍被终止；未完成的打开操作不能被当成“没有资源”。
+每次打开 Channel 前建立 ResourceScope。Host 在启动进程前登记清理函数和归属记录；资源所有者取得 quiescent 证据后 retire 已结束条目，驻留 Channel 不会无限累积每轮 Host closure。启动超时后迟到的 Channel 仍被终止；未完成的打开操作不能被当成“没有资源”。
 
 Windows Host 用独立 helper 持有 Job Object，子进程暂停创建、入 Job 后恢复；`KILL_ON_JOB_CLOSE` 处理网关或 helper 退出。stdin EOF、进程退出、协议无响应均有有界清理路径。禁止按 `node.exe/python.exe/OUTLOOK.EXE` 等进程名全量终止。
 

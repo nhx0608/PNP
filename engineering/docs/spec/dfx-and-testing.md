@@ -11,7 +11,7 @@ PNP 是单机系统，不承诺多机容灾或节点失效时无中断继续执�
 | open 超时后返回 Channel | 处理迟到资源；停止证据不足时保留阻断 |
 | 工具未结束而引擎报完成 | 协议错误；不生成正常 stop |
 | 取消 ACK 但工具继续执行 | 继续取消/终止；不提前 idle |
-| 工具结果丢失 | 记录 gateway-observation；不伪造 tool result |
+| 工具结果丢失 | 记录 gateway-observation 或终态 tool.observed 的 result_unknown 事实；不伪造 tool result |
 | SQLite 写失败 | 不发布成功；阻断新 Run，保存可用诊断 |
 | SSE 客户端慢或断开 | 关闭慢连接；不重执行任务；消息快照仍为事实源 |
 | 网关崩溃 | 持久化 Run 记 interrupted，核验所属 Host/Job 后恢复准入 |
