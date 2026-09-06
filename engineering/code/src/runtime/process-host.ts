@@ -551,6 +551,15 @@ export class LocalProcessHost implements ProcessHost {
       catch (fallbackError: unknown) {
         await terminate().catch(() => undefined);
         if (cancelled()) throw new PnpError("EXECUTION_CANCELLED", "Launch was cancelled.", 409);
+        // A spawn that never produced a process id created nothing, so the record must say so
+        // outright. Leaving it unproven contradicts reconciliation, which already reads a record
+        // without an owner as stopped, and an unproven record is the one thing that fences a
+        // session on the next start.
+        if (child?.pid === undefined && !evidence) {
+          evidence = true;
+          record.quiescent = true;
+          await save().catch(() => undefined);
+        }
         throw fallbackError;
       }
     }

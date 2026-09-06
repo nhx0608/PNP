@@ -479,7 +479,9 @@ test("the engine process id from the ready frame is recorded as a second evidenc
   const scope = new OwnedResourceScope();
   try {
     const hosted = await host.start(spec(directory, nodeExe, []), new AbortController().signal, scope);
-    await waitFor(async () => Number((await ownershipRecord(directory)).enginePid) === 31337);
+    // The ownership save is deliberately detached from the ready frame, and an atomic write on a
+    // loaded Windows runner is not fast, so the budget is generous rather than tight.
+    await waitFor(async () => Number((await ownershipRecord(directory)).enginePid) === 31337, 20_000);
     await hosted.terminate();
   } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await rm(directory, { recursive: true, force: true }); }
 });
