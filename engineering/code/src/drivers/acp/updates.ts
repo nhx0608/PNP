@@ -1,5 +1,5 @@
 import type { ContentBlock, SessionUpdate, StopReason as AcpStopReason, ToolCallStatus, Usage } from "@agentclientprotocol/sdk";
-import type { DriverEvent, MessageFinish } from "../../contracts/index.ts";
+import type { DriverEvent, Json, MessageFinish } from "../../contracts/index.ts";
 import { toJson } from "./json.ts";
 
 export const ACP_NAMESPACE = "acp";
@@ -25,9 +25,22 @@ export interface MappedUpdate {
   text: string;
 }
 interface TrackedTool {
+  /** Read once, from the update that announced the call: engines rewrite the title while the call runs. */
   name: string;
   title: string;
+  /** The most complete arguments the engine has shown for this call. */
+  input: Json;
+  /** True once the engine has shown non-empty arguments for the call. */
+  bound: boolean;
+  /** True once `tool.started` was emitted; the core knows the call only from that event on. */
+  started: boolean;
+  /** True until a terminal event was emitted for the call. */
   open: boolean;
+}
+/** Everything a terminal update contributes to the recorded result. */
+interface ToolOutcome {
+  content?: unknown;
+  rawOutput?: unknown;
 }
 function nativeEvent(eventName: string, payload: unknown): DriverEvent {
   return { type: "native", namespace: ACP_NAMESPACE, eventName, payload: toJson(payload) };
@@ -38,6 +51,24 @@ function textOf(content: ContentBlock): string | undefined {
 function positiveDelta(current: number, previous: number): number {
   return Number.isFinite(current) && current > previous ? current - previous : 0;
 }
+function nonEmptyText(value: string | null | undefined): string | undefined {
+  return value === null || value === undefined || value === "" ? undefined : value;
+}
+/** The public tool name, resolved once so a later title never renames a call that already started. */
+function toolName(name: string | null | undefined, title: string | null | undefined,
+  kind: string | null | undefined): string {
+  return nonEmptyText(name) ?? nonEmptyText(title) ?? nonEmptyText(kind) ?? "tool";
+}
+/**
+ * Whether an update actually carries arguments. ACP lets an engine announce a call before the model has
+ * bound them, and opencode does exactly that: the announcing `tool_call` carries `rawInput: {}`.
+ */
+function hasArguments(rawInput: unknown): boolean {
+  if (rawInput === null || rawInput === undefined) return false;
+  if (typeof rawInput !== "object") return true;
+  if (Array.isArray(rawInput)) return rawInput.length > 0;
+  return Object.keys(rawInput).length > 0;
+}
 
 /**
  * Translates ACP session updates into public driver events.
@@ -45,6 +76,12 @@ function positiveDelta(current: number, previous: number): number {
  * The mapper owns the tool-call table because the public core rejects a tool update that has no open call
  * (UNMATCHED_TOOL_UPDATE / UNMATCHED_TOOL_RESULT) and rejects a completed run that still has open calls
  * (ENGINE_PROTOCOL_ERROR). Unmatched engine updates therefore become native observations, never fabricated calls.
+ *
+ * The core also records a call's arguments once, from `tool.started`, and accepts only a title afterwards. An
+ * engine that announces a call before the model has bound its arguments (opencode sends `rawInput: {}` and the
+ * real arguments one update later) would therefore leave `{}` in the transcript for good. Such a call is held
+ * instead: it is tracked but not started, and the first update carrying arguments — or, failing that, the
+ * terminal update or `closeOpenCalls` — starts it. A held call is never dropped.
  */
 export class SessionUpdateMapper {
   private readonly tools = new Map<string, TrackedTool>();
@@ -74,24 +111,26 @@ export class SessionUpdateMapper {
         return { events: [nativeEvent("user_message_chunk", update)], text: "" };
       case "tool_call": {
         this.sawStreamedContent = true;
-        const name = update.name ?? update.title;
         const existing = this.tools.get(update.toolCallId);
         if (existing !== undefined) {
           // A repeated identity would be rejected as a duplicate tool call; treat it as an update.
           return this.mapToolProgress(update.toolCallId, existing, update.title, update.status, update, "tool_call.duplicate");
         }
-        this.tools.set(update.toolCallId, { name, title: update.title, open: true });
-        const events: DriverEvent[] = [
-          { type: "tool.started", callId: update.toolCallId, name, input: toJson(update.rawInput ?? null) },
-        ];
-        if (isTerminalToolStatus(update.status)) {
-          this.tools.set(update.toolCallId, { name, title: update.title, open: false });
-          events.push({
-            type: "tool.finished", callId: update.toolCallId, name,
-            output: toJson({ status: update.status, content: update.content ?? null, rawOutput: update.rawOutput ?? null }),
-            failed: update.status === "failed",
-          });
-        }
+        const tracked: TrackedTool = {
+          name: toolName(update.name, update.title, update.kind),
+          title: update.title,
+          input: toJson(update.rawInput ?? null),
+          bound: hasArguments(update.rawInput),
+          started: false,
+          open: true,
+        };
+        this.tools.set(update.toolCallId, tracked);
+        const terminal = isTerminalToolStatus(update.status);
+        // Announcing a call is not progress, so this emits the start and, for a call that arrives already
+        // terminal, its result. A call announced without arguments is held until they arrive.
+        if (!tracked.bound && !terminal) return { events: [], text: "" };
+        const events: DriverEvent[] = [this.startEvent(update.toolCallId, tracked)];
+        if (terminal) events.push(this.finishEvent(update.toolCallId, tracked, update.status, update));
         return { events, text: "" };
       }
       case "tool_call_update": {
@@ -100,7 +139,7 @@ export class SessionUpdateMapper {
           // An unknown identity is reported as an observation; the core would reject an unmatched update.
           return { events: [nativeEvent("tool_call_update.unknown", update)], text: "" };
         }
-        return this.mapToolProgress(update.toolCallId, tracked, update.title ?? undefined, update.status ?? undefined, update, "tool_call_update.late");
+        return this.mapToolProgress(update.toolCallId, tracked, update.title, update.status, update, "tool_call_update.late");
       }
       case "usage_update": {
         // ACP reports session-cumulative context usage; the public event carries this turn's increment.
@@ -133,6 +172,7 @@ export class SessionUpdateMapper {
     return { type: "usage", inputTokens: input, outputTokens: output, source: "engine" };
   }
 
+  /** Every call the engine has not finished, including one still held for its arguments. */
   openCallIds(): string[] {
     return [...this.tools.entries()].filter(([, tool]) => tool.open).map(([callId]) => callId);
   }
@@ -140,11 +180,16 @@ export class SessionUpdateMapper {
   /**
    * Closes every call the engine left open. The engine omitted the terminal state, so the call is recorded as
    * failed with an explicit source; this is an observation, never a fabricated tool result.
+   *
+   * A call still held for its arguments is started here first, with whatever the engine did show: the
+   * transcript must carry every call the engine declared, and the core rejects a result for a call it never
+   * saw begin.
    */
   closeOpenCalls(errorCode: string, detail: string): DriverEvent[] {
     const events: DriverEvent[] = [];
     for (const [callId, tool] of this.tools) {
       if (!tool.open) continue;
+      if (!tool.started) events.push(this.startEvent(callId, tool));
       tool.open = false;
       events.push({
         type: "tool.finished", callId, name: tool.name, failed: true,
@@ -154,23 +199,46 @@ export class SessionUpdateMapper {
     return events;
   }
 
-  private mapToolProgress(callId: string, tracked: TrackedTool, title: string | undefined,
+  private startEvent(callId: string, tracked: TrackedTool): DriverEvent {
+    tracked.started = true;
+    return { type: "tool.started", callId, name: tracked.name, input: tracked.input };
+  }
+
+  private finishEvent(callId: string, tracked: TrackedTool, status: ToolCallStatus | null | undefined,
+    outcome: ToolOutcome): DriverEvent {
+    tracked.open = false;
+    return {
+      type: "tool.finished", callId, name: tracked.name,
+      output: toJson({ status: status ?? null, content: outcome.content ?? null, rawOutput: outcome.rawOutput ?? null }),
+      failed: status === "failed",
+    };
+  }
+
+  private mapToolProgress(callId: string, tracked: TrackedTool, title: string | null | undefined,
     status: ToolCallStatus | null | undefined, raw: unknown, lateEvent: string): MappedUpdate {
     if (!tracked.open) return { events: [nativeEvent(lateEvent, raw)], text: "" };
     this.sawStreamedContent = true;
-    if (title !== undefined) tracked.title = title;
-    if (!isTerminalToolStatus(status)) {
-      return { events: [{ type: "tool.updated", callId, title: tracked.title }], text: "" };
+    const payload = raw as ToolOutcome & { rawInput?: unknown };
+    const renamed = nonEmptyText(title);
+    if (renamed !== undefined) tracked.title = renamed;
+    if (hasArguments(payload.rawInput)) {
+      // The arguments the call was announced without arrive here; these are the ones the transcript needs.
+      tracked.input = toJson(payload.rawInput);
+      tracked.bound = true;
     }
-    tracked.open = false;
-    const payload = raw as { content?: unknown; rawOutput?: unknown };
-    return {
-      events: [{
-        type: "tool.finished", callId, name: tracked.name,
-        output: toJson({ status, content: payload.content ?? null, rawOutput: payload.rawOutput ?? null }),
-        failed: status === "failed",
-      }],
-      text: "",
-    };
+    const terminal = isTerminalToolStatus(status);
+    const events: DriverEvent[] = [];
+    if (!tracked.started) {
+      // Still nothing to record the call with: keep the title this update carried and wait. A terminal
+      // update starts the call regardless, because losing the call outright is worse than empty arguments.
+      if (!tracked.bound && !terminal) return { events, text: "" };
+      events.push(this.startEvent(callId, tracked));
+    }
+    if (!terminal) {
+      events.push({ type: "tool.updated", callId, title: tracked.title });
+      return { events, text: "" };
+    }
+    events.push(this.finishEvent(callId, tracked, status, payload));
+    return { events, text: "" };
   }
 }

@@ -147,6 +147,166 @@ test("a title-only tool call falls back to the title as the tool name", async ()
   assert.equal(services.ofType("tool.started")[0]?.name, "Search the web");
 });
 
+/**
+ * The literal update sequence one `write` call produced on opencode 1.18.29: the call is announced with an
+ * empty `rawInput`, the real arguments arrive with the next update, and the title is then replaced by the
+ * written path. The core records a call's arguments once, from `tool.started`, and accepts only a title
+ * afterwards, so starting on the announcement would leave `{}` in the transcript for good.
+ */
+function writeCall(agent: FakeAgent): void {
+  update(agent, {
+    sessionUpdate: "tool_call", toolCallId: "call_1", title: "write", kind: "edit",
+    status: "pending", locations: [], rawInput: {},
+  });
+  update(agent, {
+    sessionUpdate: "tool_call_update", toolCallId: "call_1", status: "in_progress", kind: "edit", title: "write",
+    locations: [{ path: "/abs/path/probe-output.txt" }],
+    rawInput: { filePath: "/abs/path/probe-output.txt", content: "hello-from-probe" },
+  });
+  update(agent, {
+    sessionUpdate: "tool_call_update", toolCallId: "call_1", status: "completed",
+    title: "tmp/probe/probe-output.txt",
+    content: [{ type: "content", content: { type: "text", text: "Wrote file successfully." } }],
+    rawOutput: { output: "Wrote file successfully.", metadata: { filePath: "/abs/path/probe-output.txt" } },
+  });
+  update(agent, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Wrote the file." } });
+}
+
+test("a call starts with the arguments the engine bound after announcing it, not with the empty ones", async () => {
+  const { services } = await turnWith(writeCall);
+  const started = services.ofType("tool.started");
+  // One start only: the arguments reach the transcript through it, and it is written exactly once.
+  assert.equal(started.length, 1);
+  assert.equal(started[0]?.callId, "call_1");
+  assert.deepEqual(started[0]?.input, { filePath: "/abs/path/probe-output.txt", content: "hello-from-probe" });
+});
+
+test("a call keeps the name it was announced with when the engine renames the title", async () => {
+  const { services } = await turnWith(writeCall);
+  // The engine replaces the title with the written path on completion; the tool is still `write`.
+  assert.equal(services.ofType("tool.started")[0]?.name, "write");
+  assert.equal(services.ofType("tool.finished")[0]?.name, "write");
+});
+
+test("a held call reports its progress and its result in order once it has started", async () => {
+  const { services, result } = await turnWith(writeCall);
+  assert.deepEqual(services.types, ["tool.started", "tool.updated", "tool.finished", "text.delta"]);
+  assert.equal(services.ofType("tool.updated")[0]?.title, "write");
+  const finished = services.ofType("tool.finished")[0];
+  assert.equal(finished?.failed, false);
+  const output = finished?.output;
+  assert.ok(output !== null && typeof output === "object" && !Array.isArray(output));
+  const rawOutput = output["rawOutput"];
+  assert.ok(rawOutput !== null && typeof rawOutput === "object" && !Array.isArray(rawOutput));
+  assert.equal(rawOutput["output"], "Wrote file successfully.");
+  // Holding a call is not an unresolved call: the engine closed this one itself.
+  assert.equal(services.native("turn.settled").length, 0);
+  assert.equal(result.finalText, "Wrote the file.");
+});
+
+test("a held call starts where its arguments arrive, after whatever the engine streamed while it waited", async () => {
+  const { services } = await turnWith((agent) => {
+    update(agent, {
+      sessionUpdate: "tool_call", toolCallId: "call_1", title: "write", kind: "edit", status: "pending", rawInput: {},
+    });
+    update(agent, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "writing the file" } });
+    update(agent, {
+      sessionUpdate: "tool_call_update", toolCallId: "call_1", status: "in_progress",
+      rawInput: { filePath: "/abs/path/probe-output.txt", content: "hello-from-probe" },
+    });
+  });
+  // Announcing the call emits nothing at all, so the text the engine streamed in between comes first.
+  assert.deepEqual(services.types.filter((type) => type !== "native"), ["text.delta", "tool.started", "tool.updated", "tool.finished"]);
+  assert.deepEqual(services.ofType("tool.started")[0]?.input,
+    { filePath: "/abs/path/probe-output.txt", content: "hello-from-probe" });
+});
+
+test("a call announced with its arguments starts on the announcement, not on a later update", async () => {
+  const { services } = await turnWith((agent) => {
+    update(agent, {
+      sessionUpdate: "tool_call", toolCallId: "call-1", title: "read", kind: "read",
+      status: "pending", rawInput: { filePath: "README.md" },
+    });
+    update(agent, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "reading" } });
+    update(agent, { sessionUpdate: "tool_call_update", toolCallId: "call-1", status: "completed", rawOutput: { bytes: 7 } });
+  });
+  // The text delta between the two tool updates pins the start to the announcement.
+  assert.deepEqual(services.types, ["tool.started", "text.delta", "tool.finished"]);
+  assert.deepEqual(services.ofType("tool.started")[0]?.input, { filePath: "README.md" });
+});
+
+test("a held call reports no progress before it starts, and keeps the title it was given while held", async () => {
+  const { services } = await turnWith((agent) => {
+    update(agent, {
+      sessionUpdate: "tool_call", toolCallId: "call_1", title: "write", kind: "edit", status: "pending", rawInput: {},
+    });
+    update(agent, { sessionUpdate: "tool_call_update", toolCallId: "call_1", status: "in_progress", title: "still writing" });
+    update(agent, {
+      sessionUpdate: "tool_call_update", toolCallId: "call_1", status: "in_progress",
+      rawInput: { filePath: "/abs/path/probe-output.txt" },
+    });
+  });
+  // A tool.updated for a call the core has not seen start is rejected as UNMATCHED_TOOL_UPDATE.
+  assert.deepEqual(services.types.filter((type) => type !== "native"), ["tool.started", "tool.updated", "tool.finished"]);
+  assert.deepEqual(services.ofType("tool.started")[0]?.input, { filePath: "/abs/path/probe-output.txt" });
+  assert.equal(services.ofType("tool.updated")[0]?.title, "still writing");
+});
+
+test("a held call whose only update is terminal still reports the engine's own result", async () => {
+  const { services } = await turnWith((agent) => {
+    update(agent, {
+      sessionUpdate: "tool_call", toolCallId: "call_1", title: "write", kind: "edit", status: "pending", rawInput: {},
+    });
+    update(agent, { sessionUpdate: "tool_call_update", toolCallId: "call_1", status: "completed", rawOutput: { output: "done" } });
+  });
+  // Waiting for arguments must never swallow a terminal state; the call is started so it can be closed.
+  assert.deepEqual(services.types, ["tool.started", "tool.finished"]);
+  assert.deepEqual(services.ofType("tool.started")[0]?.input, {});
+  const finished = services.ofType("tool.finished")[0];
+  assert.equal(finished?.failed, false);
+  const output = finished?.output;
+  assert.ok(output !== null && typeof output === "object" && !Array.isArray(output));
+  assert.equal(output["status"], "completed");
+  assert.equal(services.native("turn.settled").length, 0);
+});
+
+test("a call held for arguments that never arrive is still started and closed as failed", async () => {
+  const { services } = await turnWith((agent) => {
+    update(agent, {
+      sessionUpdate: "tool_call", toolCallId: "call_1", title: "write", kind: "edit", status: "pending", rawInput: {},
+    });
+    update(agent, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "giving up" } });
+  });
+  // The engine declared the call, so the transcript shows it; holding it is never a reason to drop it.
+  assert.deepEqual(services.types.filter((type) => type.startsWith("tool.")), ["tool.started", "tool.finished"]);
+  const started = services.ofType("tool.started")[0];
+  assert.equal(started?.name, "write");
+  assert.deepEqual(started?.input, {});
+  const finished = services.ofType("tool.finished")[0];
+  assert.equal(finished?.failed, true);
+  const output = finished?.output;
+  assert.ok(output !== null && typeof output === "object" && !Array.isArray(output));
+  assert.equal(output["errorCode"], "ACP_TOOL_RESULT_MISSING");
+  assert.equal(output["source"], "driver-observation");
+  // One unresolved call, not one per emitted event.
+  assert.equal(nativePayload(services, "turn.settled")["unresolvedToolCalls"], 1);
+});
+
+test("a call re-announced with arguments while it is held starts once, under its first name", async () => {
+  const { services } = await turnWith((agent) => {
+    update(agent, { sessionUpdate: "tool_call", toolCallId: "call_1", title: "write", kind: "edit", rawInput: {} });
+    update(agent, {
+      sessionUpdate: "tool_call", toolCallId: "call_1", title: "tmp/probe-output.txt", kind: "edit",
+      rawInput: { filePath: "/abs/path/probe-output.txt" },
+    });
+    update(agent, { sessionUpdate: "tool_call_update", toolCallId: "call_1", status: "completed" });
+  });
+  const started = services.ofType("tool.started");
+  assert.equal(started.length, 1);
+  assert.equal(started[0]?.name, "write");
+  assert.deepEqual(started[0]?.input, { filePath: "/abs/path/probe-output.txt" });
+});
+
 test("an update for an unknown tool identity is observed, never turned into a call", async () => {
   const { services } = await turnWith((agent) => {
     update(agent, { sessionUpdate: "tool_call_update", toolCallId: "never-opened", status: "completed" });
@@ -159,7 +319,7 @@ test("an update for an unknown tool identity is observed, never turned into a ca
 
 test("a repeated tool identity is treated as progress, never as a second call", async () => {
   const { services } = await turnWith((agent) => {
-    update(agent, { sessionUpdate: "tool_call", toolCallId: "call-1", title: "First", name: "run" });
+    update(agent, { sessionUpdate: "tool_call", toolCallId: "call-1", title: "First", name: "run", rawInput: { step: 1 } });
     update(agent, { sessionUpdate: "tool_call", toolCallId: "call-1", title: "Second", name: "run" });
     update(agent, { sessionUpdate: "tool_call_update", toolCallId: "call-1", status: "completed" });
   });

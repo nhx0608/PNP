@@ -324,10 +324,13 @@ export class AcpSessionChannel implements EngineSessionChannel {
     }
     await turn.drain();
     turn.accepting = false;
+    // Counted before closing: a call the engine never gave arguments to is closed with a start of its own,
+    // so the event count is not the number of unresolved calls the operator needs to see.
+    const unresolved = this.mapper.openCallIds().length;
     const leftovers = this.mapper.closeOpenCalls("ACP_TOOL_RESULT_MISSING",
       "The engine ended the turn without a terminal tool state.");
     if (leftovers.length > 0) await turn.emit(...leftovers);
-    await this.emitTurnDiagnostics(turn, outcome, leftovers.length);
+    await this.emitTurnDiagnostics(turn, outcome, unresolved);
     await turn.drain();
     if (turn.emitFailure !== undefined) throw turn.emitFailure;
     if (outcome === undefined) {
