@@ -19,6 +19,7 @@
     "release:check": "node scripts/release-check.mjs",
     "dependencies:freeze": "node scripts/freeze-dependencies.mjs",
     "foundation:check": "node scripts/foundation-check.mjs",
+    "e2e": "node scripts/e2e/ci-smoke.mjs",
     "recover": "node scripts/recover.mjs",
     "diagnostics": "node scripts/export-diagnostics.mjs",
     "verify:manifest": "node ../VERIFY.mjs",
