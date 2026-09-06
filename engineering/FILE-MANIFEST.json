@@ -804,8 +804,8 @@
       "path": "docs/engines/opencode.md",
       "owner": "A",
       "category": "入口与配置",
-      "bytes": 28606,
-      "sha256": "4abaa1ca45058b3a2ab1dd6f04d497129c089023da486e272e95c819f3bbc83a"
+      "bytes": 29277,
+      "sha256": "07a82c3ec97b22a0dd5b0b54240e1e5fd33aeb543b6430aee99823a5440ab4fe"
     },
     {
       "path": "docs/engines/pi.md",

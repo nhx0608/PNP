@@ -285,4 +285,6 @@ Linux 上对 1.18.29 的实跑结果（probed；网关**不**在 development 模
 - 中断：对一个在模型侧挂住的轮次 `POST /session/{id}/abort` → 200，`prompt_async` 以 409 `EXECUTION_CANCELLED` 收尾，最终消息 `finish: "cancelled"`、原生 `stopReason: "cancelled"`，会话回到 `idle`，第一次尝试即命中；
 - 会话删除后 404；第二个会话在同一进程内正常；SSE 事件序列合法；`hosts/*.json` 归属记录存在；工件里没有凭据（mock 的 Authorization 值被脱敏为 `[redacted]`）。
 
-CI 里 `engine-smoke` 作业以四条腿跑同一套：ubuntu/mock、ubuntu/opencode、windows/mock、windows/opencode，其中 windows/opencode 用 `npm install -g opencode-ai@1.18.29` 装出真实 `opencode.exe`，通过 `npm root -g` 定位。每条腿的工件（网关日志、模型请求日志、报告、归属记录、`/diagnostics`）随作业上传。Windows 腿的结论以 PR 上的 CI 结果为准；本文只声明 Linux 上的观察。
+CI 里 `engine-smoke` 作业以四条腿跑同一套：ubuntu/mock、ubuntu/opencode、windows/mock、windows/opencode，其中 windows/opencode 用 `npm install -g opencode-ai@1.18.29` 装出真实 `opencode.exe`，通过 `npm root -g` 定位。每条腿的工件（网关日志、模型请求日志、报告、归属记录、`/diagnostics`）随作业上传。
+
+**windows-latest/opencode 这条腿已在 GitHub Actions 上通过（13/13）**：真实 `opencode.exe` 1.18.29 由 `npm i -g` 装到 `C:\npm\prefix\node_modules\opencode-ai\bin\opencode.exe`，被网关的 Windows 进程宿主（作业对象路径）拉起、走 ACP、写文件、被中断、会话删除，全部与 Linux 腿一致；网关就绪在 Windows 上约 29 s（首次 PowerShell 引导 + C# 编译），首个提示约 4 s。这把 §0 的等级往前推了一格：**Windows 原生 + 真实二进制 + mock 模型端点**已观察到；仍未观察的只剩连真实模型端点这一项，即"verified"要求的最后一环。§8 第 1、2 条据此关闭：`opencode.exe` 在 Windows 原生能跑 ACP，`npm i -g` 的落点也核对过了。
