@@ -139,8 +139,8 @@
       "path": "code/README.md",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 2751,
-      "sha256": "522be2b8f47b11c7e0021ecbf8aa6c4e810621588b168c43e15977b2fc95e6f3"
+      "bytes": 3104,
+      "sha256": "dfabed21a595e8ccf6564733be49a735fe9322a626444b3abb18add87bdd8ed4"
     },
     {
       "path": "code/scripts/check-boundaries.mjs",
@@ -160,8 +160,8 @@
       "path": "code/scripts/e2e/ci-smoke.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 16150,
-      "sha256": "69b1c50c7a1ba8eee680cf55839d340d885e2a1c0a1f30cf6fe3917ab2ab8564"
+      "bytes": 19478,
+      "sha256": "e2ca71bb1e1c3a1312a4d8e7d16a094c44b7f2578d04778fa30167cd88f00280"
     },
     {
       "path": "code/scripts/e2e/mock-model-server.mjs",

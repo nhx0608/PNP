@@ -16,6 +16,8 @@ const { values } = parseArgs({
     artifacts: { type: "string" },
     "timeout-ms": { type: "string" },
     "keep-temp": { type: "boolean" },
+    // Local escape hatch only: the assessor starts on 6217 and so does this by default.
+    "gateway-port": { type: "string" },
   },
 });
 const engine = values.engine ?? "mock";
@@ -41,15 +43,35 @@ const redact = (value) => value
   .split(AUTH_VALUE).join("[redacted]")
   .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]");
 
-function freePort() {
-  return new Promise((resolve, reject) => {
+/** True when nothing listens on the port on either loopback family. */
+function portFree(port) {
+  const attempt = (host) => new Promise((resolve) => {
     const probe = createServer();
-    probe.once("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      const { port } = probe.address();
-      probe.close(() => resolve(port));
-    });
+    probe.once("error", (error) => resolve(error.code === "EADDRNOTAVAIL" || error.code === "EAFNOSUPPORT"));
+    probe.listen(port, host, () => probe.close(() => resolve(true)));
   });
+  return attempt("127.0.0.1").then((v4) => v4 && attempt("::1"));
+}
+/** Polls /health/ready on every base until each answers 200 or the budget runs out. */
+async function probeBind(bases, budgetMs, exited) {
+  const startedAt = Date.now();
+  const results = bases.map((base) => ({ base, status: null, elapsed_ms: null, last_error: null }));
+  while (Date.now() - startedAt < budgetMs && results.some((result) => result.status !== 200)) {
+    if (exited()) break;
+    for (const result of results) {
+      if (result.status === 200) continue;
+      try {
+        const response = await fetch(`${result.base}/health/ready`, { signal: AbortSignal.timeout(5_000) });
+        result.status = response.status;
+        if (response.status === 200) { result.elapsed_ms = Date.now() - startedAt; result.last_error = null; }
+        else result.last_error = (await response.text()).slice(0, 200);
+      } catch (error) {
+        result.last_error = String(error?.cause?.code ?? error?.name ?? error);
+      }
+    }
+    if (results.some((result) => result.status !== 200)) await sleep(500);
+  }
+  return results;
 }
 function npmCli() {
   const candidates = [
@@ -210,16 +232,26 @@ try {
   await writeFile(profilePath, `${JSON.stringify(profile, null, 2)}\n`, "utf8");
 
   // ------------------------------------------------------------ gateway process
-  const gatewayPort = await freePort();
+  // Started exactly as INSTRUCTION.md tells the assessor to start it: AGENT_ENGINE in the
+  // environment, `npm start -- --port 6217 --host localhost`. The competition's default port and
+  // the documented command line are what this smoke exercises, not a private shortcut; only
+  // --gateway-port exists for a developer whose 6217 is taken.
+  const gatewayPort = Number(values["gateway-port"] ?? 6217);
+  if (!Number.isInteger(gatewayPort) || gatewayPort < 1 || gatewayPort > 65535) throw new Error("--gateway-port must be a TCP port.");
+  if (!await portFree(gatewayPort)) {
+    throw new Error(`port ${gatewayPort} is already in use; the assessor starts the gateway on 6217, so free it or pass --gateway-port for a local run.`);
+  }
   summary.gateway_base = `http://127.0.0.1:${gatewayPort}`;
+  summary.gateway_hosts = [`http://127.0.0.1:${gatewayPort}`, `http://localhost:${gatewayPort}`];
   const environment = {
     ...process.env,
     PNP_DATA_DIR: dataDirectory,
-    PNP_HOST: "127.0.0.1",
-    PNP_PORT: String(gatewayPort),
     AGENT_ENGINE: engine,
     [AUTH_VARIABLE]: AUTH_VALUE,
   };
+  // The bind address and port come from the documented command line, never from these.
+  delete environment.PNP_HOST;
+  delete environment.PNP_PORT;
   // Only the mock engine needs development mode (it is development-only by design). The real
   // engine runs in the same posture as a deployment: no development flag, configured profile.
   delete environment.PNP_MODE;
@@ -236,18 +268,32 @@ try {
     if (executable.path !== null) environment.PNP_OPENCODE_EXE_PATH = executable.path;
   }
   summary.engine_environment = Object.fromEntries(
-    ["AGENT_ENGINE", "PNP_MODE", "PNP_INTEGRATION", "PNP_CONFIGURED_PROFILE", "PNP_OPENCODE_EXE_PATH", "PNP_DATA_DIR", "PNP_PORT"]
+    ["AGENT_ENGINE", "PNP_MODE", "PNP_INTEGRATION", "PNP_CONFIGURED_PROFILE", "PNP_OPENCODE_EXE_PATH", "PNP_DATA_DIR"]
       .filter((key) => environment[key] !== undefined).map((key) => [key, environment[key]]),
   );
 
-  gateway = launch(process.execPath, [distEntry], {
+  const cli = npmCli();
+  if (cli === undefined) throw new Error("npm-cli.js was not found next to the Node runtime; the documented start command is `npm start`.");
+  const startArguments = ["start", "--", "--port", String(gatewayPort), "--host", "localhost"];
+  summary.startup_command = `npm ${startArguments.join(" ")}`;
+  gateway = launch(process.execPath, [cli, ...startArguments], {
     cwd: codeRoot,
     stdio: ["ignore", openSync(gatewayStdout, "a"), openSync(gatewayStderr, "a")],
     env: environment,
   });
   let gatewayExit = null;
   gateway.once("exit", (code, signal) => { gatewayExit = { code, signal }; });
-  log(`gateway pid ${gateway.pid} on ${summary.gateway_base}`);
+  log(`gateway via \`${summary.startup_command}\` (npm pid ${gateway.pid}), AGENT_ENGINE=${engine}`);
+
+  // `--host localhost` must serve both address families the assessor's client may resolve to:
+  // Windows resolves localhost to ::1 first, a client may still dial 127.0.0.1. Both are probed
+  // before the protocol client runs, and a gateway that answers on only one fails here.
+  const readyBudgetMs = engine === "opencode" ? 120_000 : 60_000;
+  summary.bind_probe = await probeBind(summary.gateway_hosts, readyBudgetMs, () => gatewayExit !== null);
+  for (const probe of summary.bind_probe) {
+    if (probe.status !== 200) throw new Error(`gateway did not answer /health/ready on ${probe.base}: ${JSON.stringify(probe)}`);
+  }
+  log(`ready on ${summary.bind_probe.map((probe) => `${probe.base} (${probe.elapsed_ms}ms)`).join(" and ")}`);
 
   // ------------------------------------------------------------ protocol client
   const runnerArgs = [
