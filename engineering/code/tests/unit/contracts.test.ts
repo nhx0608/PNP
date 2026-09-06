@@ -9,17 +9,20 @@ import { StateStore } from "../../src/storage/store.ts";
 import { MockPack } from "../../src/engines/mock/pack.ts";
 import { MockIntegration } from "../../src/integration/mock/provider.ts";
 import { OwnedResourceScope } from "../../src/runtime/resource-scope.ts";
+import { deferred } from "../../src/runtime/deadline.ts";
 import { LocalProcessHost, baseEnvironment } from "../../src/runtime/process-host.ts";
 import { Redactor } from "../../src/security/redaction.ts";
 import type { CoreOptions } from "../../src/core/gateway-core.ts";
 import type { EnginePack, IntegrationProvider, PromptRequest, Json } from "../../src/contracts/index.ts";
+import type { Operation, Operations } from "../../src/storage/protocol.ts";
 const request: PromptRequest = { parts: [{ type: "text", text: "test" }], model: { providerID: "test", modelID: "test" } };
-async function create(pack: EnginePack = new MockPack(), provider: IntegrationProvider = new MockIntegration(), options: Partial<CoreOptions> = {}) {
+async function create(pack: EnginePack = new MockPack(), provider: IntegrationProvider = new MockIntegration(), options: Partial<CoreOptions> = {},
+  makeStore: (databasePath: string) => StateStore = (databasePath) => new StateStore(databasePath)) {
   const root = await mkdtemp(path.join(tmpdir(), "pnp-contract-"));
   const dir = path.join(root, "data");
   const workspace = path.join(root, "workspace");
   await mkdir(dir, { recursive: true });
-  const store = new StateStore(path.join(dir, "pnp.db"));
+  const store = makeStore(path.join(dir, "pnp.db"));
   const core = new GatewayCore(store, pack, provider, { dataDirectory: dir, cancelGraceMs: 30, ...options });
   const session = await core.createSession(workspace);
   return { root, dir, workspace, store, core, session, async clean(uncertain = false) {
@@ -46,6 +49,35 @@ test("late channel after startup timeout is terminated and its proof lifts the s
     // hit storage; on a loaded Windows runner that is more than a fixed 130 ms, so the evidence is
     // awaited rather than assumed to have landed by then.
     await waitFor(async () => cleanup === 1 && (await f.core.getSession(f.session.id)).recovery === "ready");
+    assert.equal(cleanup, 1);
+    assert.equal((await f.core.diagnostics()).degraded, false);
+  } finally { await f.clean(); }
+});
+test("a late stop proof that lands inside the failed run's cleanup still lifts the fence", async () => {
+  const gate = deferred<void>();
+  const pack = new MockPack(); const open = pack.open.bind(pack); let cleanup = 0;
+  pack.open = async (input) => {
+    await gate.promise;
+    const channel = await open(input);
+    channel.terminate = async () => { cleanup++; return { quiescent: true, method: "process-tree" }; };
+    return channel;
+  };
+  // The channel is released while the failed run writes its terminal record, so the late handler sees
+  // a session that is still executing. Nobody else will ever ask about this session afterwards: if
+  // that run does not carry the proof to the fence it sets, the session stays blocked forever.
+  class ReleasingStore extends StateStore {
+    private released = false;
+    override async call<K extends Operation>(op: K, input: Operations[K]["input"]): Promise<Operations[K]["output"]> {
+      if (op === "finishRun" && !this.released) { this.released = true; gate.resolve(); await sleep(30); }
+      return super.call(op, input);
+    }
+  }
+  const f = await create(pack, new MockIntegration(), { openTimeoutMs: 20 }, (databasePath) => new ReleasingStore(databasePath));
+  try {
+    await assert.rejects(f.core.run(f.session.id, request), { code: "EXECUTION_UNCERTAIN" });
+    // No second request, no deletion and no restart: the run that set the fence is the only one left
+    // that holds the evidence, so recovery must be back to ready on its own.
+    await waitFor(async () => (await f.core.getSession(f.session.id)).recovery === "ready");
     assert.equal(cleanup, 1);
     assert.equal((await f.core.diagnostics()).degraded, false);
   } finally { await f.clean(); }

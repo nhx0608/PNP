@@ -344,6 +344,8 @@ export class GatewayCore {
     let opening: Promise<EngineSessionChannel> | undefined;
     let openSettled = true;
     let discardOpening = false;
+    /** A late channel proved its stop while this run was still finishing; the run owes no fence. */
+    let lateStopProven = false;
     let state: TerminalState = "failed";
     let finish: MessageFinish = "error";
     let nativeStopReason: string | undefined;
@@ -431,7 +433,13 @@ export class GatewayCore {
           }
           if (stopped && this.scopes.get(sessionId) === openScope) this.scopes.delete(sessionId);
           // A late channel that proved it stopped is exactly the evidence the fence was waiting for.
-          if (stopped && !this.active.has(sessionId)) await this.liftFence(sessionId);
+          // While the failed run is still recording its verdict there is nothing to lift yet, so the
+          // proof is handed to that run instead of being dropped: it would otherwise fence the
+          // session for a channel that had already proven it stopped.
+          if (stopped) {
+            if (this.active.has(sessionId)) lateStopProven = true;
+            else await this.liftFence(sessionId);
+          }
         }, () => { openSettled = true; }).catch(() => undefined);
         channel = await bounded(Promise.race([
           opening,
@@ -684,6 +692,8 @@ export class GatewayCore {
     } finally {
       clearTimeout(timer);
       acceptingEvents = false;
+      // The proof arrived before the verdict was recorded, so this turn stopped after all.
+      if (!quiescent && lateStopProven) quiescent = true;
       if (!quiescent) {
         state = "interrupted";
         finish = "interrupted";
@@ -745,6 +755,10 @@ export class GatewayCore {
       }
       if (this.channels.has(sessionId)) this.lastUsedAt.set(sessionId, Date.now());
       this.active.delete(sessionId);
+      // The proof arrived while this run was still finishing, after the fence was set, so this run
+      // is the only one left to lift it. It is a no-op when no fence was set, and its own storage
+      // failure is observed rather than thrown past the slot release below.
+      if (lateStopProven) await this.liftFence(sessionId).catch((error: unknown) => { this.observeFailure(error); });
       // The execution slot belongs to one turn; the fence, not the slot, carries the uncertainty.
       // It is handed to the session that has waited longest rather than released into a race.
       this.claimed.delete(sessionId);
