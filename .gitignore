@@ -132,3 +132,6 @@ engineering/private/
 # Tracked delivery evidence directory whose name matches a generic rule above
 !engineering/verification/logs/
 !engineering/verification/logs/**
+
+# Agent worktrees created by the harness
+.claude/
