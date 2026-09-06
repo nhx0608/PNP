@@ -1,6 +1,6 @@
 {
   "contractVersion": "1.1.0",
-  "payloadFileCount": 161,
+  "payloadFileCount": 162,
   "files": [
     {
       "path": ".gitattributes",
@@ -342,8 +342,8 @@
       "path": "code/src/core/gateway-core.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 48691,
-      "sha256": "c5c78424b0c3cc0f3d60c52b3197801aebe2b236ad4e118dc149c9c8601c4195"
+      "bytes": 49704,
+      "sha256": "f8c8ff6caedc3c707e1758b13a2cf06b53cbba0f5a302c59bc5642c15ba6fc4b"
     },
     {
       "path": "code/src/core/interactions.ts",
@@ -720,8 +720,8 @@
       "path": "code/tests/adapters/opencode/assets.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 6333,
-      "sha256": "9bc56c1c7e0a6282d7381f83acdbcb6c339dbb9b4c59ae02a563b79ba5cd2d8e"
+      "bytes": 6271,
+      "sha256": "6bcea809f7266daa4e7a5b8c8ba8a34b9c4377e0664f521f764b53ba92fa56ff"
     },
     {
       "path": "code/tests/adapters/opencode/config.test.ts",
@@ -741,36 +741,36 @@
       "path": "code/tests/adapters/opencode/native-config.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 14068,
-      "sha256": "2f46404483de700617c872df676062c7e33632985a0d006767ed93a8e736d30e"
+      "bytes": 14032,
+      "sha256": "b3268ca98561d589bb38f5466c143b406520b47a4ffb923c2761b76ba014ff6f"
     },
     {
       "path": "code/tests/adapters/opencode/pack.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 10550,
-      "sha256": "1fde51cba818573c829c6e6495a6e4bf544914d75a768fcb68db9f4db37298cd"
+      "bytes": 10514,
+      "sha256": "cf9d6cb8147a70fbb57686f5f2bc0e24c1d936d9d6b303c2daf9b06bea09167e"
     },
     {
       "path": "code/tests/contract/gateway.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 10641,
-      "sha256": "6c6fb57f4fc07decb65491e25380e94368a0119e9285314b60189300e9ba2e94"
+      "bytes": 10576,
+      "sha256": "305c017e46e70277eb3d2b6e6fe1bad0b2f593aeaf750eeb18e266e43118a419"
     },
     {
       "path": "code/tests/contract/sse.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 5165,
-      "sha256": "8302a678cf03b0dadcaca821f82e0489ba7a69cfde327534c0d78514fcee8b42"
+      "bytes": 5152,
+      "sha256": "2be42f7e431e0fb51d8911135f3f7a0414655d72338245b7f9a5cf1ff5095f38"
     },
     {
       "path": "code/tests/kit/engine-contract.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 1863,
-      "sha256": "0591ea5d47769e0e45fb3a45e417dce741e6464bda475d23927626a8ccb13e38"
+      "bytes": 1871,
+      "sha256": "9c9520b8a03fc28a1003dea65390797a3d39a4c48b1733170501d1fb00c642ec"
     },
     {
       "path": "code/tests/kit/fake-host.ts",
@@ -780,46 +780,53 @@
       "sha256": "573bc150c12cc9a94ba2b8c1c9686ead19b379a3a5ce6d131057e1ee3c483a88"
     },
     {
+      "path": "code/tests/kit/fs.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 874,
+      "sha256": "354160a3927c771ae56c1ea2c7cc084edc3abc6b375a440cb9a1b1a4cf387bef"
+    },
+    {
       "path": "code/tests/unit/config-assets.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 19007,
-      "sha256": "add809ae3d1108226ef8e546994ab649b9be7c0bcb943e1aac1bae2529ee2a0d"
+      "bytes": 18942,
+      "sha256": "2a2a55b643fd681773d0fb285944f43b60ea0d05ce3feb7621e219f00b957028"
     },
     {
       "path": "code/tests/unit/contracts.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 34475,
-      "sha256": "65e260fcf5e17a0af55f19882e1ce31fcafa0e67dfae23b34e7eb4a09395424c"
+      "bytes": 36607,
+      "sha256": "18d956422f1544d98afa3946cbd0f4832668d79cdb2e0be89bb0b2f997c9d479"
     },
     {
       "path": "code/tests/unit/core.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 17148,
-      "sha256": "88f3190b7bf9092b6bb2864371d7caf4d8206790cf6d9fb4cdef404bb5077075"
+      "bytes": 17109,
+      "sha256": "e12482e063adc4e7df5ec8c3838ba2c307816d303704f685537f1da7955869c8"
     },
     {
       "path": "code/tests/unit/process-host.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 35861,
-      "sha256": "20811f6f7808e22d7e6dc09d5c1eb92b799910fecd4eabe88861d8c55edab786"
+      "bytes": 35801,
+      "sha256": "61fac1cb66b4ab524cb1c9e88f4c72bf4f22ea9d0d9d0d66e5848a4b107b7248"
     },
     {
       "path": "code/tests/unit/runtime.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 17839,
-      "sha256": "36fb639eee5c5eebe404b15c41679e5628523038c1e7e1e3b4858214dd254263"
+      "bytes": 17638,
+      "sha256": "f929949c53e040ba3085cfb150c4949a55061562e18aa55005175c87c07f161a"
     },
     {
       "path": "code/tests/unit/workspace.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 4350,
-      "sha256": "28d3aa2abcf7f6cdc673397ff84e16b55ee8338ddd1b30a6fb8d1f5dcf163a93"
+      "bytes": 4428,
+      "sha256": "2c240d1b685e4762eda269716cd41c7a1ad143c6a13e68fdddc029a64abb0f34"
     },
     {
       "path": "code/toolchain.json",
