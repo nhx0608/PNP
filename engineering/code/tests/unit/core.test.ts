@@ -26,7 +26,12 @@ async function fixture(options: MockOptions = {}, timeout = 1000) {
   const session = await core.createSession(directory);
   return {
     directory, dbPath, store, pack, core, session,
-    async close() { await core.close(); await store.close(); await rm(directory, { recursive: true, force: true }); },
+    // The store's worker thread is closed even when the core reports uncertainty, so a failing test
+    // still lets its process exit and the runner prints the failure instead of waiting on the file.
+    async close() {
+      try { await core.close(); }
+      finally { await store.close(); await rm(directory, { recursive: true, force: true }); }
+    },
   };
 }
 async function waitBusy(f: Awaited<ReturnType<typeof fixture>>) {
@@ -97,15 +102,21 @@ test("failed engine leaves a queryable error trajectory", async () => {
     assert.equal((await f.core.getSession(f.session.id)).status, "idle");
   } finally { await f.close(); }
 });
-test("unproven process termination blocks readiness and the session", async () => {
+test("unproven process termination fences its own session and leaves the gateway serving", async () => {
   const f = await fixture({ stuck: true, terminateQuiescent: false }, 60);
   try {
     await assert.rejects(f.core.run(f.session.id, prompt));
-    assert.equal(f.core.readiness, false);
+    // Uncertainty is a property of this session, not of the process.
+    assert.equal(f.core.readiness, true);
+    await assert.rejects(f.core.run(f.session.id, prompt), { code: "SESSION_UNAVAILABLE" });
+    const diagnostics = await f.core.diagnostics();
+    assert.equal(diagnostics.degraded, true);
+    assert.deepEqual(diagnostics.fencedSessions.map((entry) => entry.id), [f.session.id]);
     assert.equal((await f.core.getSession(f.session.id)).status, "busy");
     assert.equal((await f.core.getSession(f.session.id)).recovery, "blocked");
     assert.equal((await f.core.messages(f.session.id)).at(-1)?.info?.finish, "interrupted");
     await assert.rejects(f.core.close(), { code: "EXECUTION_UNCERTAIN" });
+    // Shutdown still refuses to claim a clean stop it cannot prove.
   } finally {
     await f.store.close();
     await rm(f.directory, { recursive: true, force: true });
@@ -195,6 +206,40 @@ test("cached native channel receives freshly resolved integration for every run"
     await core.run(f.session.id, prompt);
     assert.deepEqual(observed, ["1", "2"]);
     assert.equal(f.pack.opens, 1);
+  } finally {
+    await core.close();
+    await f.close();
+  }
+});
+test("the driver receives the provider-resolved model, not the caller's default sentinel", async () => {
+  const f = await fixture();
+  const observed: PromptRequest["model"][] = [];
+  const originalOpen = f.pack.open.bind(f.pack);
+  f.pack.open = async (input) => {
+    const channel = await originalOpen(input);
+    const originalRun = channel.run.bind(channel);
+    channel.run = async (run) => {
+      observed.push(run.request.model);
+      return originalRun(run);
+    };
+    return channel;
+  };
+  // Mirrors the configured provider: an empty selection means "the default", which the provider
+  // resolves to a concrete binding. A driver that compared the raw request against its launch-bound
+  // model would report a model switch for a caller that asked for nothing at all.
+  const provider = new MockIntegration();
+  const originalPrepare = provider.prepare.bind(provider);
+  provider.prepare = async (input) => {
+    const context = await originalPrepare(input);
+    const wantsDefault = input.request.model.providerID === "" && input.request.model.modelID === "";
+    const selection = wantsDefault ? { providerID: "configured", modelID: "default-model" } : input.request.model;
+    return { ...context, model: { ...context.model, selection } };
+  };
+  const core = new GatewayCore(f.store, f.pack, provider, { dataDirectory: f.directory });
+  try {
+    await core.run(f.session.id, { ...prompt, model: { providerID: "", modelID: "" } });
+    await core.run(f.session.id, prompt);
+    assert.deepEqual(observed, [{ providerID: "configured", modelID: "default-model" }, prompt.model]);
   } finally {
     await core.close();
     await f.close();

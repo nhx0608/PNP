@@ -1,0 +1,13 @@
+{
+  "formatVersion": 1,
+  "engines": [
+    {
+      "engineId": "opencode",
+      "channelId": "acp",
+      "version": "1.18.29",
+      "source": "npm:opencode-windows-x64@1.18.29",
+      "sha256": "19eca6cdead9c67cce26fdc2db165980318edb7318c8c964dfc2ebffe03bb472",
+      "protocolVersion": "1"
+    }
+  ]
+}

@@ -1,13 +1,82 @@
 import Fastify from "fastify";
 import { GatewayCore } from "../core/gateway-core.ts";
 import { PnpError, asPnpError } from "../core/errors.ts";
-import type { PublicEvent } from "../contracts/index.ts";
+import type { ModelSelection, PromptRequest, PublicEvent } from "../contracts/index.ts";
 import { CreateSessionSchema, PromptSchema } from "./schemas.ts";
 import type { CreateSessionBody, PromptBody } from "./schemas.ts";
 
 interface FastifyHttpError {
   code?: string;
   validation?: unknown;
+}
+
+export interface BuildAppOptions {
+  /** SSE per-connection buffer cap in bytes. Defaults to 8 MiB; overridable for tests only. */
+  sseMaxBufferedBytes?: number;
+}
+
+/** Event types whose payload is a full-text content update rather than session control state.
+ *  These are the only events safe to drop silently when a slow reader backs up the buffer. */
+const CONTENT_EVENT_TYPES = new Set<string>(["message.part.updated"]);
+function isContentEvent(type: string): boolean {
+  return CONTENT_EVENT_TYPES.has(type);
+}
+
+/** Upper bound on a single resume so one reconnect cannot walk the whole event table. */
+const REPLAY_PAGE = 256;
+const REPLAY_LIMIT = 4096;
+/**
+ * Replays committed events after `lastEventId` in ascending sequence order. The caller subscribes
+ * first and buffers live events, so this can never leave a gap between the replay and the stream.
+ * Returns the highest sequence written, which the caller uses to drop live duplicates.
+ */
+async function replayMissedEvents(
+  core: GatewayCore, lastEventId: number, emit: (event: PublicEvent) => void, stopped: () => boolean,
+): Promise<number> {
+  let cursor = lastEventId;
+  let written = 0;
+  while (!stopped() && written < REPLAY_LIMIT) {
+    const page = await core.journal.since(cursor, REPLAY_PAGE);
+    if (page.length === 0) break;
+    for (const event of page) {
+      if (stopped()) break;
+      emit(event);
+      cursor = event.sequence;
+      written += 1;
+    }
+    if (page.length < REPLAY_PAGE) break;
+  }
+  return cursor;
+}
+function parseLastEventId(header: string | string[] | undefined): number | undefined {
+  const raw = Array.isArray(header) ? header[0] : header;
+  if (raw === undefined) return undefined;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function isTextPart(value: unknown): value is { type: "text"; text: string } {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    && (value as Record<string, unknown>).type === "text" && typeof (value as Record<string, unknown>).text === "string";
+}
+/** The empty-string selection is a sentinel meaning "no model requested"; config never allows
+ *  empty providerID/modelID, so it can never collide with a real configured selection. The
+ *  integration provider (ConfiguredIntegration) is responsible for resolving it to a default. */
+function parseModelSelection(model: PromptBody["model"]): ModelSelection {
+  if (model === undefined) return { providerID: "", modelID: "" };
+  if (typeof model === "string") {
+    const slash = model.indexOf("/");
+    if (slash <= 0 || slash === model.length - 1) {
+      throw new PnpError("VALIDATION_ERROR", 'model string must be in "provider/model" form.', 400);
+    }
+    return { providerID: model.slice(0, slash), modelID: model.slice(slash + 1) };
+  }
+  return model;
+}
+function resolvePromptRequest(body: PromptBody): PromptRequest {
+  const parts = body.parts.filter(isTextPart);
+  if (parts.length === 0) throw new PnpError("VALIDATION_ERROR", "No recognized message parts.", 400);
+  return { parts, model: parseModelSelection(body.model), agent: body.agent };
 }
 
 function asHttpError(error: unknown): PnpError {
@@ -30,7 +99,8 @@ function asHttpError(error: unknown): PnpError {
   }
 }
 
-export function buildApp(core: GatewayCore) {
+export function buildApp(core: GatewayCore, options: BuildAppOptions = {}) {
+  const sseMaxBufferedBytes = options.sseMaxBufferedBytes ?? 8 * 1024 * 1024;
   const app = Fastify({
     logger: { redact: ["req.headers.authorization", "req.headers.cookie"] },
     disableRequestLogging: true,
@@ -75,7 +145,7 @@ export function buildApp(core: GatewayCore) {
       if (rawKey !== undefined && (typeof rawKey !== "string" || rawKey.length > 200)) {
         throw new PnpError("VALIDATION_ERROR", "Invalid Idempotency-Key.", 400);
       }
-      await core.run(request.params.id, request.body, rawKey);
+      await core.run(request.params.id, resolvePromptRequest(request.body), rawKey);
       return reply.code(204).send();
     });
   for (const suffix of ["abort", "stop"]) {
@@ -106,24 +176,26 @@ export function buildApp(core: GatewayCore) {
     await core.interactions.reply(request.params.id, "permission", { decision: value === "reject" ? "deny" : "allow" });
     return { ok: true };
   });
-  app.get("/event", async (_request, reply) => {
+  app.get("/event", async (request, reply) => {
     reply.hijack();
     reply.raw.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no",
     });
+    reply.raw.write("retry: 3000\n\n");
+    const lastEventId = parseLastEventId(request.headers["last-event-id"]);
     let closed = false;
     let backpressured = false;
     let queuedBytes = 0;
-    const queued: string[] = [];
-    const maxBufferedBytes = 2 * 1024 * 1024;
+    interface QueuedFrame { readonly frame: string; readonly bytes: number; readonly content: boolean }
+    const queued: QueuedFrame[] = [];
     const onDrain = () => {
       if (closed) return;
       backpressured = false;
       while (queued.length > 0) {
-        const frame = queued.shift()!;
-        queuedBytes -= Buffer.byteLength(frame);
-        if (!reply.raw.write(frame)) {
+        const next = queued.shift()!;
+        queuedBytes -= next.bytes;
+        if (!reply.raw.write(next.frame)) {
           backpressured = true;
           return;
         }
@@ -143,26 +215,55 @@ export function buildApp(core: GatewayCore) {
     };
     const send = (event: PublicEvent | { type: string; properties: Record<string, never> }) => {
       if (closed) return;
+      if (backpressured && event.type === "server.heartbeat") return; // Heartbeats are best-effort; never queued.
       const frame = `${"sequence" in event ? `id: ${event.sequence}\n` : ""}data: ${JSON.stringify(event)}\n\n`;
       const frameBytes = Buffer.byteLength(frame);
+      const content = isContentEvent(event.type);
+      const fits = (bytes: number) => reply.raw.writableLength + queuedBytes + bytes <= sseMaxBufferedBytes;
+      if (!fits(frameBytes)) {
+        // Content updates (full-text checkpoints) are the amplification source; drop the update
+        // rather than tear down the connection. Control events must never be silently lost, so a
+        // control event first tries to evict already-queued content frames to make room.
+        if (content) return;
+        for (let i = queued.length - 1; i >= 0 && !fits(frameBytes); i--) {
+          const candidate = queued[i];
+          if (candidate === undefined || !candidate.content) continue;
+          queuedBytes -= candidate.bytes;
+          queued.splice(i, 1);
+        }
+        if (!fits(frameBytes)) { cleanup(true); return; } // Control backlog itself exceeds the cap.
+      }
       if (backpressured) {
-        if (event.type === "server.heartbeat") return;
-        if (reply.raw.writableLength + queuedBytes + frameBytes > maxBufferedBytes) { cleanup(true); return; }
-        queued.push(frame);
+        queued.push({ frame, bytes: frameBytes, content });
         queuedBytes += frameBytes;
         return;
       }
-      if (reply.raw.writableLength + frameBytes > maxBufferedBytes) { cleanup(true); return; }
       // A false result means this frame was accepted into Node's buffer. Queue only later frames.
       if (!reply.raw.write(frame)) backpressured = true;
     };
-    const unsubscribe = core.journal.subscribe(send);
+    // Live events are held until the replay finishes, so the client never sees a newer sequence
+    // before an older one. Duplicates are dropped by sequence rather than by guessing.
+    let replaying = lastEventId !== undefined;
+    const pendingLive: PublicEvent[] = [];
+    const receive = (event: PublicEvent) => {
+      if (!replaying) { send(event); return; }
+      if (pendingLive.length < REPLAY_LIMIT) pendingLive.push(event);
+    };
+    const unsubscribe = core.journal.subscribe(receive);
     const timer = setInterval(() => send({ type: "server.heartbeat", properties: {} }), 15_000);
     closeStreams.add(cleanup);
     reply.raw.once("close", cleanup);
     reply.raw.once("error", cleanup);
     reply.raw.on("drain", onDrain);
     send({ type: "server.connected", properties: {} });
+    if (lastEventId !== undefined) {
+      let resumed = lastEventId;
+      // A failed resume degrades to the live stream: losing history beats losing the only connection.
+      try { resumed = await replayMissedEvents(core, lastEventId, send, () => closed); }
+      catch { /* The client can ask again; the stream itself stays up. */ }
+      replaying = false;
+      for (const event of pendingLive.splice(0)) if (event.sequence > resumed) send(event);
+    }
   });
   app.addHook("preClose", async () => {
     try { await core.close(); } finally { for (const cleanup of closeStreams) cleanup(); }

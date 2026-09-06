@@ -1,6 +1,6 @@
 {
-  "contractVersion": "1.0.0",
-  "payloadFileCount": 118,
+  "contractVersion": "1.1.0",
+  "payloadFileCount": 155,
   "files": [
     {
       "path": ".gitattributes",
@@ -38,46 +38,32 @@
       "sha256": "336cc4fbf19beaada7ccf9986414fa91851a8d7a07dfb3ccbe800a69eed0ab49"
     },
     {
-      "path": "INSTRUCTION.md",
-      "owner": "共同",
-      "category": "入口与配置",
-      "bytes": 3573,
-      "sha256": "4473ee5ba56315cd4786610c86e3ce73fa9ae940f8e762ce16047c95e6cb85c3"
-    },
-    {
-      "path": "README.md",
-      "owner": "共同",
-      "category": "入口与配置",
-      "bytes": 2600,
-      "sha256": "85b11a0323d2b92a7f03f74adf3a399e820f1313dac29e703c82fe5b484fd096"
-    },
-    {
-      "path": "VERIFY.mjs",
-      "owner": "共同",
-      "category": "入口与配置",
-      "bytes": 863,
-      "sha256": "4fd668bed3f25348c172f2b2f1479e04719f977c4cf05f558bbd7084092616ee"
-    },
-    {
       "path": "code/.env.example",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 170,
-      "sha256": "d3097e057b6712709c014b8126f3fa55411d1fa21d6654e26eab045b9f4fd46c"
+      "bytes": 2792,
+      "sha256": "143f18fd153f8e09bdc832e72c27988fa5bce3d9555a75d900f42b273c4c99e0"
     },
     {
       "path": "code/.gitignore",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 108,
-      "sha256": "6cef26d25d5f949bea7667c6f10cfd5756c3bc0a2cb70d0a055baa40e178bde0"
+      "bytes": 138,
+      "sha256": "710fc4fff093970bafb5ca2bd15ddd38900ec8b731d25e6e39ae8b158254407a"
     },
     {
-      "path": "code/README.md",
+      "path": "code/assets/packs/README.md",
+      "owner": "共同",
+      "category": "能力包",
+      "bytes": 5492,
+      "sha256": "1d25895ad57da974e80a47082755e5ab79bffbb0e204240d793f1b3b851943ab"
+    },
+    {
+      "path": "code/config/configured.example.json",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 1217,
-      "sha256": "a3d58269f73659dad73e770840931f18f619d20270f2ce4273ccbe501fb5cb4f"
+      "bytes": 440,
+      "sha256": "411da8a59f0f1c85c3f7297bee36d69dbdf246a52fd97cbfe48e1481cd3b0db7"
     },
     {
       "path": "code/config/engines/hermes.json",
@@ -90,8 +76,8 @@
       "path": "code/config/engines/opencode.json",
       "owner": "A",
       "category": "入口与配置",
-      "bytes": 179,
-      "sha256": "3a0b452ba35597045534087f4816f00b91847771b93e2b2baedc15dea34294b9"
+      "bytes": 7139,
+      "sha256": "de3689debc9ccdcb366fd45cfc122d7d1e4fffaa910c30fcd1b751d854aed868"
     },
     {
       "path": "code/config/engines/pi.json",
@@ -111,8 +97,8 @@
       "path": "code/config/release-profile.json",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 184,
-      "sha256": "3e28af402eb84b53440e556f08c94ad83e6de8eea5dc8750cd0633e9bac01f5a"
+      "bytes": 219,
+      "sha256": "7a51787a6ee7a38347974dbeffd9197b9fa10d659c2e875d7fd9456d075a3a6e"
     },
     {
       "path": "code/engines.lock.example.json",
@@ -122,11 +108,11 @@
       "sha256": "94ae60674ef60a176c93fa56d35bb2117741a20c92e3eba88339b1f96fac5cc3"
     },
     {
-      "path": "code/native/windows/JobHost.cs",
+      "path": "code/engines.lock.json",
       "owner": "共同",
-      "category": "Windows宿主源码",
-      "bytes": 11047,
-      "sha256": "bb8d78577cdf4466febf3d67205679f60b2f455a8facc260f575adf4145fca95"
+      "category": "入口与配置",
+      "bytes": 306,
+      "sha256": "dcca613f2e9059590f045603f242f585c1757537c2327e44b025d0c0cfa47217"
     },
     {
       "path": "code/native/windows/job-host.ps1",
@@ -136,39 +122,81 @@
       "sha256": "cb3ebe2440d881f555acddaf3ffa1a7460eb393ef4cff851f6f36bb59f475c3c"
     },
     {
+      "path": "code/native/windows/JobHost.cs",
+      "owner": "共同",
+      "category": "Windows宿主源码",
+      "bytes": 19858,
+      "sha256": "41bf830460f08723386515a3107068b70a804ba8f3486376cf7751c118388649"
+    },
+    {
+      "path": "code/package-lock.json",
+      "owner": "共同",
+      "category": "入口与配置",
+      "bytes": 25656,
+      "sha256": "f86be9c093c0b6c032333cbddfb37cfcc27e77e4df040e56a9e33f96d5d8547c"
+    },
+    {
       "path": "code/package.json",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 1068,
-      "sha256": "613c967ea68f0e2ea37b8bb25dfe25b3e08bba579fc3621ec76236e5899fbccd"
+      "bytes": 1366,
+      "sha256": "75cc07bf6878ef55fca0a3ed2d4849f1f9741dcda3e16bc391fe3d900948c332"
+    },
+    {
+      "path": "code/README.md",
+      "owner": "共同",
+      "category": "入口与配置",
+      "bytes": 3777,
+      "sha256": "9e0768be056aec67cb60037cff7437ad8c909c1220191d32caa845f8307f87af"
     },
     {
       "path": "code/scripts/check-boundaries.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 1369,
-      "sha256": "585f3e956a036b43d22b4f3b04d072187a05309628048b7b611dcbcf0030b0b8"
+      "bytes": 2786,
+      "sha256": "df63da0ef133dae6b1ece044b471a00ae60499e2d4af36e2949a44501a9c0896"
     },
     {
       "path": "code/scripts/doctor.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 1527,
-      "sha256": "128fca1c3658422f4eaefab1a335a009e9869a2ba49bc8d40c30a545a3227507"
+      "bytes": 7587,
+      "sha256": "4be54ae4a6fcd612d98694d9fc7c72b24103f7c6308676d9e05c0c4bab7c1644"
+    },
+    {
+      "path": "code/scripts/e2e/ci-smoke.mjs",
+      "owner": "共同",
+      "category": "执行脚本",
+      "bytes": 20398,
+      "sha256": "190c4bfcae2d4fd27bb22768c581a89b7b51a6bfc1d4d8984fa1addc80189889"
+    },
+    {
+      "path": "code/scripts/e2e/mock-model-server.mjs",
+      "owner": "共同",
+      "category": "执行脚本",
+      "bytes": 16255,
+      "sha256": "6904d0fce0f1b207395629bedc3fe0a8aacb69120cd85abd526bdb30a419963f"
+    },
+    {
+      "path": "code/scripts/e2e/run-e2e.mjs",
+      "owner": "共同",
+      "category": "执行脚本",
+      "bytes": 31394,
+      "sha256": "9e8354a91b258d6071393bb269ad1f5cae2ad7fb755f51f70f5210e4e4c02850"
     },
     {
       "path": "code/scripts/export-diagnostics.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 601,
-      "sha256": "3e65500566106003fc8c332ae65714e5dea8eca4dd809281a21f50461b08fbd3"
+      "bytes": 626,
+      "sha256": "47798fc8c1709301e06a2fc0cbe29e22505c437ba764375be0cb784765f2cc87"
     },
     {
       "path": "code/scripts/foundation-check.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 556,
-      "sha256": "b92cb4d253e5b4373041eb9214654e3905129a419c7e41edb5bcae72229cf139"
+      "bytes": 2902,
+      "sha256": "fdd722f1c03a53563d2216a8a2fcc5dcf8387f77a4388a1bec6855e5f49df9e3"
     },
     {
       "path": "code/scripts/freeze-dependencies.mjs",
@@ -188,22 +216,36 @@
       "path": "code/scripts/lib.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 656,
-      "sha256": "41c966d6fd92554b4801c2b85b79ee63ae36566644cb0d8190ddb1670fa9b8b7"
+      "bytes": 2690,
+      "sha256": "b62376bd8449677847fe6f592d0eaa836596751a938785dc9dcb0aeff03080b8"
+    },
+    {
+      "path": "code/scripts/package-release.mjs",
+      "owner": "共同",
+      "category": "执行脚本",
+      "bytes": 6211,
+      "sha256": "45466017969a01bb0fc74e044cde51bf2b41cd891a0717268eb32c557f85e12c"
     },
     {
       "path": "code/scripts/recover.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 2011,
-      "sha256": "9fe9a83f5a0608f76e99157bc3a177801275591940956c13d4aaf557ae621230"
+      "bytes": 2686,
+      "sha256": "e2c43d1a2a5a3b1678c0b763ea2dacbebb1e25f5257dcfedc720736251d5515c"
+    },
+    {
+      "path": "code/scripts/refresh-manifest.mjs",
+      "owner": "共同",
+      "category": "执行脚本",
+      "bytes": 6846,
+      "sha256": "31993b922ca1b407bca54f7e0286a4e98ee6e17458fdef6a1962d6e2bb5a51fa"
     },
     {
       "path": "code/scripts/release-check.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 2841,
-      "sha256": "f82749bf8f06111e66469ac3877163d958e50d219de1b316b2c416af425c09a4"
+      "bytes": 5559,
+      "sha256": "a1d3ea1ef8269d592259a923fc2ec73945049629d299c51fc822998439846391"
     },
     {
       "path": "code/scripts/start.ps1",
@@ -213,11 +255,18 @@
       "sha256": "b8bfa7494cf3ea2a084b3364b0d4898afe4deb72c7e5e84276ce0972c1273c8f"
     },
     {
+      "path": "code/scripts/strip-only-check.mjs",
+      "owner": "共同",
+      "category": "执行脚本",
+      "bytes": 3941,
+      "sha256": "956ef35dd1702d3292c445d3b97efb68f37f48943ec38a54ae18ee606ced2647"
+    },
+    {
       "path": "code/scripts/test.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 667,
-      "sha256": "b29dd20cadbc6c9a2b6f62f3164ce770f7d7d29b3d8aa599b6c8d81e6ce9e34e"
+      "bytes": 2154,
+      "sha256": "bde5ede73d43f5e9a697549b6ae16269e258e6b61e8ada6ca84efdc51dfa118f"
     },
     {
       "path": "code/src/assets/resolver.ts",
@@ -237,15 +286,15 @@
       "path": "code/src/contracts/host.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 882,
-      "sha256": "e3ec7525a8c18a951035a38b24ad07ec9f4ffcdfd97f1450f5ea419a9d7f4641"
+      "bytes": 1086,
+      "sha256": "f835cca37860fcd33b81a4b5680b77e18b45e539e97fe0ecfc067bb86e1eec29"
     },
     {
       "path": "code/src/contracts/index.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 7177,
-      "sha256": "81890c55c35149d98434096547883f8487206ed902b1045b31b82fee397fc0a3"
+      "bytes": 8422,
+      "sha256": "b606bf96b5372004f37b5d3badd9ba46788a5130c635d82a9f3911a64691d403"
     },
     {
       "path": "code/src/core/AGENTS.md",
@@ -265,22 +314,22 @@
       "path": "code/src/core/gateway-core.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 24066,
-      "sha256": "3ce7eedd5067da9960ca8188b0daa8ad0d88454acba1530f9f8af2acd561a233"
+      "bytes": 41757,
+      "sha256": "59b749ef55ce9118ef0e4e6c851f64ee6fbc1f4713cebefe51ecdb0ac8e32f6a"
     },
     {
       "path": "code/src/core/interactions.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 4408,
-      "sha256": "024c52440b6bc6fc156a830e43d748025d1f2a9089be21787dcecbb1ec4102ea"
+      "bytes": 7582,
+      "sha256": "2abaf5dbe4ebc6fc15cfc6f3272e34f61491ce796245fd73f75777d336872e79"
     },
     {
       "path": "code/src/core/journal.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 812,
-      "sha256": "b3305ea9bfc82f3996bbb33fb29fbd31ae2c28115c1e7a5403eaaa872480d4d3"
+      "bytes": 1106,
+      "sha256": "b3e4d6eb12aca45445af38df72a43391958ec012e0f6dc51190e67f36126c195"
     },
     {
       "path": "code/src/drivers/acp/AGENTS.md",
@@ -288,6 +337,41 @@
       "category": "实现源码",
       "bytes": 495,
       "sha256": "acf9f193fe1ce9f86994a2685c03067a609e215401ed45953db01a05484ee1c3"
+    },
+    {
+      "path": "code/src/drivers/acp/capabilities.ts",
+      "owner": "A",
+      "category": "实现源码",
+      "bytes": 5187,
+      "sha256": "18338748c3dba9310a75eb2eed27646c175ab74ad474db86e084e662b4627c78"
+    },
+    {
+      "path": "code/src/drivers/acp/channel.ts",
+      "owner": "A",
+      "category": "实现源码",
+      "bytes": 34062,
+      "sha256": "eb4e8e7fca912559599b4f47679f13d4590146ff129aeadbdd5bd0eebbcbd309"
+    },
+    {
+      "path": "code/src/drivers/acp/json.ts",
+      "owner": "A",
+      "category": "实现源码",
+      "bytes": 1290,
+      "sha256": "632d3edbc3ec3426a8dd5bbffd031c2c6b5595fb22ab0184bb1475c4c91a776d"
+    },
+    {
+      "path": "code/src/drivers/acp/transport.ts",
+      "owner": "A",
+      "category": "实现源码",
+      "bytes": 3869,
+      "sha256": "667f72fe8b211b24b45ac5981bec1406cb97a9e1959555d22c126cc01f660f47"
+    },
+    {
+      "path": "code/src/drivers/acp/updates.ts",
+      "owner": "A",
+      "category": "实现源码",
+      "bytes": 11401,
+      "sha256": "61b600a0cc218345b8622370f5d2c2d1ae775a87bc5b0dc1db3a493cc7989017"
     },
     {
       "path": "code/src/drivers/pi-rpc/AGENTS.md",
@@ -325,11 +409,39 @@
       "sha256": "acf9f193fe1ce9f86994a2685c03067a609e215401ed45953db01a05484ee1c3"
     },
     {
+      "path": "code/src/engines/opencode/assets.ts",
+      "owner": "A",
+      "category": "实现源码",
+      "bytes": 3938,
+      "sha256": "ba6178c0b7a32961d993a5bbd94b9178e4898980c81c140d3113cd06cd18303f"
+    },
+    {
+      "path": "code/src/engines/opencode/config.ts",
+      "owner": "A",
+      "category": "实现源码",
+      "bytes": 10773,
+      "sha256": "f9e4b447902b0619929cb8a0f8743ccfbf10c43cd652d082c00f39653253f961"
+    },
+    {
+      "path": "code/src/engines/opencode/executable.ts",
+      "owner": "A",
+      "category": "实现源码",
+      "bytes": 9985,
+      "sha256": "2a3f82b01ca4563c00ee0b584731bb34a1e1ccf829a86fbecd9ddb5063fddb47"
+    },
+    {
+      "path": "code/src/engines/opencode/native-config.ts",
+      "owner": "A",
+      "category": "实现源码",
+      "bytes": 11534,
+      "sha256": "322d2ef1a663f797bc343623ca2ba19b3d6753fbbdf05b522d4fd8edf5a77c91"
+    },
+    {
       "path": "code/src/engines/opencode/pack.ts",
       "owner": "A",
       "category": "实现源码",
-      "bytes": 709,
-      "sha256": "50cb093cd1cf80a170d313e3d2503105b815345abed2613fcfa7ace323b87524"
+      "bytes": 4511,
+      "sha256": "3683c3e9f417afef3112482bb2d52d9a3f99f54030e706158740ab8592f67a44"
     },
     {
       "path": "code/src/engines/pi/AGENTS.md",
@@ -356,22 +468,29 @@
       "path": "code/src/gateway/app.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 5621,
-      "sha256": "47f6d64b188456b60bffef8a95c5973898487c68395f11d1a826f4c7f836c842"
+      "bytes": 13062,
+      "sha256": "13739f51bf7c5d94151ef7e729199e6fd2d933b70c2de334b7e2903191975e05"
     },
     {
       "path": "code/src/gateway/schemas.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 691,
-      "sha256": "6e4ddab76c70ed2c4f38ae085b39aeda5570cf0c9ea1a3afbcf9e7e354de4684"
+      "bytes": 1161,
+      "sha256": "563369dd94426c19dbdc38c88dad551361866b1de47ca47cbb175a42273d33b2"
     },
     {
       "path": "code/src/integration/configured/provider.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 2473,
-      "sha256": "4a9ab058d5ffcb9dcf86541fd5b13a721935de3e3c7cda44bb4dec5852c8deb2"
+      "bytes": 3931,
+      "sha256": "05510e8020e73d95c8108048f7c972a50d09a0697e6ea570d9b7439d8d5d0330"
+    },
+    {
+      "path": "code/src/integration/index.ts",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 10665,
+      "sha256": "8abbf512b2ccbe4a94d883d82d36c7e20d6c21b60270f947c5edebb64d2e5ae8"
     },
     {
       "path": "code/src/integration/internal/AGENTS.md",
@@ -391,22 +510,22 @@
       "path": "code/src/integration/mock/provider.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 568,
-      "sha256": "f1544e547014a2633013bdf3fbc258ad1b71ea92b996cebe55552ea13ffdd394"
+      "bytes": 671,
+      "sha256": "5908b1c7ecbdb3723fbc3d808e2687601f175b4e0f5fb4d7b422aaa37dd7283d"
     },
     {
       "path": "code/src/main.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 2327,
-      "sha256": "f4fec87e121df782d3d4ce90c40ae196d654295c3bb94a3de051b13aafb4df20"
+      "bytes": 4914,
+      "sha256": "afbb1b2ac28dcf95854515498929e3755cdf0c29e4653774405831ed1cebca55"
     },
     {
       "path": "code/src/registry/index.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 1467,
-      "sha256": "611bd5b6e0ce9acb6791d64512f5abaa8e4b006e87e3b9b078e27249c32ef1d7"
+      "bytes": 1851,
+      "sha256": "56384df70ae4f36b520646e9dfcb3ac1653bca6c53eda08d19fc1067df3a4f20"
     },
     {
       "path": "code/src/runtime/AGENTS.md",
@@ -426,29 +545,36 @@
       "path": "code/src/runtime/instance-lock.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 856,
-      "sha256": "bdf3e7c8950c6c22957e472eba8325c91862566d98f3021dc37a22f32f4dbbfb"
+      "bytes": 7612,
+      "sha256": "2c3f14c5510d9a2b18d4888b05cdfa66deaf8a2e730479d6a789a842678c51b6"
     },
     {
       "path": "code/src/runtime/jsonl.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 1232,
-      "sha256": "917f68f9a5c7011b2c6e08f7de27aea21316d43c01b0345e7905aca4b28721c0"
+      "bytes": 2128,
+      "sha256": "c526c1941d8320344134439086d47cf149eb62bb474316f3f635553c1e80875b"
     },
     {
       "path": "code/src/runtime/process-host.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 11679,
-      "sha256": "633c673d73bbc41fa212c7bf45e16d2c07947ffa9ce4d893f780d95339011972"
+      "bytes": 39740,
+      "sha256": "17925bd8c179640f7e09c1cec0702c12f242b6db6ea15ccad8bedc498e347a55"
+    },
+    {
+      "path": "code/src/runtime/recovery.ts",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 6205,
+      "sha256": "2e723d9c6d52c3564a02a1a6690b9a4b28df19142f1758aacafff68c550e87dd"
     },
     {
       "path": "code/src/runtime/resource-scope.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 1231,
-      "sha256": "af772e2c2c27e380eab9cb370c85b33f70bcef986d641befd362a1eac9d335b3"
+      "bytes": 2664,
+      "sha256": "a0075a5382df094a15d7376177b315337cd657307f8b7cb9c9cfe88be53d84f5"
     },
     {
       "path": "code/src/runtime/windows-host.ts",
@@ -468,8 +594,8 @@
       "path": "code/src/security/workspace.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 889,
-      "sha256": "205ddfcd1e8063582dc5ce512789b91538f5e64a121f3169374329041ba2c28b"
+      "bytes": 1424,
+      "sha256": "0f4e5167c3456811c23a2e490c63ee584bb12601f04304c74ca0cd58fb4d5b9e"
     },
     {
       "path": "code/src/storage/AGENTS.md",
@@ -482,36 +608,134 @@
       "path": "code/src/storage/protocol.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 2363,
-      "sha256": "e2dae08890f1df950fee04dfcb1c0c1b91cb639b85b911b9542c6d6c2b1f6a42"
+      "bytes": 3048,
+      "sha256": "b8a918a154e60eeebb2294fc557b231befca85b6bd56cb3b36686621197a73d9"
     },
     {
       "path": "code/src/storage/store.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 2428,
-      "sha256": "13026e75e9bcc232a57ac2386a3b51cde395f72c2e2c51551ff697623522dd7c"
+      "bytes": 5688,
+      "sha256": "51fef1011d982eb17f3d90ed1d525142d07bd235b0ba233da4076be9dff15c05"
     },
     {
       "path": "code/src/storage/worker.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 14018,
-      "sha256": "e48472ffd405737f4f70ddaf692505c60e55b9d4bc6f56ba53e57f245361105a"
+      "bytes": 17973,
+      "sha256": "c5a867d097a222cece0fd580b0bfb5b80452e6e0f34ebb00059bac6f9803a528"
+    },
+    {
+      "path": "code/tests/adapters/acp/cancel.test.ts",
+      "owner": "A",
+      "category": "测试代码",
+      "bytes": 18897,
+      "sha256": "331929ed1a8084be1ab654df137fd515f3f6b84632457574651986aaa73ce8ea"
+    },
+    {
+      "path": "code/tests/adapters/acp/handshake.test.ts",
+      "owner": "A",
+      "category": "测试代码",
+      "bytes": 12673,
+      "sha256": "c31709b1abaefb5fd6076310867600af70b895d0d51d44531c23a07d93f4411b"
+    },
+    {
+      "path": "code/tests/adapters/acp/harness.ts",
+      "owner": "A",
+      "category": "测试代码",
+      "bytes": 7648,
+      "sha256": "8407bfbee090db46ad3e58b262370f7b33298c48548b29af7d21ba5fb6e1a8ca"
+    },
+    {
+      "path": "code/tests/adapters/acp/json.test.ts",
+      "owner": "A",
+      "category": "测试代码",
+      "bytes": 2946,
+      "sha256": "2ed1c09150a0e473d1110963fd039db6071f2878a03f6ee6b1f1e81b25ab61de"
+    },
+    {
+      "path": "code/tests/adapters/acp/lifecycle.test.ts",
+      "owner": "A",
+      "category": "测试代码",
+      "bytes": 7691,
+      "sha256": "305ba180bba3dff760475da09463595621182403157e391acbe1a58938027337"
+    },
+    {
+      "path": "code/tests/adapters/acp/permission.test.ts",
+      "owner": "A",
+      "category": "测试代码",
+      "bytes": 14649,
+      "sha256": "58b54dfd9f15dad51c5152d19654be70e19cc6b80067ee18b46eafab6bb16cb1"
+    },
+    {
+      "path": "code/tests/adapters/acp/projection.test.ts",
+      "owner": "A",
+      "category": "测试代码",
+      "bytes": 17223,
+      "sha256": "746e310786df1ff1b0350bc12e58e411c4a8d0056f494260705da907db352a4d"
+    },
+    {
+      "path": "code/tests/adapters/acp/script.ts",
+      "owner": "A",
+      "category": "测试代码",
+      "bytes": 4713,
+      "sha256": "8a43aa954f6672a20156006951da69917f39f178fbb21ddf6eaa0326c5a8d9ab"
+    },
+    {
+      "path": "code/tests/adapters/acp/updates.test.ts",
+      "owner": "A",
+      "category": "测试代码",
+      "bytes": 26906,
+      "sha256": "c380e4ee2bb759f3b7101e0425f0f17176182657c02f0cb67169d787d58cb678"
+    },
+    {
+      "path": "code/tests/adapters/opencode/assets.test.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 6333,
+      "sha256": "9bc56c1c7e0a6282d7381f83acdbcb6c339dbb9b4c59ae02a563b79ba5cd2d8e"
+    },
+    {
+      "path": "code/tests/adapters/opencode/config.test.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 8239,
+      "sha256": "e09ad34d59c915ca6a1adb7c03ccd1166fd67fcf72b9aba744928bc94b0ca242"
+    },
+    {
+      "path": "code/tests/adapters/opencode/executable.test.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 13312,
+      "sha256": "88caebfe4832a4f56abac2824d0ca5b8762ae8929464876ae405b357c186bf92"
+    },
+    {
+      "path": "code/tests/adapters/opencode/native-config.test.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 14068,
+      "sha256": "2f46404483de700617c872df676062c7e33632985a0d006767ed93a8e736d30e"
+    },
+    {
+      "path": "code/tests/adapters/opencode/pack.test.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 10550,
+      "sha256": "1fde51cba818573c829c6e6495a6e4bf544914d75a768fcb68db9f4db37298cd"
     },
     {
       "path": "code/tests/contract/gateway.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 2089,
-      "sha256": "646c5817a8449ca2d6a9bf3ad6a43ad3da8c2d671ceab8fb057fefb69426deca"
+      "bytes": 4886,
+      "sha256": "03836b4fe9e732d9e19e884548e6467cf4d791529ee3a4c36e003958a0896bdc"
     },
     {
       "path": "code/tests/contract/sse.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 2617,
-      "sha256": "a949a7a06d9c728f751a03155912ba41f4fe984d7eae9ac9a3a9800f4561870f"
+      "bytes": 4956,
+      "sha256": "c02e1277706d13bc940405a5595b6a6da6d52576f261f00860a1c1b487d7b880"
     },
     {
       "path": "code/tests/kit/engine-contract.ts",
@@ -521,39 +745,53 @@
       "sha256": "e09cbfafc31fecccd05a911ccddf47d411676e2ec57d281176a5213e81e990a0"
     },
     {
+      "path": "code/tests/kit/fake-host.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 11116,
+      "sha256": "573bc150c12cc9a94ba2b8c1c9686ead19b379a3a5ce6d131057e1ee3c483a88"
+    },
+    {
       "path": "code/tests/unit/config-assets.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 3091,
-      "sha256": "3fd445057ba50c039dd2a69abe1aee676d8b0f38b51dc6f1d24ed670c7c90120"
+      "bytes": 7132,
+      "sha256": "9bcafc11b9a38e998ab570e9d66a8af31e046bcf25a971927366fc27b3916bf6"
     },
     {
       "path": "code/tests/unit/contracts.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 9999,
-      "sha256": "c80ce4bef5b70a72db83d81c3b43dd38524e3783fd6e00426b5c6f47addd0cd2"
+      "bytes": 29527,
+      "sha256": "f6f22b727e760ba023e39c0020435639836f7693b64a4fc35d18e98e3c76e16e"
     },
     {
       "path": "code/tests/unit/core.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 9211,
-      "sha256": "b9592c22c6d476fe9f609c9fbe75a33dbec46ae032a155680ea61ca949c4d2a2"
+      "bytes": 11555,
+      "sha256": "28088b6b61c72d41bee1e061345cf801158e342584dc4ebb1a048c26d3440110"
+    },
+    {
+      "path": "code/tests/unit/process-host.test.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 35451,
+      "sha256": "77ea1e2a45b2ad27f2d1d2fb48bd1bfe3c73e6c35da2803218d36660d2a3a573"
     },
     {
       "path": "code/tests/unit/runtime.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 3011,
-      "sha256": "1237cffb57c8f28079788dbec4875529d71a4a6ebc8cad77ca8ae09fbb0dd27c"
+      "bytes": 17637,
+      "sha256": "45b8f6a549303bbdb13da88170fe74fa675be54c31d7ce4b0d733147a5e6fd4b"
     },
     {
       "path": "code/toolchain.json",
       "owner": "共同",
       "category": "入口与配置",
       "bytes": 133,
-      "sha256": "308c23f780f6e58c92529d4fe3ebc660c7c3dd6e1ff2694f6ffd8233264dbc83"
+      "sha256": "813b7f2e835ba94e394e7ce99d0e97f495b8ceb393d85b0645ccb38c7e028681"
     },
     {
       "path": "code/tsconfig.json",
@@ -573,8 +811,8 @@
       "path": "docs/engines/opencode.md",
       "owner": "A",
       "category": "入口与配置",
-      "bytes": 1117,
-      "sha256": "5c82e1af1fc704237e0de76ba8a7554a18a8d0483e0b5e7ffcf6de5a110ff8fd"
+      "bytes": 35297,
+      "sha256": "fd13e3ce87f23df6e2544e5a6185317e074f2c7cb10519628408de9cd18e7b27"
     },
     {
       "path": "docs/engines/pi.md",
@@ -591,13 +829,6 @@
       "sha256": "3530569df81361d0a740611f994920995007cbbddb494713124d41fa77950dd8"
     },
     {
-      "path": "docs/reference/README.md",
-      "owner": "共同",
-      "category": "资料核对",
-      "bytes": 630,
-      "sha256": "d6281c95ae5adb6a3698d85f0135d66ed8e82ae990d2d6c58c1e78ad338b2d20"
-    },
-    {
       "path": "docs/reference/evaluation-cases.md",
       "owner": "共同",
       "category": "资料核对",
@@ -612,25 +843,32 @@
       "sha256": "c0c5928a6061917a1f28daa9bb4f94c1a97211da8536e4f856e767e0216a6dce"
     },
     {
+      "path": "docs/reference/README.md",
+      "owner": "共同",
+      "category": "资料核对",
+      "bytes": 630,
+      "sha256": "d6281c95ae5adb6a3698d85f0135d66ed8e82ae990d2d6c58c1e78ad338b2d20"
+    },
+    {
       "path": "docs/spec/architecture.md",
       "owner": "共同",
       "category": "架构与契约",
-      "bytes": 10449,
-      "sha256": "296b999bf4b010c3f728f3aff0a363e8d861a5ad743c987782fb9f620c130f0b"
+      "bytes": 15581,
+      "sha256": "7aab1eb5f0d4fd07a283a9b67fed79c1e15a5e1416dc7b6aaac121cf6be97619"
     },
     {
       "path": "docs/spec/contracts.md",
       "owner": "共同",
       "category": "架构与契约",
-      "bytes": 7051,
-      "sha256": "5f1d765c75c7018be61e3b8b54bd053b16f80d19ef5da65244735a8d8b34404d"
+      "bytes": 20592,
+      "sha256": "19286ab1339adda50fb9b64bdf53aef163ffb220df9dbeab35b8e4da5914ac8b"
     },
     {
       "path": "docs/spec/dfx-and-testing.md",
       "owner": "共同",
       "category": "架构与契约",
-      "bytes": 6052,
-      "sha256": "133e5cab7c6696cf7e0cb399db66a213baa5b582134b5431c6fe0fe711e59ea8"
+      "bytes": 11061,
+      "sha256": "15875bd08f15c1e1462e34e722d601603dc960a41652be6e8a348cd33fa8d633"
     },
     {
       "path": "docs/spec/internal-integration.md",
@@ -643,8 +881,8 @@
       "path": "docs/spec/requirements.md",
       "owner": "共同",
       "category": "架构与契约",
-      "bytes": 5463,
-      "sha256": "95116516eb6e3465ccde93d1a9f30607382c971a4fb832f00d2b3025a52675c4"
+      "bytes": 6018,
+      "sha256": "91a062b972054d3ffa85fad2e31dd63df48b5809f1e5b0258c813ded350bbe63"
     },
     {
       "path": "docs/spec/sources.md",
@@ -685,22 +923,29 @@
       "path": "docs/team/ownership.json",
       "owner": "共同",
       "category": "分工与协作",
-      "bytes": 1033,
-      "sha256": "7e041f47fd02adc13d9cc449336196e5e0ad5fb945c213c880c9430f786918cd"
+      "bytes": 1344,
+      "sha256": "b3fa4d71d92f28f05a0a46b72dab9503905fb62ce695b0aa5b7e178a8d5b6138"
     },
     {
       "path": "docs/team/repository-import.md",
       "owner": "共同",
       "category": "分工与协作",
-      "bytes": 1077,
-      "sha256": "e1cc492af240df235d579c7f2ce708b6521c3d9eee39412c8a6e20c83b6dcb44"
+      "bytes": 1134,
+      "sha256": "d2e41cd7cb37968ba745526e3de8d18cf0cdc45282ed3c3168d6aae8b55bd0da"
     },
     {
       "path": "docs/team/work-packages.md",
       "owner": "共同",
       "category": "分工与协作",
-      "bytes": 5054,
-      "sha256": "02e0d37b0410356fbb1e782207d4e1a0849680adb21adb4ddc4e2b031dc958a6"
+      "bytes": 6595,
+      "sha256": "3effb93416515e7b489240ed9d1f5a28587beaaff88305d7dcad29bbe236831d"
+    },
+    {
+      "path": "INSTRUCTION.md",
+      "owner": "共同",
+      "category": "入口与配置",
+      "bytes": 8596,
+      "sha256": "0f7a6fc84a2878b43917bb35da0315a5bc6f8137a91a95461be49b012214bc49"
     },
     {
       "path": "prompts/00-baseline-check.md",
@@ -773,11 +1018,18 @@
       "sha256": "ed90828cc10b9eff4c0288d818123022e9ed744bfb96b9d9f301b76e2db8aba8"
     },
     {
+      "path": "README.md",
+      "owner": "共同",
+      "category": "入口与配置",
+      "bytes": 2600,
+      "sha256": "85b11a0323d2b92a7f03f74adf3a399e820f1313dac29e703c82fe5b484fd096"
+    },
+    {
       "path": "verification/coverage.md",
       "owner": "共同",
       "category": "验证证据",
-      "bytes": 3486,
-      "sha256": "7579752d874ada3bb1fc593a371d9fc9f279df2796194a5236a4d53053c17240"
+      "bytes": 3632,
+      "sha256": "1c0fc8abed10c376b59d9332b4c07df0544e753af0499dd4b084c8f7ba251577"
     },
     {
       "path": "verification/internal/evidence.example.json",
@@ -825,15 +1077,15 @@
       "path": "verification/results.json",
       "owner": "共同",
       "category": "验证证据",
-      "bytes": 2735,
-      "sha256": "44cc6ece90aa25d8ae5da36cc3102c88a0792f7106678ea6487a8a4f25fb73a2"
+      "bytes": 2968,
+      "sha256": "bdfc0db6c4fc44cdc1949fc0b5e6375d3fcc774fa298e9a6d8e898e14eeef969"
+    },
+    {
+      "path": "VERIFY.mjs",
+      "owner": "共同",
+      "category": "入口与配置",
+      "bytes": 863,
+      "sha256": "4fd668bed3f25348c172f2b2f1479e04719f977c4cf05f558bbd7084092616ee"
     }
-  ],
-  "generatedReviewFiles": [
-    "REVIEW-INDEX.md",
-    "REVIEW-ALL.html",
-    "FILE-MANIFEST.json",
-    "SHA256SUMS.txt"
-  ],
-  "policy": "此清单列出交付内容，不代表所有目标环境均已通过验证。"
+  ]
 }

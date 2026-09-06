@@ -8,5 +8,11 @@
     }
   ],
   "tools": [],
-  "policy": { "default": "deny", "operations": {} }
+  "policy": {
+    "default": "allow",
+    "operations": {
+      "file.deleteRecursive": "ask",
+      "message.sendExternal": "ask"
+    }
+  }
 }

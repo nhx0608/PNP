@@ -18,6 +18,7 @@ import { StateStore } from "../../src/storage/store.ts";
 import { MockPack } from "../../src/engines/mock/pack.ts";
 import { MockIntegration } from "../../src/integration/mock/provider.ts";
 import { GatewayCore } from "../../src/core/gateway-core.ts";
+import { PnpError } from "../../src/core/errors.ts";
 
 test("JSONL preserves unicode separators and splits only on LF", () => {
   const decoder = new JsonlDecoder();
@@ -56,7 +57,7 @@ test("data-directory lock rejects concurrent ownership", async () => {
     await (await acquireInstanceLock(path.join(dir, "gateway.lock")))();
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
-test("SQLite write diagnostics preserve sanitized identity and unknown outcome", async () => {
+test("SQLite constraint conflicts keep their identity without reporting storage as unavailable", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "pnp-sqlite-diagnostic-"));
   const store = new StateStore(path.join(dir, "pnp.db"));
   const now = new Date().toISOString();
@@ -64,11 +65,13 @@ test("SQLite write diagnostics preserve sanitized identity and unknown outcome",
     lifecycle: "active" as const, status: "idle" as const, recovery: "ready" as const, createdAt: now, updatedAt: now };
   try {
     await store.call("createSession", session);
-    await assert.rejects(store.call("createSession", session), { code: "STORAGE_ERROR" });
+    // An expected constraint conflict is a state conflict, not evidence that storage is unavailable.
+    await assert.rejects(store.call("createSession", session), { code: "STATE_CONFLICT", status: 409 });
     const [diagnostic] = store.diagnosticsSnapshot();
     assert.equal(diagnostic?.category, "sqlite");
     assert.match(diagnostic?.code ?? "", /^(?:ERR_)?SQLITE_/);
-    assert.equal(diagnostic?.outcome, "unknown");
+    assert.equal(diagnostic?.outcome, "known-failed");
+    assert.equal(store.available, true);
   } finally { await store.close(); await rm(dir, { recursive: true, force: true }); }
 });
 test("deadline ends a never-resolving operation", async () => {
@@ -129,7 +132,15 @@ test("Windows launch failure records recoverable namespace and stop evidence", {
     await assert.rejects(host.start({
       executable: path.join(directory, "missing.exe"), args: [], cwd: directory, env: {},
       sessionId: "failed-launch", ownerToken: "failed-launch",
-    }, new AbortController().signal, new OwnedResourceScope()), { code: "HOST_FAILURE" });
+    }, new AbortController().signal, new OwnedResourceScope()), (error: unknown) => {
+      // The supervisor cannot create the engine, so the host degrades and tries directly; the honest
+      // code is that the process could not be started, and the supervisor's own phase must survive
+      // into the diagnostics rather than being replaced by the second, vaguer attempt.
+      assert.ok(error instanceof PnpError);
+      assert.equal(error.code, "HOST_START_FAILED");
+      assert.match(error.message, /supervisor failed in phase spawn/);
+      return true;
+    });
     const files = (await readdir(path.join(directory, "hosts"))).filter((file) => file.endsWith(".json"));
     assert.equal(files.length, 1);
     const record = JSON.parse(await readFile(path.join(directory, "hosts", files[0]!), "utf8"));
@@ -163,7 +174,7 @@ test("recovery confirms a blocked session only when every retained host is quies
   } finally { await core.close(); await store.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-test("recovery remains globally fenced by an unverified retained host from another session", async () => {
+test("recovery quarantines an ownerless host record instead of fencing every session", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "pnp-recovery-global-"));
   const store = new StateStore(path.join(directory, "pnp.db"));
   const core = new GatewayCore(store, new MockPack(), new MockIntegration(), { dataDirectory: directory });
@@ -177,9 +188,13 @@ test("recovery remains globally fenced by an unverified retained host from anoth
     const summary = await recoverOwnedState(store, { start: async () => { throw new Error("not used"); },
       reconcile: async (record) => ({ quiescent: record !== null && typeof record === "object" && !Array.isArray(record) && record.quiescent === true,
         method: "process-tree" }) }, directory);
-    assert.equal(summary.unverifiedRecords, 1);
-    assert.equal(summary.confirmedSessions, 0);
-    assert.equal((await core.getSession(session.id)).recovery, "blocked");
+    // The orphan belongs to no session, so it can neither be verified nor block anything.
+    assert.equal(summary.quarantinedRecords, 1);
+    assert.equal(summary.unverifiedRecords, 0);
+    assert.deepEqual(summary.issues.map((issue) => issue.reason), ["orphaned"]);
+    assert.equal(summary.confirmedSessions, 1);
+    assert.notEqual((await core.getSession(session.id)).recovery, "blocked");
+    assert.equal((await readdir(path.join(directory, "hosts", "quarantine"))).length, 1);
   } finally {
     await core.close();
     await store.close(); await rm(directory, { recursive: true, force: true });
@@ -188,30 +203,89 @@ test("recovery remains globally fenced by an unverified retained host from anoth
 
 test("Windows process-lifetime guard excludes a second owner and releases on process exit", {
   skip: process.platform !== "win32",
-}, async () => {
+}, async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), "pnp-guard-"));
   const moduleUrl = new URL("../../src/runtime/instance-lock.ts", import.meta.url).href;
-  const source = `import { acquireProcessLifetimeLock } from ${JSON.stringify(moduleUrl)};\ntry { await acquireProcessLifetimeLock(process.env.GUARD_DIR); console.log("granted"); if (process.env.HOLD === "1") setInterval(() => {}, 1000); } catch (error) { console.log(error.code ?? "failed"); process.exitCode=2; }`;
-  const launch = (hold: boolean) => spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", source], {
-    env: { ...process.env, GUARD_DIR: directory, HOLD: hold ? "1" : "0" }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
-  });
-  const output = (child: ReturnType<typeof launch>) => new Promise<string>((resolve) => {
-    let value = ""; child.stdout.on("data", (chunk: Buffer) => { value += chunk.toString(); if (value.includes("\n")) resolve(value.trim()); });
-    child.on("close", () => resolve(value.trim()));
-  });
-  const first = launch(true);
-  const firstClosed = new Promise<void>((resolve) => first.once("close", () => resolve()));
+  const source = `import { acquireProcessLifetimeLock } from ${JSON.stringify(moduleUrl)};\nconst t0 = Date.now();\ntry { await acquireProcessLifetimeLock(process.env.GUARD_DIR); console.log("granted " + (Date.now() - t0)); if (process.env.HOLD === "1") setInterval(() => {}, 1000); } catch (error) { console.log((error.code ?? "failed") + " " + (Date.now() - t0)); process.exitCode=2; }`;
+  const startedAt = Date.now();
+  const launch = (label: string, hold: boolean) => {
+    const child = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", source], {
+      env: { ...process.env, GUARD_DIR: directory, HOLD: hold ? "1" : "0" }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-4096); });
+    // Exit is the process lifetime. `close` also waits for pipes a grandchild may still hold, which is
+    // exactly the wait that kept this test open for hours on a CI runner; nothing here is unbounded.
+    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    return { child, label, exited, stderr: () => stderr.trim() };
+  };
+  type Launched = ReturnType<typeof launch>;
+  const firstLine = (launched: Launched): Promise<string> => bounded(new Promise<string>((resolve) => {
+    let value = "";
+    launched.child.stdout.on("data", (chunk: Buffer) => {
+      value += chunk.toString();
+      if (value.includes("\n")) resolve(value.trim().split("\n")[0]!);
+    });
+    launched.child.once("exit", () => resolve(value.trim()));
+  }), 60_000);
+  const report = (launched: Launched, line: string): void => {
+    const tail = launched.stderr() === "" ? "" : ` stderr=${JSON.stringify(launched.stderr().slice(-400))}`;
+    t.diagnostic(`${launched.label}: ${line} at t+${Date.now() - startedAt}ms${tail}`);
+  };
+  const first = launch("first", true);
   try {
-    assert.equal(await output(first), "granted");
-    const second = launch(false);
-    const secondClosed = new Promise<void>((resolve) => second.once("close", () => resolve()));
-    assert.equal(await output(second), "INSTANCE_LOCKED");
-    await secondClosed;
-    first.kill();
-    await firstClosed;
-    const third = launch(false);
-    const thirdClosed = new Promise<void>((resolve) => third.once("close", () => resolve()));
-    assert.equal(await output(third), "granted");
-    await thirdClosed;
-  } finally { first.kill(); await firstClosed; await rm(directory, { recursive: true, force: true }); }
+    const granted = await firstLine(first);
+    report(first, granted);
+    assert.match(granted, /^granted /, `first owner must be granted; stderr: ${first.stderr()}`);
+    // "granted" alone does not tell the guard from its file-lock fallback: only the guard, having duplicated
+    // the exclusive handles into the owner, writes ownership.json. The fallback reports why on stderr.
+    const ownership = JSON.parse(await readFile(path.join(directory, "ownership.json"), "utf8").catch(() => "null"));
+    assert.ok(ownership !== null && ownership.pid === first.child.pid,
+      `the process-lifetime guard must have granted the first owner, not the file-lock fallback; stderr: ${first.stderr()}`);
+    const second = launch("second", false);
+    const refused = await firstLine(second);
+    report(second, refused);
+    assert.match(refused, /^INSTANCE_LOCKED /, `a second owner must be refused; stderr: ${second.stderr()}`);
+    await bounded(second.exited, 60_000);
+    first.child.kill();
+    await bounded(first.exited, 60_000);
+    const third = launch("third", false);
+    const regranted = await firstLine(third);
+    report(third, regranted);
+    assert.match(regranted, /^granted /, `ownership must release with the owner process; stderr: ${third.stderr()}`);
+    await bounded(third.exited, 60_000);
+  } finally {
+    first.child.kill();
+    await bounded(first.exited, 10_000).catch(() => undefined);
+    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
+});
+
+test("a launch whose executable does not exist fails fast and records that nothing is running", {
+  skip: process.platform === "win32",
+}, async () => {
+  // spawn() reports ENOENT through "error", never assigns a pid and never emits "exit". The host must
+  // not wait for that exit, and must not call the stop unproven: no process was created, so the
+  // session that asked for it stays usable and deletable.
+  const directory = await mkdtemp(path.join(tmpdir(), "pnp-missing-launch-"));
+  const host = new LocalProcessHost(directory);
+  const scope = new OwnedResourceScope();
+  try {
+    const startedAt = Date.now();
+    await assert.rejects(host.start({
+      executable: path.join(directory, "missing-engine"), args: ["acp"], cwd: directory, env: {},
+      sessionId: "missing-launch", ownerToken: "missing-launch",
+    }, new AbortController().signal, scope), (error: unknown) => {
+      assert.ok(error instanceof PnpError);
+      assert.equal(error.code, "HOST_START_FAILED");
+      return true;
+    });
+    assert.ok(Date.now() - startedAt < 3_000, "a spawn failure must not wait for a process exit that cannot come");
+    assert.equal((await scope.stop(1_000)).quiescent, true);
+    const files = (await readdir(path.join(directory, "hosts"))).filter((file) => file.endsWith(".json"));
+    assert.equal(files.length, 1);
+    const record = JSON.parse(await readFile(path.join(directory, "hosts", files[0]!), "utf8"));
+    assert.equal(record.quiescent, true);
+    assert.equal((await host.reconcile(record)).quiescent, true);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });

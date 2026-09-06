@@ -1,0 +1,147 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  applyOpenCodeEnvironmentOverrides, loadOpenCodeEngineConfig, parseOpenCodeEngineConfig,
+} from "../../../src/engines/opencode/config.ts";
+
+function validConfig(): Record<string, unknown> {
+  return {
+    id: "opencode", channel: "acp", implementationEntry: "src/engines/opencode/pack.ts",
+    engineVersion: "1.18.29", engineVersionLocked: true, protocolVersion: 1,
+    distribution: { kind: "npm-global-native-binary", packageNameCandidates: ["opencode-ai"], windowsNativeSupport: "supported-not-recommended" },
+    acp: { subcommandArgs: ["acp"] },
+    executable: {
+      kindEnvironmentVariable: "PNP_OPENCODE_EXECUTABLE_KIND", defaultKind: "exe",
+      exe: { configuredPath: null, environmentVariable: "PNP_OPENCODE_EXE_PATH", wellKnownPaths: [] },
+      node: { configuredPath: null, environmentVariable: "PNP_OPENCODE_NODE_PATH", wellKnownPaths: [], fallbackToHostRuntime: true },
+      script: { configuredPath: null, environmentVariable: "PNP_OPENCODE_SCRIPT_PATH", wellKnownPaths: [] },
+    },
+    redirect: { variables: { HOME: "home" } },
+    model: { policy: "launch" },
+    headerEnvironmentPrefix: "PNP_OPENCODE_HEADER_",
+    timeouts: { requestMs: 30000, cancelGraceMs: 2000, cancelAckMs: 1000 },
+    capabilityEvidence: "probed",
+  };
+}
+
+test("parseOpenCodeEngineConfig accepts a well-formed config", () => {
+  const parsed = parseOpenCodeEngineConfig(validConfig());
+  assert.equal(parsed.id, "opencode");
+  assert.equal(parsed.executable.defaultKind, "exe");
+  assert.equal(parsed.model.policy, "launch");
+  assert.equal(parsed.capabilityEvidence, "probed");
+});
+
+test("parseOpenCodeEngineConfig rejects a wrong id with ENGINE_CONFIG_INVALID", () => {
+  const raw = validConfig();
+  raw["id"] = "hermes";
+  assert.throws(() => parseOpenCodeEngineConfig(raw), { code: "ENGINE_CONFIG_INVALID" });
+});
+
+test("parseOpenCodeEngineConfig rejects a non-object payload", () => {
+  assert.throws(() => parseOpenCodeEngineConfig("not-an-object"), { code: "ENGINE_CONFIG_INVALID" });
+  assert.throws(() => parseOpenCodeEngineConfig(null), { code: "ENGINE_CONFIG_INVALID" });
+  assert.throws(() => parseOpenCodeEngineConfig([1, 2, 3]), { code: "ENGINE_CONFIG_INVALID" });
+});
+
+test("parseOpenCodeEngineConfig rejects a missing required field", () => {
+  const raw = validConfig();
+  delete raw["engineVersion"];
+  assert.throws(() => parseOpenCodeEngineConfig(raw), { code: "ENGINE_CONFIG_INVALID" });
+});
+
+test("parseOpenCodeEngineConfig rejects an invalid model.policy", () => {
+  const raw = validConfig();
+  raw["model"] = { policy: "always-on" };
+  assert.throws(() => parseOpenCodeEngineConfig(raw), { code: "ENGINE_CONFIG_INVALID" });
+});
+
+test("parseOpenCodeEngineConfig rejects an invalid executable.defaultKind", () => {
+  const raw = validConfig();
+  (raw["executable"] as Record<string, unknown>)["defaultKind"] = "wsl";
+  assert.throws(() => parseOpenCodeEngineConfig(raw), { code: "ENGINE_CONFIG_INVALID" });
+});
+
+test("parseOpenCodeEngineConfig rejects a non-positive timeout", () => {
+  const raw = validConfig();
+  (raw["timeouts"] as Record<string, unknown>)["requestMs"] = 0;
+  assert.throws(() => parseOpenCodeEngineConfig(raw), { code: "ENGINE_CONFIG_INVALID" });
+});
+
+test("parseOpenCodeEngineConfig rejects an unknown capabilityEvidence value", () => {
+  const raw = validConfig();
+  raw["capabilityEvidence"] = "trust-me";
+  assert.throws(() => parseOpenCodeEngineConfig(raw), { code: "ENGINE_CONFIG_INVALID" });
+});
+
+test("nativePermissions is optional, defaults to engine-default, and rejects anything else", () => {
+  assert.equal(parseOpenCodeEngineConfig(validConfig()).nativePermissions, "engine-default");
+  const explicit = validConfig();
+  explicit["nativePermissions"] = "engine-default";
+  assert.equal(parseOpenCodeEngineConfig(explicit).nativePermissions, "engine-default");
+  const ask = validConfig();
+  ask["nativePermissions"] = "ask";
+  assert.equal(parseOpenCodeEngineConfig(ask).nativePermissions, "ask");
+  for (const bad of ["allow", "deny", true, null, {}]) {
+    const raw = validConfig();
+    raw["nativePermissions"] = bad;
+    assert.throws(() => parseOpenCodeEngineConfig(raw), { code: "ENGINE_CONFIG_INVALID" }, `accepted ${JSON.stringify(bad)}`);
+  }
+});
+
+// --- C. PNP_OPENCODE_NATIVE_PERMISSIONS ---------------------------------------------------------------------
+
+test("an unset or empty PNP_OPENCODE_NATIVE_PERMISSIONS leaves the file's value alone", () => {
+  const ask = parseOpenCodeEngineConfig({ ...validConfig(), nativePermissions: "ask" });
+  assert.equal(applyOpenCodeEnvironmentOverrides(ask, {}).nativePermissions, "ask");
+  assert.equal(applyOpenCodeEnvironmentOverrides(ask, { PNP_OPENCODE_NATIVE_PERMISSIONS: "" }).nativePermissions, "ask");
+  assert.equal(applyOpenCodeEnvironmentOverrides(ask, { PNP_OPENCODE_NATIVE_PERMISSIONS: undefined }).nativePermissions, "ask");
+  const fileDefault = parseOpenCodeEngineConfig(validConfig());
+  assert.equal(applyOpenCodeEnvironmentOverrides(fileDefault, {}).nativePermissions, "engine-default");
+});
+
+test("PNP_OPENCODE_NATIVE_PERMISSIONS overrides the file in both directions", () => {
+  const fileDefault = parseOpenCodeEngineConfig(validConfig());
+  assert.equal(applyOpenCodeEnvironmentOverrides(fileDefault, { PNP_OPENCODE_NATIVE_PERMISSIONS: "ask" }).nativePermissions, "ask");
+  const ask = parseOpenCodeEngineConfig({ ...validConfig(), nativePermissions: "ask" });
+  assert.equal(applyOpenCodeEnvironmentOverrides(ask, { PNP_OPENCODE_NATIVE_PERMISSIONS: "engine-default" }).nativePermissions, "engine-default");
+  // Only that one field moves; the rest of the operator's config is untouched.
+  const overridden = applyOpenCodeEnvironmentOverrides(fileDefault, { PNP_OPENCODE_NATIVE_PERMISSIONS: "ask" });
+  assert.deepEqual({ ...overridden, nativePermissions: "engine-default" }, fileDefault);
+});
+
+test("an unrecognised PNP_OPENCODE_NATIVE_PERMISSIONS fails the load instead of falling back", () => {
+  const fileDefault = parseOpenCodeEngineConfig(validConfig());
+  for (const bad of ["ASK", "allow", "deny", "true", "engine default", "0"]) {
+    assert.throws(() => applyOpenCodeEnvironmentOverrides(fileDefault, { PNP_OPENCODE_NATIVE_PERMISSIONS: bad }),
+      { code: "ENGINE_CONFIG_INVALID" }, `accepted ${bad}`);
+  }
+});
+
+test("loadOpenCodeEngineConfig applies the environment override to the shipped file", async () => {
+  assert.equal((await loadOpenCodeEngineConfig({ PNP_OPENCODE_NATIVE_PERMISSIONS: "ask" })).nativePermissions, "ask");
+  assert.equal((await loadOpenCodeEngineConfig({})).nativePermissions, "engine-default");
+  await assert.rejects(loadOpenCodeEngineConfig({ PNP_OPENCODE_NATIVE_PERMISSIONS: "yes" }), { code: "ENGINE_CONFIG_INVALID" });
+});
+
+test("the shipped config/engines/opencode.json matches the real OpenCode distribution", async () => {
+  // An explicit environment, so a variable set in the developer's shell cannot change what this asserts.
+  const config = await loadOpenCodeEngineConfig({});
+  assert.equal(config.id, "opencode");
+  assert.equal(config.channel, "acp");
+  assert.deepEqual(config.acp.subcommandArgs, ["acp"], "opencode acp takes no further arguments");
+  // The published package ships a Bun-compiled executable and no script entry, so exe is the only default that
+  // can launch a stock install.
+  assert.equal(config.executable.defaultKind, "exe");
+  assert.ok(config.executable.exe.wellKnownPaths.length > 0);
+  for (const template of config.executable.exe.wellKnownPaths) {
+    assert.match(template, /\.exe$/, "every well-known Windows candidate is a real executable, never an npm .cmd shim");
+  }
+  // One package name, not a list of guesses: opencode-ai is the confirmed publisher of the CLI.
+  assert.deepEqual(config.distribution.packageNameCandidates, ["opencode-ai"]);
+  assert.equal(config.engineVersionLocked, true);
+  assert.equal(config.engineVersion, "1.18.29");
+  assert.equal(config.nativePermissions, "engine-default", "the gateway does not turn on engine-side prompting by default");
+  // Nothing here has been observed on the Windows target yet, so nothing claims to be verified.
+  assert.notEqual(config.capabilityEvidence, "verified");
+});

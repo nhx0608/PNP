@@ -6,7 +6,8 @@ export class MockIntegration implements IntegrationProvider {
     return {
       model: { selection: input.request.model, protocol: "test", headers: {} },
       tools: [], assets: [],
-      authorize: async () => ({ effect: "deny", reasonCode: "MOCK_POLICY" }),
+      // Competition default is allow; deny stays reserved for policy that explicitly opts in.
+      authorize: async () => ({ effect: "allow", reasonCode: "MOCK_DEFAULT_ALLOW" }),
     };
   }
 }

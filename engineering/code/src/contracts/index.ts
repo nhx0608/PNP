@@ -124,7 +124,12 @@ export interface StopEvidence {
 }
 export interface EngineResult {
   state: "completed" | "failed" | "cancelled";
-  quiescent: true;
+  /**
+   * True only when the Driver verified that this turn's execution resources stopped. False reports a real
+   * terminal turn whose resources are unproven; Core then takes process-level evidence via terminate().
+   * Never report true to avoid termination.
+   */
+  quiescent: boolean;
   finalText: string;
   finish: Exclude<MessageFinish, "tool-calls" | "interrupted">;
   nativeStopReason: string;
@@ -138,6 +143,9 @@ export interface InteractionRequest {
 export interface InteractionResponse {
   decision: "allow" | "deny" | "answer";
   answers?: string[][];
+  /** Lets an adapter separate an organisation refusal from an unanswered request. */
+  source?: "policy" | "user" | "timeout" | "cancelled";
+  reasonCode?: string;
 }
 export interface AuthorizationDecision {
   effect: "allow" | "deny" | "ask";

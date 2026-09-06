@@ -9,6 +9,9 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    # The whole gate takes about three minutes; a job past this is hung, and a hung job must fail
+    # with its log released rather than hold the runner for hours.
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: engineering/code
@@ -20,3 +23,50 @@ jobs:
       - run: npm ci
       - run: npm run foundation:check
       - run: npm run build
+
+  # End-to-end smoke: real gateway process, real engine, real north-bound HTTP.
+  # The model service is the only mocked component.
+  engine-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Control group: proves the harness itself, with no real engine involved.
+          - os: ubuntu-latest
+            engine: mock
+          # Fast real-engine signal.
+          - os: ubuntu-latest
+            engine: opencode
+          - os: windows-latest
+            engine: mock
+          # The leg that counts: the competition target platform.
+          - os: windows-latest
+            engine: opencode
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: engineering/code
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+      - run: npm ci
+      - run: npm run build
+      - name: Install OpenCode
+        if: matrix.engine == 'opencode'
+        run: npm install -g opencode-ai@1.18.29 --loglevel=error
+      - name: Report OpenCode version
+        if: matrix.engine == 'opencode'
+        run: opencode --version
+      - name: Run engine smoke
+        run: node scripts/e2e/ci-smoke.mjs --engine ${{ matrix.engine }} --artifacts ${{ runner.temp }}/e2e-artifacts
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ matrix.os }}-${{ matrix.engine }}
+          path: ${{ runner.temp }}/e2e-artifacts
+          if-no-files-found: warn
+          retention-days: 7

@@ -12,6 +12,11 @@
     "code/src/assets/**",
     "code/src/registry/**",
     "code/src/main.ts",
+    "code/src/integration/index.ts",
+    "code/src/integration/configured/**",
+    "code/src/integration/mock/**",
+    "code/config/configured.example.json",
+    "code/assets/packs/README.md",
     "code/package*.json",
     "code/scripts/**",
     "docs/spec/**"
@@ -31,13 +36,16 @@
     "code/src/engines/pi/**",
     "code/tests/adapters/pi/**",
     "code/config/engines/pi.json",
-    "docs/engines/pi.md"
+    "docs/engines/pi.md",
+    "code/assets/packs/office/**"
   ],
   "C": [
     "code/src/integration/internal/**",
     "code/tests/integration/internal/**",
     "code/config/internal.example.json",
     "docs/internal/**",
-    "verification/internal/**"
+    "verification/internal/**",
+    "code/assets/packs/windows-desktop/**",
+    "code/assets/packs/web-search/**"
   ]
 }

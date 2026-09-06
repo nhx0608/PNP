@@ -3,6 +3,82 @@
   "channel": "acp",
   "owner": "A",
   "implementationEntry": "src/engines/opencode/pack.ts",
-  "engineVersion": null,
-  "capabilityEvidence": "unverified"
+  "engineVersion": "1.18.29",
+  "engineVersionLocked": true,
+  "engineVersionNotes": "Locked at the directly inspected opencode-windows-x64@1.18.29 distribution. engines.lock.json records the SHA-256 of the official npm tarball used for this delivery.",
+  "protocolVersion": 1,
+  "distribution": {
+    "kind": "npm-global-native-binary",
+    "packageNameCandidates": ["opencode-ai"],
+    "notes": "opencode-ai declares bin {\"opencode\": \"./bin/opencode.exe\"} and ships that file as a ~479-byte placeholder. Its postinstall.mjs resolves the real, Bun-compiled standalone executable (~172 MB) out of the platform-specific optional dependency for the host - opencode-windows-x64 on Windows x64, opencode-windows-x64-baseline when the CPU has no AVX2 - hard-links or copies it over bin/opencode.exe, and validates it with --version. There is no JS entry script anywhere in the package, so `node.exe <script> acp` cannot work against a real install; the launch target is the .exe itself. Both the opencode-ai copy and the platform package's own bin/opencode.exe are real executables, which is why both are probed.",
+    "platformPackages": {
+      "win32-x64": "opencode-windows-x64",
+      "win32-x64-baseline": "opencode-windows-x64-baseline",
+      "linux-x64": "opencode-linux-x64"
+    },
+    "windowsNativeSupport": "supported-not-recommended",
+    "windowsNativeSupportEvidence": "opencode.ai/docs/ states \"While OpenCode can run directly on Windows, we recommend using WSL for the best experience\": native Windows runs, it is simply not the recommended environment. The distribution backs this up - a first-party Windows x64 executable is published and installed by default. See docs/engines/opencode.md."
+  },
+  "acp": {
+    "subcommandArgs": ["acp"],
+    "subcommandEvidence": "opencode.ai/docs/acp/ documents `opencode acp` as a stdio JSON-RPC ACP agent with no further arguments. Exercised against the real 1.18.29 binary on Linux (initialize + session/new completed)."
+  },
+  "executable": {
+    "kindEnvironmentVariable": "PNP_OPENCODE_EXECUTABLE_KIND",
+    "defaultKind": "exe",
+    "exe": {
+      "configuredPath": null,
+      "environmentVariable": "PNP_OPENCODE_EXE_PATH",
+      "wellKnownPaths": [
+        "${APPDATA}\\npm\\node_modules\\opencode-ai\\bin\\opencode.exe",
+        "${APPDATA}\\npm\\node_modules\\opencode-windows-x64\\bin\\opencode.exe",
+        "${APPDATA}\\npm\\node_modules\\opencode-windows-x64-baseline\\bin\\opencode.exe",
+        "${ProgramFiles}\\nodejs\\node_modules\\opencode-ai\\bin\\opencode.exe",
+        "${LOCALAPPDATA}\\Programs\\opencode\\opencode.exe"
+      ],
+      "wellKnownPathNotes": "Order is npm's default global prefix first (%APPDATA%\\npm), then the platform packages that back it, then a Node installed under Program Files with a machine-wide prefix, then a hand-placed install. A template whose ${VAR} is unset is skipped, never probed as a root-relative path. On a non-Windows host set PNP_OPENCODE_EXE_PATH to the opencode-linux-x64 binary; there is no POSIX well-known list because npm's prefix there is not fixed."
+    },
+    "node": {
+      "configuredPath": null,
+      "environmentVariable": "PNP_OPENCODE_NODE_PATH",
+      "wellKnownPaths": [
+        "${ProgramFiles}\\nodejs\\node.exe",
+        "${ProgramFiles(x86)}\\nodejs\\node.exe"
+      ],
+      "fallbackToHostRuntime": true,
+      "fallbackNotes": "Only used by the explicitly opt-in node-script mode. When unresolved, falls back to process.execPath (the gateway's own node.exe)."
+    },
+    "script": {
+      "configuredPath": null,
+      "environmentVariable": "PNP_OPENCODE_SCRIPT_PATH",
+      "wellKnownPaths": []
+    },
+    "modeNotes": "exe is the shipped default because it is the only mode that matches the real distribution. node-script is retained as an explicit opt-in (PNP_OPENCODE_EXECUTABLE_KIND=node-script plus PNP_OPENCODE_SCRIPT_PATH) for a repackaged or future JS-entry build; it has no well-known script paths because opencode-ai ships no script entry to point at. npm's global install also writes an opencode.cmd shim, which the shared ProcessHost rejects (shell:false, and on win32 the executable must end in .exe); the shim is never a launch target in either mode."
+  },
+  "nativePermissions": "engine-default",
+  "nativePermissionsNotes": "OpenCode permits every operation by default. \"ask\" writes \"permission\": {\"edit\": \"ask\", \"bash\": \"ask\"} into the private config so the engine raises ACP session/request_permission and the gateway's policy layer gets to decide allow/ask/deny. \"engine-default\" leaves the block out entirely and the engine never asks. PNP_OPENCODE_NATIVE_PERMISSIONS overrides this field at load time (same two values; empty or unset means \"use this file\", anything else fails the load with ENGINE_CONFIG_INVALID), so a deployment or a smoke run can turn engine-side prompting on without editing a checked-in file.",
+  "redirect": {
+    "variables": {
+      "XDG_CONFIG_HOME": "xdg-config",
+      "XDG_DATA_HOME": "xdg-data",
+      "XDG_CACHE_HOME": "xdg-cache",
+      "HOME": "home",
+      "USERPROFILE": "home",
+      "APPDATA": "appdata",
+      "LOCALAPPDATA": "localappdata"
+    },
+    "notes": "Every key here is set on the child process only, rooted under EngineOpenInput.nativeDataDirectory/opencode/<value>. The shared ProcessHost's baseEnvironment() otherwise inherits the gateway's real HOME/USERPROFILE/APPDATA/LOCALAPPDATA, which would point opencode at the operator's real profile. The private config is reached primarily through OPENCODE_CONFIG, a documented discovery step (opencode.ai/docs/config/) that names one exact file and does not depend on guessing a config home; these directory redirects still matter for data/cache writes, for skill discovery, and as a fallback mirror. The documented order is remote .well-known, global ~/.config/opencode/opencode.json, OPENCODE_CONFIG, project opencode.json, .opencode, OPENCODE_CONFIG_CONTENT, managed %ProgramData%\\opencode; XDG_CONFIG_HOME and %APPDATA% are not named in that document at all."
+  },
+  "model": {
+    "policy": "launch",
+    "policyEvidence": "probed",
+    "rationale": "A real opencode 1.18.29 acp session on Linux returned a model-category session config option ({id:\"model\", category:\"model\", type:\"select\"}) whose currentValue was exactly the provider/model pinned in the private config, so both routes exist. \"launch\" stays the shipped default because it fails closed: the model is pinned in the private opencode.json's top-level `model` field (provider/model syntax) and any request for a different model is rejected before a prompt is sent (ENGINE_MODEL_SWITCH_UNSUPPORTED) instead of being silently answered by another model. Switch to \"session-config\" only when per-session switching is actually wanted; pack.ts already branches on this field."
+  },
+  "headerEnvironmentPrefix": "PNP_OPENCODE_HEADER_",
+  "timeouts": {
+    "requestMs": 30000,
+    "cancelGraceMs": 2000,
+    "cancelAckMs": 1000
+  },
+  "capabilityEvidence": "probed"
 }

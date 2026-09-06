@@ -1,11 +1,11 @@
 {
   "kind": "delivery-verification",
-  "contractVersion": "1.0.0",
-  "recordedOn": "2026-09-05",
+  "contractVersion": "1.1.0",
+  "recordedOn": "2026-09-07",
   "environment": {
-    "platform": "linux",
+    "platform": "win32",
     "architecture": "x64",
-    "node": "v22.16.0",
+    "node": "v24.19.0",
     "typescript": "5.8.3",
     "targetPlatform": "win32",
     "targetNode": "v24.19.0"
@@ -15,10 +15,10 @@
       "id": "common-unit",
       "status": "passed",
       "command": "cd code && node scripts/test.mjs unit",
-      "passed": 36,
+      "passed": 274,
       "failed": 0,
-      "skipped": 0,
-      "evidence": "logs/unit.tap"
+      "skipped": 1,
+      "scope": "Common framework, HTTP/SSE contracts, ACP driver, OpenCode pack and Windows ProcessHost tests"
     },
     {
       "id": "module-boundaries",
@@ -27,63 +27,64 @@
       "evidence": "logs/boundaries.txt"
     },
     {
-      "id": "core-types",
+      "id": "full-typecheck-build-http",
       "status": "passed",
-      "scope": "Contracts, Core, SQLite Worker, Runtime, Registry, ConfiguredIntegration, AssetResolver and selected unit tests; excludes Fastify/main and ACP SDK integration",
-      "compiler": "global TypeScript 5.8.3 with installed Node declarations",
-      "evidence": "logs/core-typecheck.txt"
+      "scope": "Complete TypeScript project, Fastify gateway, ACP SDK integration and HTTP/SSE contract tests",
+      "compiler": "project TypeScript 5.8.3"
     },
     {
-      "id": "npm-resolution",
-      "status": "blocked",
-      "reason": "Registry DNS lookup returned EAI_AGAIN. No fabricated package-lock is included.",
-      "evidence": "logs/npm-resolution.txt"
+      "id": "dependency-lock",
+      "status": "passed",
+      "scope": "package-lock.json present and npm dependencies installed"
     },
     {
       "id": "foundation-gate",
-      "status": "blocked",
-      "reason": "Host Node differs from pinned target and real dependency lock is absent."
-    },
-    {
-      "id": "full-typecheck-build-http",
-      "status": "not_run",
-      "reason": "Project npm dependencies unavailable."
+      "status": "passed",
+      "scope": "Manifest, dependencies, Node 24, typecheck, unit/contract tests and boundaries"
     },
     {
       "id": "windows-job-helper",
-      "status": "not_run",
-      "reason": "No Windows execution environment."
+      "status": "passed",
+      "scope": "Windows native helper compilation and ProcessHost lifecycle tests"
     },
     {
       "id": "node24-target",
-      "status": "not_run",
-      "reason": "Pinned Node binary unavailable in this environment."
+      "status": "passed",
+      "scope": "Node v24.19.0 target runtime"
     },
     {
-      "id": "real-harnesses",
-      "status": "not_run",
-      "reason": "Engine implementation work belongs to A/B; no real engine claim is made."
+      "id": "opencode-lock",
+      "status": "passed",
+      "scope": "opencode-windows-x64@1.18.29 official npm tarball",
+      "sha256": "19eca6cdead9c67cce26fdc2db165980318edb7318c8c964dfc2ebffe03bb472"
+    },
+    {
+      "id": "real-opencode-contract-1.1",
+      "status": "passed",
+      "passed": 14,
+      "failed": 0,
+      "scope": "Windows native OpenCode 1.18.29, real gateway/ACP/process host, local mock model, permissions, file tool, cancellation, SSE and session lifecycle"
     },
     {
       "id": "internal-network",
       "status": "not_run",
-      "reason": "C integration and authorized internal environment are required."
+      "reason": "C integration, authorized internal environment and credentials supplied outside the repository are required."
     },
     {
       "id": "release-gate",
       "status": "blocked",
-      "evidence": "logs/release-gate.json"
+      "reason": "Pi implementation/installer lock and per-engine internal acceptance evidence remain absent."
     },
     {
-      "id": "script-syntax",
+      "id": "strip-only-and-script-boundaries",
       "status": "passed",
-      "scope": "Node --check for all scripts/*.mjs and VERIFY.mjs; excludes Windows C#/PowerShell execution."
+      "scope": "Source-only packaging allowlist, script syntax and ownership boundaries"
     }
   ],
   "externalActions": {
     "githubPush": false,
+    "giteePush": false,
     "internalServiceCalls": false
   },
-  "qualification": "Source-delivery package with implemented common framework; not a certified competition release.",
-  "codeTreeSha256": "7ed60da2c5e31d9489572d3a2650c157831ffffa814fd75d57e0ba87471d4d03"
+  "qualification": "Common framework and required A-line OpenCode/ACP source implementation are verified locally; Pi and authorized per-engine internal acceptance still block a certified competition release."
 }
