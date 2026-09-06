@@ -342,8 +342,8 @@
       "path": "code/src/drivers/acp/channel.ts",
       "owner": "A",
       "category": "实现源码",
-      "bytes": 32617,
-      "sha256": "5a346080f454c0322d8bd1ac16e17b908d5f5caafa87492d521518b454d8dcdd"
+      "bytes": 32816,
+      "sha256": "6c8747966ac8878479d36339717f165217b4f7c6315bfa20d073c86fb3e4d08c"
     },
     {
       "path": "code/src/drivers/acp/json.ts",
@@ -657,8 +657,8 @@
       "path": "code/tests/adapters/acp/permission.test.ts",
       "owner": "A",
       "category": "测试代码",
-      "bytes": 11020,
-      "sha256": "26eba00786a5693ec74c10dd6aebb1c5cf66b5e3e5e16bf28cecd5676d47b66e"
+      "bytes": 11329,
+      "sha256": "6a8346d22a76c2be3256c65c5a169746992db33d483d3d34c93f11aeda4c9383"
     },
     {
       "path": "code/tests/adapters/acp/projection.test.ts",
@@ -804,8 +804,8 @@
       "path": "docs/engines/opencode.md",
       "owner": "A",
       "category": "入口与配置",
-      "bytes": 23906,
-      "sha256": "89ab1bf94d7c44d7d9dc67fb4e268077e3ba1d1501bf1ccf167cf3f54dacd233"
+      "bytes": 27598,
+      "sha256": "27baad71a467b057c8cb6c9ce37c50a6dbe7997991e90a95af59c1245ebb5818"
     },
     {
       "path": "docs/engines/pi.md",

@@ -268,6 +268,9 @@ export class AcpSessionChannel implements EngineSessionChannel {
         payload: toJson({
           toolCallId: call.toolCallId, title: call.title ?? null, name: call.name ?? null, kind: call.kind ?? null,
           locations: call.locations ?? null, rawInput: call.rawInput ?? null,
+          // OpenCode puts the proposed diff here (type "diff" with oldText/newText), not in rawInput;
+          // an approver deciding on an edit needs it.
+          content: call.content ?? null,
           options: params.options.map((option) => ({ optionId: option.optionId, name: option.name, kind: option.kind })),
         }),
       });

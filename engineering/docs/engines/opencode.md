@@ -141,6 +141,14 @@ config/engines/opencode.json#redirect.variables:
 
 默认保持 `"engine-default"`：打开引擎侧提问是一个部署决策，不是网关替运维方做的默认。
 
+`"ask"` 路线在真实 1.18.29 二进制（Linux）上实跑过一次 `write` 工具，观察到的时序与载荷（probed）：
+
+1. `tool_call`（`status: pending`，`rawInput: {}`）→ `tool_call_update`（`in_progress`，`rawInput: {filePath, content}`，`locations`）；
+2. **然后**才来 `session/request_permission`：`toolCall.title` 是目标文件路径，`kind: "edit"`，`rawInput: {filepath, diff}`，`content: [{type:"diff", path, oldText, newText}]`，选项 `allow_once / allow_always / reject_once`。驱动把 `content` 一并放进交互载荷，审批方看得到 diff；驱动从不选 `allow_always`。
+3. 选 `allow_once` 后，引擎向客户端发 `fs/write_text_file`（尽管客户端在 `initialize` 里声明了 `writeTextFile: false`）。驱动未实现该方法，SDK 以 method-not-found 拒绝，引擎随即**自行落盘**并报 `tool_call_update: completed`（"Wrote file successfully."），文件内容正确。引擎会在 stderr 打一段 Bun 栈，属噪声。
+
+`reject_once` 与 `bash: "ask"` 的实际行为未观察；Windows 上整条路线未观察。
+
 ## 5. 模型注入策略：`launch`
 
 ACP 的 `session/prompt` 请求没有模型字段；驱动的 `AcpModelPolicy` 有两种形态：`session-config`（靠 `NewSessionResponse.configOptions` 里 `category: "model"` 的选择器，配合 `session/set_config_option`）与 `launch`（启动时钉死，任何不匹配的模型在发 Prompt 前被拒，`ENGINE_MODEL_SWITCH_UNSUPPORTED`）。
@@ -181,7 +189,8 @@ ACP 的 `session/prompt` 请求没有模型字段；驱动的 `AcpModelPolicy` �
 | 文本轮次的 update 类型：`available_commands_update` → `agent_message_chunk`，prompt 响应 `stopReason: "end_turn"` 带 usage | probed（真实二进制，Linux） | 实跑 | 供驱动侧参考，本 Pack 无需改动 |
 | 全局技能路径 `~/.config/opencode/skills/` | declared | opencode 文档 | Windows 上的实际落点未验证 |
 | `instructions` 配置数组接受任意文件路径 | declared | opencode 文档 | 未验证 |
-| 权限：默认全允许；`"permission": {"edit":"ask","bash":"ask"}` 才触发 `session/request_permission` | declared | opencode 文档 | ACP 上的实际提问未观察 |
+| 权限：默认全允许；`"permission": {"edit":"ask","bash":"ask"}` 才触发 `session/request_permission` | probed（真实二进制，Linux） | 实跑：`edit: ask` 下 `write` 触发提问，载荷含 diff，见 §4.2 | `bash: ask`、`reject_once`、Windows 未观察 |
+| 网关 → 进程宿主 → ACP 驱动 → 真实引擎 → 模型服务（mock）整条链路 | probed（真实二进制，Linux） | `npm run e2e -- --engine opencode`，见 §11 | Windows 腿由 CI `engine-smoke` 作业给出证据 |
 | 可执行文件解析顺序、平台感知校验与错误码 | probed（本仓库代码，假文件系统） | `tests/adapters/opencode/executable.test.ts`（13 例） | 纯逻辑测试，不涉及真实二进制 |
 | 私有配置不落盘凭据、不写用户目录 | probed（本仓库代码，真实临时目录） | `native-config.test.ts`（17 例）、`assets.test.ts`（4 例） | 断言序列化文本不含明文密钥、不含 `$VAR` |
 | Pack → 驱动接缝（launch 请求、私有配置、握手） | probed（假 ACP 对端） | `pack.test.ts`（3 例） | 假引擎，不是真实 OpenCode 进程 |
@@ -195,7 +204,7 @@ ACP 的 `session/prompt` 请求没有模型字段；驱动的 `AcpModelPolicy` �
 3. **AVX2 与 baseline 包的选择**：`opencode-windows-x64-baseline` 只在 CPU 无 AVX2 时被 postinstall 选中，本 Pack 只是把它列进探测顺序，没有真机对照。
 4. **Windows 上的技能扫描落点**：`OPENCODE_CONFIG` 只管配置文件；技能仍依赖 config home 的猜测（`<home>/.config` 与 XDG 两份镜像），真机上到底认哪一份未知。
 5. **非 Bearer scheme 的 `Authorization`**：走 `options.headers` 的路线没有端到端跑过。
-6. **`nativePermissions: "ask"` 在 ACP 上真正触发 `session/request_permission`**：配置字段的写入有测试，引擎侧的实际行为没有观察过。
+6. **`nativePermissions: "ask"` 在 Windows 上的行为**：Linux 上已观察到 `edit: ask` 触发 `session/request_permission`（§4.2）；`bash: ask`、拒绝分支与 Windows 平台仍未观察。
 7. **provider 包是否真的完全内置**：Linux 上没观察到网络拉取，但没有做隔离网络的对照实验；Windows 上完全未知。
 8. **`NODE_EXTRA_CA_CERTS` 对 Bun 编译产物是否生效**：文档层面成立，未实测。
 
@@ -259,3 +268,17 @@ node --experimental-strip-types --test tests/adapters/opencode/pack.test.ts     
 覆盖的关键点：exe 默认解析与每条 well-known 路径（含 `${APPDATA}` 展开、未设置变量则跳过）、非 Windows 平台接受 POSIX 绝对路径而 Windows 目标仍强制 `.exe`、`{env:}` 令牌且不出现 `$VAR` 值、provider/model 的 `name` 字段、`OPENCODE_CONFIG` 指向私有文件且三份副本逐字节一致、`nativePermissions` 两种取值、配置文件不含明文凭据。
 
 编写测试时注意：`scripts/test.mjs` 走 Node 官方 `--experimental-strip-types`，它是纯词法剥离器，比 `tsc` 笨得多。不要用 `declare` 之类会被类型擦除器误读的标识符做方法名（`private declare(...)` 会被读成 TS 的 `declare` 修饰符，剥离后是非法 JS）。`scripts/strip-only-check.mjs` 会对 `src/**` 逐文件复现这个变换并只做解析，专门守住这一类问题。
+
+## 11. 端到端冒烟：真实二进制走完整条网关链路
+
+`scripts/e2e/`（`npm run e2e -- --engine opencode`）把整条链路真的跑一遍：网关进程（`dist/main.js`）→ 进程宿主 → ACP 驱动 → **真实 `opencode` 二进制** → 模型服务。只有模型服务是 mock（`scripts/e2e/mock-model-server.mjs`，OpenAI Chat Completions 形态，绑定 127.0.0.1，按最新一条用户消息选剧本，无工具的请求——包括 OpenCode 的标题生成旁路调用——永远只回纯文本）。北向客户端只用 `fetch` 打通用网关协议。
+
+Linux 上对 1.18.29 的实跑结果（probed；网关**不**在 development 模式，`PNP_INTEGRATION=configured`）：13/13 通过，含
+
+- 不带 `model` 的 `prompt_async` 返回 204，并在 provider 的默认模型上完成（这条曾经是 409 `ENGINE_MODEL_SWITCH_UNSUPPORTED`，根因在 Core 把调用方的空选择原样交给驱动，已修）；
+- 文本轮次：最终 assistant 消息 `finish: "stop"`，以 `step-finish` part 结尾，正文含标记，证明请求真的到达了模型服务；
+- 工具轮次：assistant 消息 `finish: "tool-calls"` 带 `write`，随后 `role: "tool"` 消息，最后 `finish: "stop"`，工作区里出现 `e2e-output.txt` 且内容正确；
+- 中断：对一个在模型侧挂住的轮次 `POST /session/{id}/abort` → 200，`prompt_async` 以 409 `EXECUTION_CANCELLED` 收尾，最终消息 `finish: "cancelled"`、原生 `stopReason: "cancelled"`，会话回到 `idle`，第一次尝试即命中；
+- 会话删除后 404；第二个会话在同一进程内正常；SSE 事件序列合法；`hosts/*.json` 归属记录存在；工件里没有凭据（mock 的 Authorization 值被脱敏为 `[redacted]`）。
+
+CI 里 `engine-smoke` 作业以四条腿跑同一套：ubuntu/mock、ubuntu/opencode、windows/mock、windows/opencode，其中 windows/opencode 用 `npm install -g opencode-ai@1.18.29` 装出真实 `opencode.exe`，通过 `npm root -g` 定位。每条腿的工件（网关日志、模型请求日志、报告、归属记录、`/diagnostics`）随作业上传。Windows 腿的结论以 PR 上的 CI 结果为准；本文只声明 Linux 上的观察。

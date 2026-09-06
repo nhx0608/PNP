@@ -150,6 +150,8 @@ test("the request payload carries what the approver needs to decide", async () =
       toolCall: {
         toolCallId: "call-9", title: "Delete build output", name: "delete", kind: "delete",
         rawInput: { path: "dist" },
+        // The shape OpenCode 1.18.29 uses for an edit: the proposed change travels in `content`.
+        content: [{ type: "diff", path: "dist/manifest.txt", oldText: "keep", newText: "" }],
       },
       options: [
         { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
@@ -163,6 +165,7 @@ test("the request payload carries what the approver needs to decide", async () =
   assert.equal(payload["name"], "delete");
   assert.equal(payload["kind"], "delete");
   assert.deepEqual(payload["rawInput"], { path: "dist" });
+  assert.deepEqual(payload["content"], [{ type: "diff", path: "dist/manifest.txt", oldText: "keep", newText: "" }]);
   assert.deepEqual(payload["options"], [
     { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
     { optionId: "reject-once", name: "Reject", kind: "reject_once" },
