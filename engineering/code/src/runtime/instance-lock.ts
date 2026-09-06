@@ -6,7 +6,7 @@ import path from "node:path";
 import { PnpError } from "../core/errors.ts";
 import { bounded, deferred } from "./deadline.ts";
 import { JsonlDecoder } from "./jsonl.ts";
-import { bootTimeMs, helperCacheDirectory, windowsHelperCommand } from "./process-host.ts";
+import { baseEnvironment, bootTimeMs, helperCacheDirectory, windowsHelperCommand } from "./process-host.ts";
 
 interface LockOwner { pid: number; startedAt: string; }
 function errorCode(error: unknown): string | undefined {
@@ -68,10 +68,12 @@ export async function acquireProcessLifetimeLock(directory: string, timeoutMs = 
   // The supervisor source is a delivery artefact; a missing one degrades to the file lock.
   try { command = windowsHelperCommand(await helperCacheDirectory(directory)); }
   catch { return fileLock(); }
+  // The same vetted system environment the process host gives its supervisor: system identity and
+  // profile locations, no credentials. A bare seven-variable environment left Windows PowerShell
+  // silent for the whole 30 s budget on a real runner, so the guard never granted and every start
+  // quietly ran on the file lock.
   const child = spawn(command.executable, command.args, {
-    env: Object.fromEntries(["SystemRoot", "WINDIR", "SystemDrive", "PATH", "PATHEXT", "TEMP", "TMP"]
-      .flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]!]])),
-    windowsHide: true, shell: false, stdio: "pipe",
+    env: baseEnvironment(), windowsHide: true, shell: false, stdio: "pipe",
   });
   const result = deferred<{ ok?: boolean; code?: string; pid?: number; creationTime?: string }>();
   const decoder = new JsonlDecoder();

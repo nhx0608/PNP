@@ -250,7 +250,17 @@ export class LocalProcessHost implements ProcessHost {
           await handle.sync();
           await handle.close();
           handle = undefined;
-          await rename(temporary, recordPath);
+          // On Windows a rename over a record that a scanner or a reader holds open fails with EPERM
+          // or EBUSY for a few milliseconds. A record update that is silently lost is exactly what
+          // later reads as an unproven stop, so the replace is retried briefly before it is given up.
+          for (let attempt = 0; ; attempt += 1) {
+            try { await rename(temporary, recordPath); break; }
+            catch (error: unknown) {
+              const code = error instanceof Error && "code" in error ? error.code : undefined;
+              if (attempt >= 5 || (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES")) throw error;
+              await new Promise<void>((resolve) => setTimeout(resolve, 20 * 2 ** attempt));
+            }
+          }
         } finally {
           await handle?.close().catch(() => undefined);
           await unlink(temporary).catch(() => undefined);
@@ -400,7 +410,10 @@ export class LocalProcessHost implements ProcessHost {
             else if (event.type === "ready") {
               if (!launchCommitted || !Number.isInteger(event.windowsSessionId) || event.windowsSessionId !== record.windowsSessionId)
                 throw new PnpError("HOST_FAILURE", "Windows supervisor identity changed during launch.", 503);
-              if (Number.isInteger(event.pid) && event.pid! > 0) { record.enginePid = event.pid!; void save().catch(() => undefined); }
+              if (Number.isInteger(event.pid) && event.pid! > 0) {
+                record.enginePid = event.pid!;
+                void save().catch(() => note("[pnp] the engine process id could not be added to the ownership record\n"));
+              }
               launching = false;
               ready.resolve();
             }
