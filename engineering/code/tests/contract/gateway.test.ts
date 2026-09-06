@@ -19,7 +19,14 @@ test("original northbound create/prompt/message/status/delete contract", async (
     const created = await app.inject({ method: "POST", url: "/session", payload: { directory: dir } });
     assert.equal(created.statusCode, 200); // title is optional.
     const id = (created.json() as { id: string }).id;
-    assert.equal((await app.inject({ method: "POST", url: `/session/${id}/prompt_async`, payload: { parts: [{ type: "text", text: "hello" }] } })).statusCode, 400);
+    // model is optional: the integration provider resolves its configured default.
+    assert.equal((await app.inject({ method: "POST", url: `/session/${id}/prompt_async`, payload: { parts: [{ type: "text", text: "hello" }] } })).statusCode, 204);
+    // Unknown part types are dropped, but a prompt with nothing recognizable is still rejected.
+    assert.equal((await app.inject({ method: "POST", url: `/session/${id}/prompt_async`, payload: { parts: [{ type: "image", url: "x" }] } })).statusCode, 400);
+    assert.equal((await app.inject({ method: "POST", url: `/session/${id}/prompt_async`, payload: { parts: [{ type: "image", url: "x" }, { type: "text", text: "hello" }] } })).statusCode, 204);
+    // The "provider/model" shorthand is accepted alongside the object form.
+    assert.equal((await app.inject({ method: "POST", url: `/session/${id}/prompt_async`, payload: { parts: [{ type: "text", text: "hi" }], model: "test/test" } })).statusCode, 204);
+    assert.equal((await app.inject({ method: "POST", url: `/session/${id}/prompt_async`, payload: { parts: [{ type: "text", text: "hi" }], model: "nope" } })).statusCode, 400);
     const response = await app.inject({
       method: "POST", url: `/session/${id}/prompt_async`,
       payload: { parts: [{ type: "text", text: "hello" }], model: { providerID: "test", modelID: "test" } },

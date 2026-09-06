@@ -6,7 +6,7 @@ import path from "node:path";
 import { resolveAsset } from "../../src/assets/resolver.ts";
 import { selectEngine, loadEngine } from "../../src/registry/index.ts";
 import { ConfiguredIntegration } from "../../src/integration/configured/provider.ts";
-import { loadIntegration } from "../../src/integration/index.ts";
+import { loadIntegration, probeIntegration } from "../../src/integration/index.ts";
 import type { Session } from "../../src/contracts/index.ts";
 
 test("engine selection requires explicit input and rejects conflicting selectors", async () => {
@@ -43,12 +43,14 @@ test("model profiles reject unapproved models, credentials in URL, and insecure 
   await assert.rejects(create("file://localhost/v1").prepare(input));
   await assert.rejects(create("https://user:secret@example.test/v1").prepare(input));
   const ctx = await create("http://127.0.0.1:9000/v1").prepare(input);
-  assert.equal((await ctx.authorize({ kind: "permission", operation: "file.write", payload: {} })).effect, "deny");
+  // Competition default is allow (see docs/engineering-review-2.md §3); an explicit deny still
+  // wins whenever config supplies one, which the "no fallback" test below covers.
+  assert.equal((await ctx.authorize({ kind: "permission", operation: "file.write", payload: {} })).effect, "allow");
   const controller = new AbortController(); controller.abort();
   await assert.rejects(create("https://example.test/v1").prepare({ ...input, signal: controller.signal }));
 });
 
-test("configured integration is explicit, development-only, strict, and has no fallback", async () => {
+test("configured integration is explicit and strict, and mock never substitutes for a real engine", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "pnp-configured-"));
   const profile = path.join(dir, "configured.json");
   try {
@@ -57,10 +59,23 @@ test("configured integration is explicit, development-only, strict, and has no f
         protocol: "openai-chat", headerEnvironment: { Authorization: "TEST_AUTH" } }],
       tools: [], policy: { default: "deny", operations: { "file.read": "allow" } },
     }));
-    await assert.rejects(loadIntegration({ kind: "configured", development: false, engineDevelopmentOnly: false,
-      configuredProfile: profile }), { code: "CONFIGURED_FORBIDDEN" });
+    // configured is usable outside development: it is the only implemented model path for a real engine.
+    const production = await loadIntegration({ kind: "configured", development: false, engineDevelopmentOnly: false,
+      configuredProfile: profile, environment: { TEST_AUTH: "secret" } });
+    assert.equal(production.id, "configured");
     await assert.rejects(loadIntegration({ kind: "configured", development: true, engineDevelopmentOnly: false }),
       { code: "INTEGRATION_CONFIG_INVALID" });
+    // A real engine must never fall back to mock, in development or otherwise.
+    await assert.rejects(loadIntegration({ kind: "mock", development: true, engineDevelopmentOnly: false }),
+      { code: "MOCK_FORBIDDEN" });
+    await assert.rejects(loadIntegration({ kind: "mock", development: false, engineDevelopmentOnly: true }),
+      { code: "MOCK_FORBIDDEN" });
+    assert.equal((await loadIntegration({ kind: "mock", development: true, engineDevelopmentOnly: true })).id, "mock");
+    // The default choice follows the engine, and the unimplemented internal provider fails at boot, not at first prompt.
+    assert.equal((await loadIntegration({ kind: undefined, development: true, engineDevelopmentOnly: true })).id, "mock");
+    const fallback = await loadIntegration({ kind: undefined, development: false, engineDevelopmentOnly: false });
+    assert.equal(fallback.id, "internal");
+    await assert.rejects(probeIntegration(fallback), { code: "INTEGRATION_UNAVAILABLE" });
     const configured = await loadIntegration({ kind: "configured", development: true, engineDevelopmentOnly: false,
       configuredProfile: profile, environment: { TEST_AUTH: "secret" } });
     assert.equal(configured.id, "configured");

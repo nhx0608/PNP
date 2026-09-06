@@ -100,7 +100,11 @@ export async function loadIntegration(input: {
     }
     return new MockIntegration();
   }
-  if (!input.development) throw new PnpError("CONFIGURED_FORBIDDEN", "Configured integration requires development mode.", 400);
+  // Unlike mock, configured carries no development-mode gate: it reads its profile from an
+  // absolute path, references secrets only by environment variable name, and restricts model
+  // endpoints to https or loopback — the same trust model as the internal provider. A real
+  // (non-mock) engine must have a usable model path in a non-development deployment, and
+  // configured is currently the only one that is actually implemented.
   if (input.configuredProfile === undefined || !path.isAbsolute(input.configuredProfile)) {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "PNP_CONFIGURED_PROFILE must be an absolute path.", 400);
   }
@@ -142,4 +146,35 @@ export async function loadIntegration(input: {
     return { effect: effect as AuthorizationDecision["effect"], reasonCode: configured === undefined ? "CONFIGURED_DEFAULT" : "CONFIGURED_OPERATION" };
   };
   return new ConfiguredIntegration(models, tools, decide, environment);
+}
+
+/**
+ * A provider may optionally implement a startup reachability probe. `IntegrationProvider` itself
+ * is not extended with this method (that interface lives in ../contracts/index.ts, outside this
+ * package's edit boundary); callers that want to probe use this local, duck-typed extension.
+ */
+export interface ProbeableIntegration extends IntegrationProvider {
+  probe?(): Promise<void>;
+}
+
+/**
+ * Startup-time reachability check for the loaded integration provider. Call this once, after
+ * `loadIntegration()` and before the gateway starts listening, so an unusable provider fails fast
+ * at boot instead of on the first prompt (see docs/engineering-review-2.md §3 and §6.3).
+ *
+ * `InternalIntegration` has no real implementation yet — its `prepare()` unconditionally throws
+ * 503 — so it is always reported as unavailable here, regardless of whether a `probe` method is
+ * ever added to it. Other providers are probed via their optional `probe()` method, if present;
+ * providers without one (e.g. `MockIntegration`) are treated as available.
+ *
+ * Wiring note for main.ts: call `await probeIntegration(provider)` right after
+ * `await loadIntegration(...)` and before `app.listen(...)`; let a thrown PnpError abort startup
+ * the same way other boot-time failures already do.
+ */
+export async function probeIntegration(provider: IntegrationProvider): Promise<void> {
+  if (provider instanceof InternalIntegration) {
+    throw new PnpError("INTEGRATION_UNAVAILABLE", "Internal model, tool and policy integration is not implemented; refusing to start.", 503);
+  }
+  const probeable = provider as ProbeableIntegration;
+  if (typeof probeable.probe === "function") await probeable.probe();
 }

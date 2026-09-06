@@ -22,12 +22,16 @@ export interface Operations {
   appendMessage: { input: { sessionId: string; runId: string; message: Message }; output: null };
   messages: { input: { sessionId: string }; output: Message[] };
   appendEvent: { input: { type: string; properties: { [key: string]: Json } }; output: PublicEvent };
-  finishRun: { input: { runId: string; state: TerminalState; message: Message; quiescent: boolean; errorCode?: string; nativeStopReason?: string; taskOutcome?: "unknown" | "succeeded" | "failed" }; output: Run };
+  /** Replays committed events for a reconnecting subscriber; it never mutates the journal. */
+  eventsSince: { input: { afterSequence: number; limit?: number }; output: PublicEvent[] };
+  finishRun: { input: { runId: string; state: TerminalState; message: Message; quiescent: boolean; errorCode?: string; nativeStopReason?: string; taskOutcome?: "unknown" | "succeeded" | "failed"; nativeResumeRequired?: boolean }; output: Run };
   beginDelete: { input: { sessionId: string }; output: null };
   confirmStopped: { input: { sessionId: string }; output: null };
   diagnostics: { input: null; output: { sessions: number; runs: number; interrupted: number; blocked: number } };
   deleteSession: { input: { sessionId: string }; output: null };
   getRun: { input: { runId: string }; output: Run | null };
+  /** Frees the key of a provably terminal run so a retry is possible; it never replays the old run. */
+  releaseIdempotencyKey: { input: { runId: string }; output: boolean };
   recover: { input: null; output: number };
   createInteraction: { input: InteractionRow; output: null };
   listInteractions: { input: { kind: "question" | "permission" }; output: InteractionRow[] };
@@ -43,5 +47,7 @@ export type WorkerReply =
 export interface StorageDiagnostic {
   category: "sqlite" | "worker" | "timeout";
   code?: string;
+  /** Sanitized failure detail; it carries no credential because the worker never receives one. */
+  detail?: string;
   outcome: "known-failed" | "unknown";
 }

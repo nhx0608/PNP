@@ -97,15 +97,21 @@ test("failed engine leaves a queryable error trajectory", async () => {
     assert.equal((await f.core.getSession(f.session.id)).status, "idle");
   } finally { await f.close(); }
 });
-test("unproven process termination blocks readiness and the session", async () => {
+test("unproven process termination fences its own session and leaves the gateway serving", async () => {
   const f = await fixture({ stuck: true, terminateQuiescent: false }, 60);
   try {
     await assert.rejects(f.core.run(f.session.id, prompt));
-    assert.equal(f.core.readiness, false);
+    // Uncertainty is a property of this session, not of the process.
+    assert.equal(f.core.readiness, true);
+    await assert.rejects(f.core.run(f.session.id, prompt), { code: "SESSION_UNAVAILABLE" });
+    const diagnostics = await f.core.diagnostics();
+    assert.equal(diagnostics.degraded, true);
+    assert.deepEqual(diagnostics.fencedSessions.map((entry) => entry.id), [f.session.id]);
     assert.equal((await f.core.getSession(f.session.id)).status, "busy");
     assert.equal((await f.core.getSession(f.session.id)).recovery, "blocked");
     assert.equal((await f.core.messages(f.session.id)).at(-1)?.info?.finish, "interrupted");
     await assert.rejects(f.core.close(), { code: "EXECUTION_UNCERTAIN" });
+    // Shutdown still refuses to claim a clean stop it cannot prove.
   } finally {
     await f.store.close();
     await rm(f.directory, { recursive: true, force: true });

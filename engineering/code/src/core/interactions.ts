@@ -19,7 +19,7 @@ export class InteractionBroker {
   private readonly store: StateStore;
   private readonly journal: EventJournal;
   private readonly timeoutMs: number;
-  constructor(store: StateStore, journal: EventJournal, timeoutMs = 120_000) {
+  constructor(store: StateStore, journal: EventJournal, timeoutMs = 45_000) {
     this.store = store; this.journal = journal; this.timeoutMs = timeoutMs;
   }
   beginRun(runId: string): void {
@@ -36,7 +36,7 @@ export class InteractionBroker {
         continue;
       }
       this.pending.delete(id);
-      waiter.resolve({ decision: "deny" });
+      waiter.resolve({ decision: "deny", source: "cancelled", reasonCode: "RUN_ENDED" });
     }
     await Promise.all(claimed);
     await this.store.call("expireInteractions", { runId });
@@ -46,7 +46,9 @@ export class InteractionBroker {
     signal: AbortSignal; redactor: Redactor;
   }): Promise<InteractionResponse> {
     const { request, policy, signal } = input;
-    if (signal.aborted || !this.liveRuns.has(input.runId)) return { decision: "deny" };
+    if (signal.aborted || !this.liveRuns.has(input.runId)) {
+      return { decision: "deny", source: "cancelled", reasonCode: "RUN_NOT_ACTIVE" };
+    }
     const id = `interaction_${randomUUID()}`;
     const payload = input.redactor.json(request.payload);
     await this.store.call("createInteraction", {
@@ -55,15 +57,18 @@ export class InteractionBroker {
     });
     if (signal.aborted || !this.liveRuns.has(input.runId)) {
       await this.store.call("expireInteractions", { runId: input.runId });
-      return { decision: "deny" };
+      return { decision: "deny", source: "cancelled", reasonCode: "RUN_NOT_ACTIVE" };
     }
     const choice = deferred<InteractionResponse>();
     this.pending.set(id, { runId: input.runId, kind: request.kind, state: "waiting", resolve: choice.resolve });
-    const onAbort = () => choice.resolve({ decision: "deny" });
+    const onAbort = () => choice.resolve({ decision: "deny", source: "cancelled", reasonCode: "RUN_CANCELLED" });
     signal.addEventListener("abort", onAbort, { once: true });
     try {
       if (policy.effect === "deny" || (request.kind === "permission" && policy.effect === "allow")) {
-        const response: InteractionResponse = { decision: policy.effect === "allow" ? "allow" : "deny" };
+        // An organisation decision is final: it is never published as an overridable pending request.
+        const response: InteractionResponse = {
+          decision: policy.effect === "allow" ? "allow" : "deny", source: "policy", reasonCode: policy.reasonCode,
+        };
         await this.store.call("resolveInteraction", { id, response: response as unknown as Json });
         await this.journal.publish(`${request.kind}.resolved`, {
           sessionID: input.sessionId, runID: input.runId, id, decision: response.decision,
@@ -77,12 +82,18 @@ export class InteractionBroker {
         ...body, sessionID: input.sessionId, runID: input.runId, id,
         ...(request.kind === "permission" ? { permission: request.operation } : {}),
       });
-      if (signal.aborted) choice.resolve({ decision: "deny" });
+      if (signal.aborted) choice.resolve({ decision: "deny", source: "cancelled", reasonCode: "RUN_CANCELLED" });
       let answer: InteractionResponse;
       try { answer = await bounded(choice.promise, this.timeoutMs); }
-      catch { answer = { decision: "deny" }; }
+      catch { answer = { decision: "deny", source: "timeout", reasonCode: "INTERACTION_TIMEOUT" }; }
       const waiter = this.pending.get(id);
       if (waiter?.state === "waiting") await this.settle(id, waiter, answer);
+      // Every asked request gets a matching resolution event, so a subscriber never stops at `asked`.
+      await this.journal.publish(`${request.kind}.resolved`, {
+        sessionID: input.sessionId, runID: input.runId, id, decision: answer.decision,
+        ...(answer.source === undefined ? {} : { source: answer.source }),
+        ...(answer.reasonCode === undefined ? {} : { reasonCode: answer.reasonCode }),
+      });
       return answer;
     } finally {
       signal.removeEventListener("abort", onAbort);
@@ -91,9 +102,11 @@ export class InteractionBroker {
   }
   async list(kind: "permission" | "question") {
     return (await this.store.call("listInteractions", { kind })).filter((row) => this.pending.has(row.id)).map((row) => ({
-      id: row.id, sessionID: row.sessionId, created_at: row.createdAt,
       ...(typeof row.payload === "object" && row.payload !== null && !Array.isArray(row.payload) ? row.payload : {}),
       ...(kind === "permission" ? { permission: row.operation } : {}),
+      // Gateway identity comes last: an engine payload carrying its own id must not replace the
+      // identifier a client has to send back, which is the same order the published event uses.
+      id: row.id, sessionID: row.sessionId, created_at: row.createdAt,
     }));
   }
   async reply(id: string, kind: "permission" | "question", response: InteractionResponse): Promise<void> {
@@ -103,7 +116,7 @@ export class InteractionBroker {
       throw new PnpError("INTERACTION_RESOLVED", "Interaction has already been resolved.", 409);
     }
     if (kind === "question" && response.decision === "allow") throw new PnpError("VALIDATION_ERROR", "Question requires an answer.", 400);
-    await this.settle(id, waiter, response);
+    await this.settle(id, waiter, { ...response, source: "user" });
   }
   private settle(id: string, waiter: NonNullable<ReturnType<InteractionBroker["pending"]["get"]>>,
     response: InteractionResponse): Promise<void> {
@@ -114,7 +127,8 @@ export class InteractionBroker {
       waiter.resolve(response);
     }).catch((error: unknown) => {
       this.pending.delete(id);
-      waiter.resolve({ decision: "deny" });
+      // The decision could not be recorded, so it cannot be honoured as an approval.
+      waiter.resolve({ decision: "deny", reasonCode: "INTERACTION_NOT_RECORDED" });
       throw error;
     });
     waiter.settlement = settlement;

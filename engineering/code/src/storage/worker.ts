@@ -2,7 +2,7 @@ import { parentPort, workerData } from "node:worker_threads";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { Message, Run, Session } from "../contracts/index.ts";
+import type { Json, Message, Run, Session } from "../contracts/index.ts";
 import type { InteractionRow, Operations, StorageDiagnostic, WorkerReply, WorkerRequest } from "./protocol.ts";
 import { PnpError } from "../core/errors.ts";
 
@@ -11,7 +11,9 @@ const port = parentPort;
 const { databasePath } = workerData as { databasePath: string };
 mkdirSync(dirname(databasePath), { recursive: true });
 const db = new DatabaseSync(databasePath);
-db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=1000;");
+// Five seconds of busy waiting: on Windows an antivirus or sync client routinely holds the file for
+// more than a second. Durability stays at FULL; long answers are made cheap by amortized checkpoints.
+db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
 const version = Number(db.prepare("PRAGMA user_version").get()?.user_version);
 if (version > 1) throw new Error("Database schema is newer than this executable.");
 if (version === 0) {
@@ -156,6 +158,16 @@ function handle(request: WorkerRequest): unknown {
         .run(sessionId, value.type, JSON.stringify(value.properties));
       return { sequence: Number(result.lastInsertRowid), ...value };
     }
+    case "eventsSince": {
+      const value = input<"eventsSince">(request);
+      const limit = Math.min(Math.max(Math.trunc(value.limit ?? 256), 1), 1000);
+      return db.prepare("SELECT sequence,type,properties FROM events WHERE sequence>? ORDER BY sequence LIMIT ?")
+        .all(Math.max(Math.trunc(value.afterSequence), 0), limit)
+        .map((row) => ({
+          sequence: Number(row.sequence), type: String(row.type),
+          properties: JSON.parse(String(row.properties)) as { [key: string]: Json },
+        }));
+    }
     case "finishRun": {
       const value = input<"finishRun">(request);
       return transaction(() => {
@@ -172,7 +184,11 @@ function handle(request: WorkerRequest): unknown {
         saveRun(current);
         const parent = session(current.sessionId);
         parent.status = value.quiescent ? "idle" : "busy";
-        parent.recovery = value.quiescent ? "ready" : "blocked";
+        // A turn that only stopped because the gateway forced termination is not a warm channel:
+        // the next open has to resume the native session instead of assuming it is still attached.
+        parent.recovery = value.quiescent
+          ? (value.nativeResumeRequired === true && parent.native !== undefined ? "needs-native-resume" : "ready")
+          : "blocked";
         parent.updatedAt = current.finishedAt;
         saveSession(parent);
         return current;
@@ -209,6 +225,15 @@ function handle(request: WorkerRequest): unknown {
     }
     case "getRun":
       return parse<Run>(db.prepare("SELECT document FROM runs WHERE id=?").get(input<"getRun">(request).runId));
+    case "releaseIdempotencyKey": {
+      const current = run(input<"releaseIdempotencyKey">(request).runId);
+      // Only a proven terminal state frees the key. running, cancelling and interrupted keep it so that
+      // an unverified stop can never be retried behind the same key.
+      if (!["failed", "cancelled"].includes(current.state) || current.idempotencyKey === undefined) return false;
+      delete current.idempotencyKey;
+      db.prepare("UPDATE runs SET idempotency_key=NULL, document=? WHERE id=?").run(JSON.stringify(current), current.id);
+      return true;
+    }
     case "recover": {
       return transaction(() => {
         const rows = db.prepare("SELECT document FROM runs WHERE state IN ('running','cancelling')").all();
@@ -290,18 +315,28 @@ port.on("message", (request: WorkerRequest) => {
     const rawErrcode = typeof error === "object" && error !== null && "errcode" in error
       && typeof error.errcode === "number" && Number.isSafeInteger(error.errcode) ? error.errcode : undefined;
     const sqliteFailure = /^(?:ERR_)?SQLITE_[A-Z0-9_]+$/.test(rawCode) || rawErrcode !== undefined;
+    const rawMessage = error instanceof Error ? error.message : "";
+    // SQLITE_CONSTRAINT is 19; extended results keep it in the low byte. A rejected statement never
+    // applied, so it is an expected state conflict rather than evidence that storage is unavailable.
+    const constraint = /CONSTRAINT/i.test(rawCode) || /constraint failed/i.test(rawMessage)
+      || (rawErrcode !== undefined && rawErrcode % 256 === 19);
     const readOnly = new Set<keyof Operations>(["getSession", "listSessions", "findRunByKey", "messages",
-      "diagnostics", "getRun", "listInteractions"]);
+      "diagnostics", "getRun", "listInteractions", "eventsSince"]);
     const diagnostic: StorageDiagnostic = {
       category: sqliteFailure ? "sqlite" : "worker",
       ...(sqliteFailure ? { code: `${rawCode || "SQLITE_ERROR"}${rawErrcode === undefined ? "" : `/${rawErrcode}`}` } : {}),
+      ...(rawMessage === "" ? {} : { detail: rawMessage.slice(0, 200) }),
       // A failed read cannot have committed a mutation. Write-side failures remain
       // unknown unless the transaction layer can prove rollback durably completed.
-      outcome: readOnly.has(request.op) ? "known-failed" : "unknown",
+      outcome: readOnly.has(request.op) || constraint ? "known-failed" : "unknown",
     };
-    reply = error instanceof PnpError
-      ? { id: request.id, ok: false, code: error.code, message: error.message, status: error.status }
-      : { id: request.id, ok: false, code: "STORAGE_ERROR", message: "Storage operation failed.", status: 503, diagnostic };
+    if (error instanceof PnpError) {
+      reply = { id: request.id, ok: false, code: error.code, message: error.message, status: error.status };
+    } else if (constraint) {
+      reply = { id: request.id, ok: false, code: "STATE_CONFLICT", message: "The requested state transition conflicts with stored state.", status: 409, diagnostic };
+    } else {
+      reply = { id: request.id, ok: false, code: "STORAGE_ERROR", message: "Storage operation failed.", status: 503, diagnostic };
+    }
   }
   port.postMessage(reply);
 });

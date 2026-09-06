@@ -14,12 +14,30 @@ export class ConfiguredIntegration implements IntegrationProvider {
   private readonly tools: readonly ToolBinding[];
   private readonly policy: (operation: string) => AuthorizationDecision;
   private readonly environment: NodeJS.ProcessEnv;
-  constructor(models: readonly ConfiguredModel[], tools: readonly ToolBinding[] = [], policy: (operation: string) => AuthorizationDecision = () => ({ effect: "deny", reasonCode: "DEFAULT_DENY" }), environment: NodeJS.ProcessEnv = process.env) {
+  // Competition default is allow; deny is reserved for policy that explicitly opts in (see
+  // config/configured.example.json). This does not weaken an explicit organizational deny: a
+  // policy function derived from actual config (loadIntegration) always wins over this default.
+  constructor(models: readonly ConfiguredModel[], tools: readonly ToolBinding[] = [], policy: (operation: string) => AuthorizationDecision = () => ({ effect: "allow", reasonCode: "COMPETITION_DEFAULT_ALLOW" }), environment: NodeJS.ProcessEnv = process.env) {
     this.models = models; this.tools = tools; this.policy = policy; this.environment = environment;
+  }
+  /** Optional startup probe (see `probeIntegration` in ../index.ts). Confirms the credential
+   *  environment variables referenced by the default model are currently resolvable, without
+   *  caching any resolved secret value — headers are still re-resolved fresh on every prepare(). */
+  async probe(): Promise<void> {
+    const [defaultModel] = this.models;
+    if (defaultModel === undefined) throw new PnpError("INTEGRATION_CONFIG_INVALID", "At least one model is required.", 503);
+    for (const variable of Object.values(defaultModel.headerEnvironment)) {
+      if (!this.environment[variable]) throw new PnpError("MODEL_AUTH_MISSING", "Required credential environment variable is absent.", 503);
+    }
   }
   async prepare(input: Parameters<IntegrationProvider["prepare"]>[0]): Promise<IntegrationContext> {
     if (input.signal.aborted) throw new PnpError("EXECUTION_CANCELLED", "Model preparation was cancelled.", 409);
-    const model = this.models.find((m) => m.selection.providerID === input.request.model.providerID && m.selection.modelID === input.request.model.modelID);
+    const requested = input.request.model;
+    // The gateway route sends this sentinel when the caller omitted `model`; pick the first
+    // configured model as the default rather than rejecting the request.
+    const wantsDefault = requested.providerID === "" && requested.modelID === "";
+    const model = wantsDefault ? this.models[0]
+      : this.models.find((m) => m.selection.providerID === requested.providerID && m.selection.modelID === requested.modelID);
     if (!model) throw new PnpError("MODEL_NOT_ALLOWED", "Requested model is not configured.", 403);
     const url = new URL(model.endpoint);
     if (!(url.protocol === "https:" || (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))) throw new PnpError("INSECURE_MODEL_ENDPOINT", "Non-local model transport requires TLS.", 400);

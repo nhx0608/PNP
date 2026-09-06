@@ -26,17 +26,20 @@ async function create(pack: EnginePack = new MockPack(), provider: IntegrationPr
 }
 async function waitFor(fn: () => Promise<boolean>) { for (let i=0;i<100;i++) { if (await fn()) return; await sleep(5); } assert.fail("condition not reached"); }
 
-test("late channel after startup timeout is terminated and execution remains fenced", async () => {
+test("late channel after startup timeout is terminated and its proof lifts the session fence", async () => {
   const pack = new MockPack(); const open = pack.open.bind(pack); let cleanup = 0;
   pack.open = async (input) => { await sleep(100); const channel = await open(input); channel.terminate = async () => { cleanup++; return { quiescent: true, method: "process-tree" }; }; return channel; };
   const f = await create(pack, new MockIntegration(), { openTimeoutMs: 20 });
   try {
     await assert.rejects(f.core.run(f.session.id, request));
-    assert.equal(f.core.readiness, false);
+    // The gateway itself is unharmed: only this session waits for evidence.
+    assert.equal(f.core.readiness, true);
+    await assert.rejects(f.core.run(f.session.id, request), { code: "SESSION_UNAVAILABLE" });
     assert.equal((await f.core.getSession(f.session.id)).recovery, "blocked");
     await sleep(130); assert.equal(cleanup, 1);
-    await assert.rejects(f.core.run(f.session.id, request), { code: "SERVICE_UNAVAILABLE" });
-  } finally { await f.clean(true); }
+    assert.equal((await f.core.getSession(f.session.id)).recovery, "ready");
+    assert.equal((await f.core.diagnostics()).degraded, false);
+  } finally { await f.clean(); }
 });
 test("cancelled tool has gateway observation without a fabricated tool result", async () => {
   const f = await create(new MockPack({ delayMs: 1000 }));
@@ -74,7 +77,7 @@ test("question reply is stored and resumes the waiting adapter", async () => {
     const pending = (await f.core.interactions.list("question"))[0]!;
     await f.core.interactions.reply(pending.id, "question", { decision: "answer", answers: [["A"]] });
     await running;
-    assert.deepEqual(observed, { decision: "answer", answers: [["A"]] });
+    assert.deepEqual(observed, { decision: "answer", answers: [["A"]], source: "user" });
     await assert.rejects(f.core.interactions.reply(pending.id, "question", { decision: "answer", answers: [["A"]] }), { code: "NOT_FOUND" });
   } finally { await f.clean(); }
 });
@@ -94,7 +97,7 @@ test("run completion closes unanswered interactions before a late reply", async 
     await waitFor(async () => (await f.core.interactions.list("question")).length === 1);
     const pending = (await f.core.interactions.list("question"))[0]!;
     await running;
-    assert.deepEqual(await interaction, { decision: "deny" });
+    assert.deepEqual(await interaction, { decision: "deny", source: "cancelled", reasonCode: "RUN_CANCELLED" });
     assert.deepEqual(await f.core.interactions.list("question"), []);
     await assert.rejects(f.core.interactions.reply(pending.id, "question", { decision: "answer", answers: [["late"]] }), { code: "NOT_FOUND" });
   } finally { await f.clean(); }
@@ -123,9 +126,15 @@ test("organization deny is final and exposes no overridable pending approval", a
   const pack = new MockPack(); const open = pack.open.bind(pack); let observed: unknown;
   pack.open = async (input) => { const channel = await open(input); const run = channel.run.bind(channel);
     channel.run = async (input) => { observed = await input.services.interact({ kind: "permission", operation: "file.write", payload: { patterns: ["x"] } }); return run(input); }; return channel; };
-  const f = await create(pack);
-  try { await f.core.run(f.session.id, request); assert.deepEqual(observed, { decision: "deny" }); assert.deepEqual(await f.core.interactions.list("permission"), []); }
-  finally { await f.clean(); }
+  // The default policy is allow, so an organizational deny has to be stated explicitly here.
+  const provider = new MockIntegration(); const prepare = provider.prepare.bind(provider);
+  provider.prepare = async (input) => ({ ...(await prepare(input)), authorize: async () => ({ effect: "deny", reasonCode: "ORGANIZATION_DENY" }) });
+  const f = await create(pack, provider);
+  try {
+    await f.core.run(f.session.id, request);
+    assert.deepEqual(observed, { decision: "deny", source: "policy", reasonCode: "ORGANIZATION_DENY" });
+    assert.deepEqual(await f.core.interactions.list("permission"), []);
+  } finally { await f.clean(); }
 });
 test("question policy allow still asks and uses question event names", async () => {
   const pack = new MockPack(); const open = pack.open.bind(pack); let observed: unknown;
@@ -141,8 +150,9 @@ test("question policy allow still asks and uses question event names", async () 
     const pending = (await f.core.interactions.list("question"))[0]!;
     await f.core.interactions.reply(pending.id, "question", { decision: "answer", answers: [["A"]] });
     await running;
-    assert.deepEqual(observed, { decision: "answer", answers: [["A"]] });
+    assert.deepEqual(observed, { decision: "answer", answers: [["A"]], source: "user" });
     assert.ok(types.includes("question.asked"));
+    assert.ok(types.includes("question.resolved"));
     assert.equal(types.includes("permission.resolved"), false);
   } finally { await f.clean(); }
 });
@@ -231,7 +241,8 @@ test("blocked persisted execution cannot return a successful abort without an ac
     await f.store.call("startRun", { run: { id: "stale-abort", sessionId: f.session.id, state: "running", requestHash: "x", startedAt: new Date().toISOString() },
       message: { id: "stale-abort-user", role: "user", content: "x", created_at: new Date().toISOString() } });
     await f.core.initialize();
-    await assert.rejects(f.core.abort(f.session.id), { code: "EXECUTION_UNCERTAIN" });
+    // No run is in flight, so abort reports this session's own unresolved state and nothing global.
+    await assert.rejects(f.core.abort(f.session.id), { code: "SESSION_UNAVAILABLE", status: 409 });
   } finally { await f.clean(true); }
 });
 test("a late integration context is observed and released after prepare timeout", async () => {
@@ -318,8 +329,12 @@ test("runtime recovery fences admission until interrupted ownership is reconcile
   const f = await create();
   try {
     await f.store.call("startRun", { run: { id: "interrupted", sessionId: f.session.id, state: "running", requestHash: "x", startedAt: new Date().toISOString() }, message: { id: "in", role: "user", content: "x", created_at: new Date().toISOString() } });
-    await f.core.initialize(); assert.equal(f.core.readiness, false);
-    await assert.rejects(f.core.run(f.session.id, request), { code: "SERVICE_UNAVAILABLE" });
+    await f.core.initialize();
+    // Interrupted ownership fences its own session; a different session must still be able to run.
+    assert.equal(f.core.readiness, true);
+    await assert.rejects(f.core.run(f.session.id, request), { code: "SESSION_UNAVAILABLE" });
+    const other = await f.core.createSession(f.dir);
+    await f.core.run(other.id, request);
   } finally { await f.clean(true); }
 });
 

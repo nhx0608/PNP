@@ -3,9 +3,10 @@ import { mkdir, lstat, rm } from "node:fs/promises";
 import path from "node:path";
 import type {
   DriverEvent, EnginePack, EngineResult, EngineSessionChannel, IntegrationProvider, IntegrationContext,
-  Json, Message, MessageFinish, PromptRequest, Run, Session, StopReason, TerminalState,
+  Json, Message, MessageFinish, PromptRequest, PublicEvent, Run, Session, StopReason, TerminalState,
 } from "../contracts/index.ts";
 import type { ProcessHost } from "../contracts/host.ts";
+import type { RecoverySummary } from "../runtime/recovery.ts";
 import { LocalProcessHost } from "../runtime/process-host.ts";
 import { StateStore } from "../storage/store.ts";
 import { EventJournal } from "./journal.ts";
@@ -35,6 +36,8 @@ export interface CoreOptions {
 const makeMessage = (role: Message["role"], content: string): Message => ({
   id: randomUUID(), role, content, created_at: new Date().toISOString(),
 });
+/** Both spellings are emitted: assessment clients read either `content` or `text`. */
+const textPart = (value: string): Json => ({ type: "text", content: value, text: value });
 
 /** Owns run truth and event ordering; adapters cannot mutate storage or HTTP state. */
 export class GatewayCore {
@@ -49,14 +52,37 @@ export class GatewayCore {
   private readonly scopes = new Map<string, OwnedResourceScope>();
   private readonly active = new Map<string, ActiveRun>();
   private readonly deleting = new Set<string>();
+  private readonly lastUsedAt = new Map<string, number>();
+  /**
+   * Sessions whose execution stop could not be proven. The fence is per session because an
+   * unverifiable stop is evidence about one native channel, never about the gateway process.
+   */
+  private readonly fenced = new Map<string, { reason: string; at: string }>();
+  private recovery: {
+    at: string; interrupted: number; confirmedSessions: number; blockedSessions: number;
+    invalidRecords: number; unverifiedRecords: number; quarantinedRecords: number; archivedRecords: number;
+    issues: RecoverySummary["issues"];
+  } | null = null;
   private reserved = false;
   private draining = false;
   private healthy = true;
 
   private observeFailure(error: unknown): PnpError {
     const failure = asPnpError(error);
-    if (failure.code.startsWith("STORAGE_")) this.healthy = false;
+    // `healthy` expresses storage availability only. A single failed operation is not unavailability,
+    // otherwise one busy-timeout would remove the gateway for the rest of the round.
+    if (failure.code.startsWith("STORAGE_") && !this.store.available) this.healthy = false;
     return failure;
+  }
+  /** Blocks one session until its stop is proven; the gateway stays available for every other session. */
+  private fence(sessionId: string, reason: string): void {
+    this.fenced.set(sessionId, { reason, at: new Date().toISOString() });
+  }
+  /** Proof of stop is the only thing that lifts a fence, and it also clears the persisted block. */
+  private async liftFence(sessionId: string): Promise<void> {
+    if (!this.fenced.delete(sessionId)) return;
+    try { await this.store.call("confirmStopped", { sessionId }); }
+    catch (error) { this.observeFailure(error); }
   }
 
   private async disposeSessionResources(id: string, operation: "terminate" | "close"): Promise<boolean> {
@@ -65,7 +91,7 @@ export class GatewayCore {
     if (channel !== undefined) {
       try { quiescent = (await bounded(channel[operation](), this.options.cancelGraceMs)).quiescent; }
       catch { quiescent = false; }
-      finally { this.channels.delete(id); }
+      finally { this.channels.delete(id); this.lastUsedAt.delete(id); }
     }
     const scope = this.scopes.get(id);
     if (scope !== undefined) {
@@ -77,6 +103,25 @@ export class GatewayCore {
     }
     return quiescent;
   }
+  /**
+   * Frees a resident slot instead of failing the ninth case of a round. `close` keeps native history,
+   * and the confirmed stop tells the next turn to reattach rather than assume a warm channel.
+   */
+  private async evictResidentChannel(exclude: string): Promise<void> {
+    const candidates = [...this.channels.keys()]
+      .filter((id) => id !== exclude && !this.active.has(id) && !this.deleting.has(id))
+      .sort((a, b) => (this.lastUsedAt.get(a) ?? 0) - (this.lastUsedAt.get(b) ?? 0));
+    for (const victim of candidates) {
+      if (await this.disposeSessionResources(victim, "close")) {
+        try { await this.store.call("confirmStopped", { sessionId: victim }); }
+        catch (error) { throw this.observeFailure(error); }
+      } else {
+        this.fence(victim, "EVICTION_STOP_UNVERIFIED");
+      }
+      if (this.channels.size < this.options.maxResidentSessions) return;
+    }
+    throw new PnpError("HOST_CAPACITY", "Resident session capacity reached and no channel could be released.", 503);
+  }
 
   constructor(store: StateStore, engine: EnginePack, integration: IntegrationProvider, options: CoreOptions) {
     this.store = store;
@@ -86,30 +131,59 @@ export class GatewayCore {
     this.options = {
       dataDirectory: options.dataDirectory,
       runTimeoutMs: options.runTimeoutMs ?? 900_000,
-      openTimeoutMs: options.openTimeoutMs ?? 30_000,
-      cancelGraceMs: options.cancelGraceMs ?? 5_000,
-      interactionTimeoutMs: options.interactionTimeoutMs ?? 120_000,
-      maxResidentSessions: options.maxResidentSessions ?? 8,
+      openTimeoutMs: options.openTimeoutMs ?? 60_000,
+      cancelGraceMs: options.cancelGraceMs ?? 15_000,
+      interactionTimeoutMs: options.interactionTimeoutMs ?? 45_000,
+      maxResidentSessions: options.maxResidentSessions ?? 16,
     };
     this.journal = new EventJournal(store);
     this.interactions = new InteractionBroker(store, this.journal, this.options.interactionTimeoutMs);
   }
   async initialize(): Promise<void> {
-    const interrupted = await this.store.call("recover", null);
-    const state = await this.store.call("diagnostics", null);
-    if (interrupted > 0 || state.blocked > 0) this.healthy = false;
+    await this.store.call("recover", null);
+    // History that could not prove a stop fences its own session. It does not remove readiness:
+    // a restart with a clean new session must be able to run.
+    for (const session of await this.store.call("listSessions", null)) {
+      if (session.recovery === "blocked") this.fence(session.id, "STARTUP_STOP_UNVERIFIED");
+    }
   }
-  get readiness(): boolean { return this.healthy && !this.draining; }
+  /** Ownership verification narrows to the sessions it names; sessions created since then are untouched. */
+  applyRecovery(summary: RecoverySummary): void {
+    this.recovery = {
+      at: new Date().toISOString(), interrupted: summary.interrupted,
+      confirmedSessions: summary.confirmedSessions, blockedSessions: summary.blockedSessions,
+      invalidRecords: summary.invalidRecords, unverifiedRecords: summary.unverifiedRecords,
+      quarantinedRecords: summary.quarantinedRecords, archivedRecords: summary.archivedRecords,
+      issues: summary.issues,
+    };
+    for (const id of summary.clearedSessions) if (!this.active.has(id)) this.fenced.delete(id);
+    for (const id of summary.fencedSessions) if (!this.active.has(id)) this.fence(id, "RECOVERY_STOP_UNVERIFIED");
+  }
+  /** Records why verification itself could not run; it never becomes an admission gate. */
+  noteRecoveryFailure(code: string): void {
+    this.recovery = {
+      at: new Date().toISOString(), interrupted: 0, confirmedSessions: 0, blockedSessions: 0,
+      invalidRecords: 0, unverifiedRecords: 0, quarantinedRecords: 0, archivedRecords: 0,
+      issues: [{ file: "", reason: "verification-failed", detail: code }],
+    };
+  }
+  get readiness(): boolean { return this.healthy && !this.draining && this.store.available; }
   get engineId(): string { return this.engine.descriptor.id; }
   get channelId(): string { return this.engine.descriptor.channelId; }
   async diagnostics() {
     let persisted: { sessions: number | null; runs: number | null; interrupted: number | null; blocked: number | null };
+    let storageError: string | undefined;
     try { persisted = await this.store.call("diagnostics", null); }
     catch (error) {
-      this.observeFailure(error);
+      // A failed diagnostics read is reported, never latched: reading state must not remove readiness.
+      storageError = asPnpError(error).code;
       persisted = { sessions: null, runs: null, interrupted: null, blocked: null };
     }
     return { ...persisted, ready: this.readiness, storage: this.store.diagnosticsSnapshot(),
+      ...(storageError === undefined ? {} : { storageError }),
+      degraded: this.fenced.size > 0,
+      fencedSessions: [...this.fenced].map(([id, entry]) => ({ id, reason: entry.reason, at: entry.at })),
+      recovery: this.recovery,
       activeRuns: this.active.size, residentChannels: this.channels.size, engine: this.engineId, channel: this.channelId };
   }
   async createSession(directory: string, title?: string): Promise<Session> {
@@ -130,6 +204,10 @@ export class GatewayCore {
     await this.getSession(id);
     return this.store.call("messages", { sessionId: id });
   }
+  /** Committed events after a sequence number, for a subscriber that reconnected. */
+  async eventsSince(afterSequence: number, limit?: number): Promise<PublicEvent[]> {
+    return this.journal.since(afterSequence, limit);
+  }
   async status(): Promise<Record<string, { type: "idle" | "busy" }>> {
     return Object.fromEntries((await this.store.call("listSessions", null))
       .filter((s) => s.lifecycle === "active").map((s) => [s.id, { type: s.status }]));
@@ -147,18 +225,25 @@ export class GatewayCore {
       if (previous !== null) {
         if (previous.requestHash !== hash) throw new PnpError("IDEMPOTENCY_CONFLICT", "Key was used for another request.", 409);
         if (previous.state === "completed") return;
-        throw new PnpError("RUN_ALREADY_EXISTS", "The recorded run must not be replayed.", 409);
+        // `failed` and `cancelled` are proven terminal states, so the key is released and a retry may
+        // start a new run. `running`, `cancelling` and `interrupted` keep it: an unproven stop is never replayed.
+        if (previous.state !== "failed" && previous.state !== "cancelled") {
+          throw new PnpError("RUN_ALREADY_EXISTS", "The recorded run must not be replayed.", 409);
+        }
+        await this.store.call("releaseIdempotencyKey", { runId: previous.id });
       }
     }
     if (!this.readiness) throw new PnpError("SERVICE_UNAVAILABLE", "Gateway is not ready.", 503);
     if (this.reserved) throw new PnpError("GATEWAY_BUSY", "Execution slot is occupied.", 409);
     if (this.deleting.has(sessionId)) throw new PnpError("SESSION_UNAVAILABLE", "Session is being deleted.", 409);
+    if (this.fenced.has(sessionId)) throw new PnpError("SESSION_UNAVAILABLE", "Session is fenced until its execution stop is proven.", 409);
     this.reserved = true;
     const ctx: ActiveRun = { controller: new AbortController(), stop: deferred<StopReason>(), done: deferred<void>(), runId: `run_${randomUUID()}` };
     this.active.set(sessionId, ctx);
     const timer = setTimeout(() => this.requestStop(sessionId, "deadline"), this.options.runTimeoutMs);
     let started = false;
     let quiescent = true;
+    let terminated = false;
     let channel: EngineSessionChannel | undefined;
     let scope = this.scopes.get(sessionId);
     let integration: IntegrationContext | undefined;
@@ -171,10 +256,12 @@ export class GatewayCore {
     let taskOutcome: "unknown" | "succeeded" | "failed" = "unknown";
     let text = "";
     let rawText = "";
+    let rawBytes = 0;
     let failure: PnpError | undefined;
     let acceptingEvents = true;
     let eventTail = Promise.resolve();
-    const tools = new Map<string, { name: string; message: Message; finished: boolean }>();
+    let eventFailure: PnpError | undefined;
+    const tools = new Map<string, { name: string; input: Json; message: Message; finished: boolean }>();
     const finalId = randomUUID();
     let redactor = new Redactor();
     let lastTextCheckpoint = 0;
@@ -194,7 +281,7 @@ export class GatewayCore {
         void preparing.then(async (late) => {
           if (this.integration.release === undefined) return;
           try { await bounded(this.integration.release(late), this.options.cancelGraceMs); }
-          catch { this.healthy = false; }
+          catch { this.fence(sessionId, "INTEGRATION_RELEASE_UNVERIFIED"); }
         }, () => undefined);
         throw error;
       }
@@ -209,10 +296,11 @@ export class GatewayCore {
       await this.journal.publish("session.status", { sessionID: sessionId, runID: run.id, status: { type: "busy" } });
       channel = this.channels.get(sessionId);
       if (channel === undefined) {
-        if (this.channels.size >= this.options.maxResidentSessions) throw new PnpError("HOST_CAPACITY", "Resident session capacity reached.", 503);
+        if (this.channels.size >= this.options.maxResidentSessions) await this.evictResidentChannel(sessionId);
         const directory = this.nativeDirectory(sessionId);
         await mkdir(directory, { recursive: true });
         scope = new OwnedResourceScope();
+        const openScope = scope;
         this.scopes.set(sessionId, scope);
         quiescent = false;
         openSettled = false;
@@ -220,11 +308,18 @@ export class GatewayCore {
         // Every resolution is observed, including a channel returned after cancellation.
         void opening.then(async (late) => {
           openSettled = true;
-          if (discardOpening) {
-            try { await bounded(late.terminate(), this.options.cancelGraceMs); }
-            catch { /* The session remains fenced until explicit resource reconciliation. */ }
+          if (!discardOpening) return;
+          let stopped = false;
+          try { stopped = (await bounded(late.terminate(), this.options.cancelGraceMs)).quiescent; }
+          catch { stopped = false; }
+          if (stopped && !openScope.closed) {
+            try { stopped = (await openScope.stop(this.options.cancelGraceMs)).quiescent; }
+            catch { stopped = false; }
           }
-        }, () => { openSettled = true; });
+          if (stopped && this.scopes.get(sessionId) === openScope) this.scopes.delete(sessionId);
+          // A late channel that proved it stopped is exactly the evidence the fence was waiting for.
+          if (stopped && !this.active.has(sessionId)) await this.liftFence(sessionId);
+        }, () => { openSettled = true; }).catch(() => undefined);
         channel = await bounded(Promise.race([
           opening,
           ctx.stop.promise.then(() => { throw new PnpError("EXECUTION_CANCELLED", "Cancelled during engine startup.", 409); }),
@@ -234,31 +329,43 @@ export class GatewayCore {
         await this.store.call("bindNative", { id: sessionId, native: channel.native });
         quiescent = true;
       }
+      this.lastUsedAt.set(sessionId, Date.now());
       const resolved = integration;
       const services = {
         events: { emit: (event: DriverEvent): Promise<void> => {
-          eventTail = eventTail.then(async () => {
+          // One rejected event is a statement about that event. Only afterwards is the channel closed,
+          // so a driver can tell "this event was invalid" from "the channel is gone".
+          if (eventFailure !== undefined) {
+            return Promise.reject(new PnpError("EVENT_CHANNEL_CLOSED", "The event channel closed after an earlier rejected event.", 409));
+          }
+          const delivery = eventTail.then(async () => {
             if (!acceptingEvents) return;
             if (Buffer.byteLength(JSON.stringify(event)) > 1024 * 1024) throw new PnpError("EVENT_TOO_LARGE", "Use an artifact reference.", 502);
             const properties: { [key: string]: Json } = { sessionID: sessionId, runID: run.id, messageID: finalId };
             if (event.type === "text.delta") {
               rawText += event.text;
-              if (Buffer.byteLength(rawText) > 8 * 1024 * 1024) throw new PnpError("OUTPUT_TOO_LARGE", "Output exceeds the configured limit.", 502);
-              text = redactor.streamText(rawText);
+              rawBytes += Buffer.byteLength(event.text);
+              if (rawBytes > 8 * 1024 * 1024) throw new PnpError("OUTPUT_TOO_LARGE", "Output exceeds the configured limit.", 502);
+              // Amortized checkpoints: a checkpoint must add a quarter of what is already stored, so a long
+              // answer costs O(total) rewritten bytes instead of O(total^2). Redaction runs after this
+              // decision, so it is not a second quadratic pass over the accumulated text.
               const now = Date.now();
-              if (now - lastTextCheckpoint < 100 && Buffer.byteLength(text) - checkpointBytes < 4096) return;
+              if (now - lastTextCheckpoint < 100) return;
+              if (rawBytes - checkpointBytes < Math.max(4096, Math.floor(checkpointBytes / 4))) return;
               lastTextCheckpoint = now;
-              checkpointBytes = Buffer.byteLength(text);
+              checkpointBytes = rawBytes;
+              text = redactor.streamText(rawText);
               await this.store.call("appendMessage", { sessionId, runId: run.id,
-                message: { ...makeMessage("assistant", text), id: finalId, parts: [{ type: "text", content: text }] } });
-              properties.part = { type: "text", content: text };
+                message: { ...makeMessage("assistant", text), id: finalId, parts: [textPart(text)] } });
+              properties.part = textPart(text);
             } else if (event.type === "tool.started") {
               if (tools.has(event.callId)) throw new PnpError("DUPLICATE_TOOL", "Duplicate tool identity.", 502);
               const item = makeMessage("assistant", "");
-              item.tool_calls = [{ id: event.callId, name: event.name, arguments: redactor.json(event.input) }];
+              const args = redactor.json(event.input);
+              item.tool_calls = [{ id: event.callId, name: event.name, arguments: args }];
               item.info = { role: "assistant", finish: "tool-calls" };
-              item.parts = [{ type: "tool", tool: event.name, callID: event.callId, state: { status: "running", title: event.name } }];
-              tools.set(event.callId, { name: event.name, message: item, finished: false });
+              item.parts = [{ type: "tool", tool: event.name, callID: event.callId, input: args, state: { status: "running", title: event.name } }];
+              tools.set(event.callId, { name: event.name, input: args, message: item, finished: false });
               await this.store.call("appendMessage", { sessionId, runId: run.id, message: item });
               properties.messageID = item.id;
               properties.part = item.parts[0]!;
@@ -266,15 +373,17 @@ export class GatewayCore {
               const tool = tools.get(event.callId);
               if (tool === undefined || tool.finished) throw new PnpError("UNMATCHED_TOOL_UPDATE", "Tool is not active.", 502);
               properties.messageID = tool.message.id;
-              properties.part = { type: "tool", tool: tool.name, callID: event.callId, state: { status: "running", title: redactor.text(event.title) } };
+              properties.part = { type: "tool", tool: tool.name, callID: event.callId, input: tool.input,
+                state: { status: "running", title: redactor.text(event.title) } };
             } else if (event.type === "tool.finished") {
               const tool = tools.get(event.callId);
               if (tool === undefined || tool.finished) throw new PnpError("UNMATCHED_TOOL_RESULT", "Tool result has no active call.", 502);
               tool.finished = true;
-              const item = makeMessage("tool", JSON.stringify(redactor.json(event.output)));
+              const output = redactor.json(event.output);
+              const item = makeMessage("tool", JSON.stringify(output));
               item.tool_call_id = event.callId;
               item.tool_name = tool.name;
-              tool.message.parts = [{ type: "tool", tool: tool.name, callID: event.callId,
+              tool.message.parts = [{ type: "tool", tool: tool.name, callID: event.callId, input: tool.input, output,
                 state: { status: event.failed ? "error" : "completed", title: tool.name, source: "engine" } }];
               await this.store.call("appendMessage", { sessionId, runId: run.id, message: tool.message });
               await this.store.call("appendMessage", { sessionId, runId: run.id, message: item });
@@ -290,9 +399,12 @@ export class GatewayCore {
             }
             await this.journal.publish("message.part.updated", properties);
           });
-          // A detached adapter emit must not produce an unhandled rejection.
-          void eventTail.catch(() => undefined);
-          return eventTail;
+          // The chain records the first failure once and then stays usable for ordering; the driver
+          // still receives this event's own rejection.
+          eventTail = delivery.catch((error: unknown) => {
+            if (eventFailure === undefined) eventFailure = this.observeFailure(error);
+          });
+          return delivery;
         } },
         interact: async (request: Parameters<IntegrationContext["authorize"]>[0]) => {
           const policy = await bounded(resolved.authorize(request), this.options.openTimeoutMs);
@@ -312,6 +424,7 @@ export class GatewayCore {
         try { result = await bounded(execution, this.options.cancelGraceMs); } catch { /* Keep receiving available events. */ }
         quiescent = result?.quiescent === true;
         if (!quiescent) {
+          terminated = true;
           quiescent = await this.disposeSessionResources(sessionId, "terminate");
         }
         nativeStopReason = result?.nativeStopReason;
@@ -319,12 +432,20 @@ export class GatewayCore {
         finish = state === "cancelled" ? "cancelled" : "error";
         failure = this.stopError(first.reason);
       } else {
-        quiescent = first.result.quiescent === true;
         state = first.result.state;
         finish = first.result.finish;
         nativeStopReason = first.result.nativeStopReason;
         taskOutcome = first.result.taskOutcome;
-        text = redactor.text(first.result.finalText);
+        const provided = redactor.text(first.result.finalText);
+        // An empty final text must not erase what the engine already streamed.
+        text = provided === "" ? redactor.text(rawText) : provided;
+        quiescent = first.result.quiescent;
+        if (!quiescent) {
+          // A real terminal turn whose resources are unproven keeps its trajectory; process-level
+          // evidence, not the driver's word, decides whether the session may take the next turn.
+          terminated = true;
+          quiescent = await this.disposeSessionResources(sessionId, "terminate");
+        }
         if (ctx.reason !== undefined) {
           state = ctx.reason === "deadline" ? "failed" : "cancelled";
           finish = state === "cancelled" ? "cancelled" : "error";
@@ -336,6 +457,7 @@ export class GatewayCore {
       }
       await eventTail;
       acceptingEvents = false;
+      if (eventFailure !== undefined) throw eventFailure;
       if (state === "completed" && [...tools.values()].some((t) => !t.finished)) {
         throw new PnpError("ENGINE_PROTOCOL_ERROR", "Engine ended with unresolved tool states.", 502);
       }
@@ -351,10 +473,12 @@ export class GatewayCore {
       discardOpening = true;
       ctx.controller.abort(ctx.reason ?? "failure");
       if (channel !== undefined) {
+        terminated = true;
         quiescent = await this.disposeSessionResources(sessionId, "terminate");
       } else if (opening !== undefined) {
         const evidence = await scope!.stop(this.options.cancelGraceMs);
-        // Unsettled startup can still return a resource; retain the execution fence.
+        // Unsettled startup can still return a resource; the late handler above lifts the fence
+        // once that channel proves it stopped.
         quiescent = openSettled && evidence.quiescent;
         if (quiescent) this.scopes.delete(sessionId);
       }
@@ -363,7 +487,11 @@ export class GatewayCore {
     } finally {
       clearTimeout(timer);
       acceptingEvents = false;
-      if (!quiescent) { state = "interrupted"; finish = "interrupted"; this.healthy = false; }
+      if (!quiescent) {
+        state = "interrupted";
+        finish = "interrupted";
+        this.fence(sessionId, "RUN_STOP_UNVERIFIED");
+      }
       try {
         if (started) {
           ctx.controller.abort(ctx.reason ?? "settled");
@@ -371,20 +499,29 @@ export class GatewayCore {
           // Record an observation, not a fabricated tool response or success.
           for (const [callId, tool] of tools) {
             if (tool.finished) continue;
-            tool.message.parts = [{ type: "tool", tool: tool.name, callID: callId,
+            tool.message.parts = [{ type: "tool", tool: tool.name, callID: callId, input: tool.input,
               state: { status: "error", terminalStatus: state === "cancelled" ? "cancelled" : "result_unknown",
                 source: "gateway-observation", quiescent, title: "No complete engine tool result was received." } }];
             await this.store.call("appendMessage", { sessionId, runId: ctx.runId, message: tool.message });
             await this.journal.publish("message.part.updated", { sessionID: sessionId, runID: ctx.runId,
               messageID: tool.message.id, part: tool.message.parts[0]! });
           }
-          const message = { ...makeMessage("assistant", text || failure?.message || ""), id: finalId };
+          const succeeded = state === "completed" && finish === "stop";
+          const detail = failure === undefined ? "" : `Execution did not complete normally: ${failure.code}: ${failure.message}`;
+          // A failed turn must not be represented by the engine's optimistic last words alone.
+          const content = succeeded ? text : [text, detail].filter((part) => part !== "").join("\n\n");
+          const message = { ...makeMessage("assistant", content), id: finalId };
           message.info = { role: "assistant", finish, ...(nativeStopReason === undefined ? {} : { nativeFinish: nativeStopReason }) };
-          message.parts = [{ type: "text", content: message.content }];
-          if (state === "completed" && finish === "stop") message.parts.push({ type: "step-finish" });
+          message.parts = [textPart(message.content)];
+          if (succeeded) message.parts.push({ type: "step-finish" });
           await this.store.call("finishRun", { runId: ctx.runId, state, message, quiescent, taskOutcome,
+            nativeResumeRequired: terminated,
             ...(nativeStopReason === undefined ? {} : { nativeStopReason }),
             ...(failure === undefined ? {} : { errorCode: failure.code }) });
+          // Publication follows the commit: a subscriber must never see a terminal state that storage rejected.
+          for (const part of message.parts) {
+            await this.journal.publish("message.part.updated", { sessionID: sessionId, runID: ctx.runId, messageID: finalId, part });
+          }
           if (failure !== undefined) await this.journal.publish("session.error", { sessionID: sessionId, runID: ctx.runId,
             error: { message: failure.message, code: failure.code } });
           if (quiescent) {
@@ -392,21 +529,27 @@ export class GatewayCore {
             await this.journal.publish("session.idle", { sessionID: sessionId, runID: ctx.runId });
           }
         }
-      } catch (error) { this.healthy = false; failure = this.observeFailure(error); }
+      } catch (error) {
+        failure = this.observeFailure(error);
+        this.fence(sessionId, "TERMINAL_PERSISTENCE_UNVERIFIED");
+      }
       try {
         if (integration !== undefined && this.integration.release !== undefined) {
           await bounded(this.integration.release(integration), this.options.cancelGraceMs);
         }
       } catch (error) {
-        this.healthy = false;
+        this.fence(sessionId, "INTEGRATION_RELEASE_UNVERIFIED");
         if (failure === undefined) failure = this.observeFailure(error);
       }
+      if (this.channels.has(sessionId)) this.lastUsedAt.set(sessionId, Date.now());
       this.active.delete(sessionId);
-      this.reserved = !quiescent;
+      // The execution slot belongs to one turn; the fence, not the slot, carries the uncertainty.
+      this.reserved = false;
       ctx.done.resolve();
     }
-    if (failure !== undefined) throw failure;
+    // An unproven stop is the more severe fact and must not be reported as a plain cancellation.
     if (!quiescent) throw new PnpError("EXECUTION_UNCERTAIN", "Execution stop is unverified.", 503);
+    if (failure !== undefined) throw failure;
   }
   private stopError(reason: StopReason): PnpError {
     return new PnpError(reason === "deadline" ? "EXECUTION_TIMEOUT" : "EXECUTION_CANCELLED",
@@ -423,13 +566,13 @@ export class GatewayCore {
     const session = await this.getSession(id);
     const current = this.active.get(id);
     if (current === undefined) {
-      if (session.status === "idle" && session.recovery !== "blocked") return;
-      this.healthy = false;
-      throw new PnpError("EXECUTION_UNCERTAIN", "Execution stop is unverified.", 503);
+      if (session.status === "idle" && session.recovery !== "blocked" && !this.fenced.has(id)) return;
+      // Nothing is in flight, so this reports the state of this session only. The gateway is unaffected.
+      throw new PnpError("SESSION_UNAVAILABLE", "Session execution stop is unverified.", 409);
     }
     this.requestStop(id, "user");
     await bounded(current.done.promise, this.options.openTimeoutMs + this.options.cancelGraceMs * 4 + 15_000);
-    if (!this.healthy) throw new PnpError("EXECUTION_UNCERTAIN", "Execution stop is unverified.", 503);
+    if (this.fenced.has(id)) throw new PnpError("EXECUTION_UNCERTAIN", "Execution stop is unverified.", 503);
   }
   async deleteSession(id: string): Promise<void> {
     if (this.deleting.has(id)) throw new PnpError("SESSION_BUSY", "Session deletion is already active.", 409);
@@ -437,8 +580,16 @@ export class GatewayCore {
     try {
       const session = await this.getSession(id);
       if (session.engineId !== this.engineId || session.channelId !== this.channelId) throw new PnpError("ENGINE_SESSION_MISMATCH", "Use the session's engine channel to delete it.", 409);
-      await this.abort(id);
+      const current = this.active.get(id);
+      if (current !== undefined) {
+        this.requestStop(id, "user");
+        await bounded(current.done.promise, this.options.openTimeoutMs + this.options.cancelGraceMs * 4 + 15_000);
+      }
+      // Deletion is the legitimate way out of a fence, but only with evidence: prove the owned
+      // resources stopped, then clear the block before the gateway-side record goes away.
       if (!(await this.disposeSessionResources(id, "close"))) throw new PnpError("EXECUTION_UNCERTAIN", "Cannot delete active resources.", 503);
+      this.fenced.delete(id);
+      await this.store.call("confirmStopped", { sessionId: id });
       await this.store.call("beginDelete", { sessionId: id });
       const directory = this.nativeDirectory(id);
       if (this.engine.purge !== undefined) await bounded(this.engine.purge({ session, nativeDataDirectory: directory }), this.options.openTimeoutMs);
@@ -459,6 +610,6 @@ export class GatewayCore {
     let clean = true;
     const sessions = new Set([...this.channels.keys(), ...this.scopes.keys()]);
     for (const id of sessions) clean = await this.disposeSessionResources(id, "close") && clean;
-    if (!this.healthy || !clean) throw new PnpError("EXECUTION_UNCERTAIN", "Resource cleanup requires verification.", 503);
+    if (!this.healthy || !clean || this.fenced.size > 0) throw new PnpError("EXECUTION_UNCERTAIN", "Resource cleanup requires verification.", 503);
   }
 }

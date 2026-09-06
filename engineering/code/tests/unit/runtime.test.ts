@@ -56,7 +56,7 @@ test("data-directory lock rejects concurrent ownership", async () => {
     await (await acquireInstanceLock(path.join(dir, "gateway.lock")))();
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
-test("SQLite write diagnostics preserve sanitized identity and unknown outcome", async () => {
+test("SQLite constraint conflicts keep their identity without reporting storage as unavailable", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "pnp-sqlite-diagnostic-"));
   const store = new StateStore(path.join(dir, "pnp.db"));
   const now = new Date().toISOString();
@@ -64,11 +64,13 @@ test("SQLite write diagnostics preserve sanitized identity and unknown outcome",
     lifecycle: "active" as const, status: "idle" as const, recovery: "ready" as const, createdAt: now, updatedAt: now };
   try {
     await store.call("createSession", session);
-    await assert.rejects(store.call("createSession", session), { code: "STORAGE_ERROR" });
+    // An expected constraint conflict is a state conflict, not evidence that storage is unavailable.
+    await assert.rejects(store.call("createSession", session), { code: "STATE_CONFLICT", status: 409 });
     const [diagnostic] = store.diagnosticsSnapshot();
     assert.equal(diagnostic?.category, "sqlite");
     assert.match(diagnostic?.code ?? "", /^(?:ERR_)?SQLITE_/);
-    assert.equal(diagnostic?.outcome, "unknown");
+    assert.equal(diagnostic?.outcome, "known-failed");
+    assert.equal(store.available, true);
   } finally { await store.close(); await rm(dir, { recursive: true, force: true }); }
 });
 test("deadline ends a never-resolving operation", async () => {
@@ -158,7 +160,7 @@ test("recovery confirms a blocked session only when every retained host is quies
   } finally { await core.close(); await store.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-test("recovery remains globally fenced by an unverified retained host from another session", async () => {
+test("recovery quarantines an ownerless host record instead of fencing every session", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "pnp-recovery-global-"));
   const store = new StateStore(path.join(directory, "pnp.db"));
   const core = new GatewayCore(store, new MockPack(), new MockIntegration(), { dataDirectory: directory });
@@ -172,9 +174,13 @@ test("recovery remains globally fenced by an unverified retained host from anoth
     const summary = await recoverOwnedState(store, { start: async () => { throw new Error("not used"); },
       reconcile: async (record) => ({ quiescent: record !== null && typeof record === "object" && !Array.isArray(record) && record.quiescent === true,
         method: "process-tree" }) }, directory);
-    assert.equal(summary.unverifiedRecords, 1);
-    assert.equal(summary.confirmedSessions, 0);
-    assert.equal((await core.getSession(session.id)).recovery, "blocked");
+    // The orphan belongs to no session, so it can neither be verified nor block anything.
+    assert.equal(summary.quarantinedRecords, 1);
+    assert.equal(summary.unverifiedRecords, 0);
+    assert.deepEqual(summary.issues.map((issue) => issue.reason), ["orphaned"]);
+    assert.equal(summary.confirmedSessions, 1);
+    assert.notEqual((await core.getSession(session.id)).recovery, "blocked");
+    assert.equal((await readdir(path.join(directory, "hosts", "quarantine"))).length, 1);
   } finally {
     await core.close();
     await store.close(); await rm(directory, { recursive: true, force: true });

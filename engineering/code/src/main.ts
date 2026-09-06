@@ -9,7 +9,19 @@ import { loadIntegration } from "./integration/index.ts";
 import { acquireProcessLifetimeLock } from "./runtime/instance-lock.ts";
 import { LocalProcessHost } from "./runtime/process-host.ts";
 import { recoverOwnedState } from "./runtime/recovery.ts";
-import { PnpError } from "./core/errors.ts";
+import { bounded } from "./runtime/deadline.ts";
+import { PnpError, asPnpError } from "./core/errors.ts";
+
+/** An unset variable and an empty one mean the same thing: use the default, never refuse to start. */
+function duration(name: string, fallback: number, minimum: number, maximum: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new PnpError("VALIDATION_ERROR", `Invalid ${name}.`, 400);
+  }
+  return value;
+}
 
 const args = parseArgs({ options: { engine: { type: "string" }, port: { type: "string" }, host: { type: "string" } } });
 const engineId = selectEngine(args.values.engine, process.env.AGENT_ENGINE);
@@ -21,8 +33,11 @@ const port = Number(args.values.port ?? process.env.PNP_PORT ?? 6217);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new PnpError("VALIDATION_ERROR", "Invalid port.", 400);
 const provider = await loadIntegration({ kind: process.env.PNP_INTEGRATION, development,
   engineDevelopmentOnly: engine.descriptor.developmentOnly, configuredProfile: process.env.PNP_CONFIGURED_PROFILE });
-const capacity = Number(process.env.PNP_MAX_RESIDENT_SESSIONS ?? 8);
-if (!Number.isInteger(capacity) || capacity < 1 || capacity > 64) throw new PnpError("VALIDATION_ERROR", "Invalid resident session capacity.", 400);
+const capacity = duration("PNP_MAX_RESIDENT_SESSIONS", 16, 1, 64);
+const runTimeoutMs = duration("PNP_RUN_TIMEOUT_MS", 900_000, 1_000, 86_400_000);
+const openTimeoutMs = duration("PNP_OPEN_TIMEOUT_MS", 60_000, 1_000, 600_000);
+const cancelGraceMs = duration("PNP_CANCEL_GRACE_MS", 15_000, 100, 300_000);
+const interactionTimeoutMs = duration("PNP_INTERACTION_TIMEOUT_MS", 45_000, 1_000, 600_000);
 const data = path.resolve(process.env.PNP_DATA_DIR ?? "data");
 await mkdir(data, { recursive: true });
 const unlock = await acquireProcessLifetimeLock(data);
@@ -32,22 +47,42 @@ let closing = false;
 const shutdown = async () => {
   if (closing) return;
   closing = true;
-  let clean = false;
-  try { if (app !== undefined) await app.close(); clean = true; }
-  finally { if (store !== undefined) await store.close(); if (clean) await unlock(); else process.exitCode = 1; }
+  try { if (app !== undefined) await app.close(); }
+  catch (error) {
+    // Uncertainty belongs in the database (`recovery=blocked`) and in the exit code. A retained lock
+    // file would only stop the next start, which is not what an unverified stop needs to express.
+    process.exitCode = 1;
+    console.error(JSON.stringify({ event: "shutdown.unverified", code: asPnpError(error).code }));
+  } finally {
+    try { if (store !== undefined) await store.close(); }
+    catch (error) {
+      process.exitCode = 1;
+      console.error(JSON.stringify({ event: "storage.close.failed", code: asPnpError(error).code }));
+    } finally { await unlock(); }
+  }
 };
 try {
-  store = new StateStore(path.join(data, "pnp.db"));
+  const state = new StateStore(path.join(data, "pnp.db"));
+  store = state;
   const processHost = new LocalProcessHost(data);
-  const recovery = await recoverOwnedState(store, processHost, data);
-  if (recovery.invalidRecords > 0 || recovery.unverifiedRecords > 0) {
-    throw new PnpError("RECOVERY_EVIDENCE_INVALID", "Owned process records require operator inspection.", 503);
-  }
-  const core = new GatewayCore(store, engine, provider, { dataDirectory: data, maxResidentSessions: capacity, processHost });
+  const core = new GatewayCore(state, engine, provider, {
+    dataDirectory: data, maxResidentSessions: capacity, processHost,
+    runTimeoutMs, openTimeoutMs, cancelGraceMs, interactionTimeoutMs,
+  });
   app = buildApp(core);
   process.once("SIGINT", () => { void shutdown().catch(() => { process.exitCode = 1; }); });
   process.once("SIGTERM", () => { void shutdown().catch(() => { process.exitCode = 1; }); });
   await core.initialize();
   await app.listen({ host, port });
+  // Only two facts prove that continuing would corrupt data: another live owner of this data
+  // directory, and storage that cannot be opened. Both are already settled above. Ownership
+  // verification is therefore not a start gate: it runs after the port is listening, it is bounded
+  // so a slow compilation cannot hold up the health check, and its result narrows to the sessions
+  // it names. Sessions created while it runs are untouched by it.
+  // The task settles every outcome itself, so nothing is left unobserved.
+  void (async () => {
+    try { core.applyRecovery(await bounded(recoverOwnedState(state, processHost, data), 20_000)); }
+    catch (error) { core.noteRecoveryFailure(asPnpError(error).code); }
+  })();
 }
 catch (error) { await shutdown().catch(() => undefined); throw error; }

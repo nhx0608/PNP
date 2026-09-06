@@ -9,6 +9,10 @@ export class EventJournal {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
+  /** Committed events after a sequence number, so a reconnecting subscriber can resume without a gap. */
+  async since(afterSequence: number, limit?: number): Promise<PublicEvent[]> {
+    return this.store.call("eventsSince", { afterSequence, ...(limit === undefined ? {} : { limit }) });
+  }
   async publish(type: string, properties: { [key: string]: Json }): Promise<void> {
     const event = await this.store.call("appendEvent", { type, properties });
     for (const listener of this.listeners) {
