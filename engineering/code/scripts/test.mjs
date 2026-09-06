@@ -15,12 +15,12 @@ if (!files.length) throw new Error(`No executable tests in ${groups.join(", ")};
 // a Windows-only hang in CI was invisible for exactly that reason. Two minutes is well above the
 // slowest legitimate test (process-host launches on a loaded Windows runner take seconds, not minutes).
 const perTestTimeoutMs = Number(process.env.PNP_TEST_TIMEOUT_MS ?? 120_000);
-// The per-test timeout covers a test that never settles. It does not cover a test FILE whose process
-// never exits once its last test has reported: a failed test can leave a channel, a timer or a child
-// alive, and the runner then waits on the file for the rest of the job (14 minutes on a Windows runner,
-// with the failure it should have reported never printed). --test-force-exit ends the file once its
-// tests are done, so the failure is what the log shows.
+// The per-test timeout covers a test that never settles. A test FILE whose process never exits after
+// its last test (a fixture that left a store worker or a child alive) is a fixture bug to fix at the
+// source, not to paper over: --test-force-exit was tried for that and measured to drop reported tests
+// on the same tree (283 → 268 between two runs) with fail still 0, which is a false green. The job's
+// time limit reports such a hang with its log; the results printed so far name the file.
 const result = spawnSync(process.execPath,
-  ["--experimental-strip-types", "--test", `--test-timeout=${perTestTimeoutMs}`, "--test-force-exit", ...files],
+  ["--experimental-strip-types", "--test", `--test-timeout=${perTestTimeoutMs}`, ...files],
   { cwd: codeRoot, stdio: "inherit", shell: false });
 process.exit(result.status ?? 1);
