@@ -47,7 +47,15 @@ export function createHostedStream(hosted: HostedProcess, options: HostedStreamO
     write: async (message) => {
       if (failure !== undefined) throw failure;
       // The host appends the record separator; the driver must not double-frame.
-      await hosted.write(JSON.stringify(message));
+      try { await hosted.write(JSON.stringify(message)); }
+      catch (error: unknown) {
+        // A broken pipe kills the channel in both directions. Recording it here is what lets a
+        // caller tell "the frame was queued" from "the frame reached the engine", and it settles
+        // the pending requests that would otherwise wait for a reply that can never arrive.
+        fail(error instanceof PnpError ? error
+          : new PnpError("HOST_EXITED", "Engine channel write failed before the frame was sent.", 502));
+        throw failure;
+      }
     },
   });
   detachFrame = hosted.onFrame((frame) => {

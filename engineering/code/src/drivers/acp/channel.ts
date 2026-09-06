@@ -178,7 +178,6 @@ interface ChannelParts {
   integrationFingerprint: string;
   notices: OpenNotice[];
   observations: Observations;
-  workspace: string;
 }
 
 /**
@@ -308,10 +307,10 @@ export class AcpSessionChannel implements EngineSessionChannel {
 
   private async execute(turn: Turn, input: Parameters<EngineSessionChannel["run"]>[0]): Promise<EngineResult> {
     await this.emitNotices(turn);
-    if (turn.cancelReason !== undefined) return this.finish(turn, undefined, true, "cancelled_before_prompt", true);
+    if (turn.cancelReason !== undefined) return this.finish(turn, true, "cancelled_before_prompt", true);
     this.assertIntegrationUnchanged(input.integration);
     await this.applyModel(turn, input.request.model);
-    if (turn.cancelReason !== undefined) return this.finish(turn, undefined, true, "cancelled_before_prompt", true);
+    if (turn.cancelReason !== undefined) return this.finish(turn, true, "cancelled_before_prompt", true);
     const prompt = observe(this.parts.connection.agent.request(AGENT_METHODS.session_prompt, {
       sessionId: this.native.nativeId,
       prompt: input.request.parts.map((part) => ({ type: "text" as const, text: part.text })),
@@ -334,7 +333,7 @@ export class AcpSessionChannel implements EngineSessionChannel {
     if (outcome === undefined) {
       // Cancel grace expired. The turn is terminal for the gateway, but this turn's engine-side resources are
       // unproven, so quiescence is reported false and Core takes process-level evidence.
-      return this.finish(turn, undefined, false, "cancelled_no_engine_response", true);
+      return this.finish(turn, false, "cancelled_no_engine_response", true);
     }
     if ("error" in outcome) return this.finishError(turn, outcome.error, cancelledLocally);
     const stopReason = outcome.ok.stopReason;
@@ -342,7 +341,7 @@ export class AcpSessionChannel implements EngineSessionChannel {
     if (stopReason === "cancelled") this.parts.ledger.observe("acp.session.cancel", "verified");
     if (cancelledLocally) {
       // A local stop outranks the engine's self-report: interrupted turns report drifting completion fields.
-      return this.finish(turn, stopReason, true, stopReason, true);
+      return this.finish(turn, true, stopReason, true);
     }
     return {
       state: stopReason === "cancelled" ? "cancelled" : "completed",
@@ -360,17 +359,16 @@ export class AcpSessionChannel implements EngineSessionChannel {
     if (!usable) {
       // The channel itself is gone. Rejecting is correct here: Core destroys the channel and takes evidence.
       if (!cancelledLocally) throw transport ?? new PnpError("ENGINE_PROTOCOL_ERROR", describe(error), 502);
-      return this.finish(turn, undefined, false, "cancelled_connection_lost", true);
+      return this.finish(turn, false, "cancelled_connection_lost", true);
     }
-    if (cancelledLocally) return this.finish(turn, undefined, true, nativeStopFor(error), true);
+    if (cancelledLocally) return this.finish(turn, true, nativeStopFor(error), true);
     return {
       state: "failed", finish: "error", quiescent: true, finalText: turn.text,
       nativeStopReason: nativeStopFor(error), taskOutcome: "unknown",
     };
   }
 
-  private finish(turn: Turn, _stopReason: string | undefined, quiescent: boolean,
-    nativeStopReason: string, cancelled: boolean): EngineResult {
+  private finish(turn: Turn, quiescent: boolean, nativeStopReason: string, cancelled: boolean): EngineResult {
     return {
       state: cancelled ? "cancelled" : "failed",
       finish: cancelled ? "cancelled" : "error",
@@ -397,10 +395,17 @@ export class AcpSessionChannel implements EngineSessionChannel {
   }
 
   private async emitTurnDiagnostics(turn: Turn, outcome: PromptOutcome | undefined, leftovers: number): Promise<void> {
-    if (turn.cancelReason === undefined && leftovers === 0 && turn.cancelNotifyFailure === undefined) return;
+    // The notify promise resolves when the SDK queues the frame, not when it reaches the engine, so
+    // the channel is re-read here, at settle time, when the write has certainly been attempted.
+    // Reporting an acknowledgement that never happened inverts the rule that a cancel ACK is not
+    // stop evidence, which is the one thing an operator reads this diagnostic to find out.
+    const lost = turn.cancelNotifyFailure ?? (this.parts.stream.failure === undefined
+      ? undefined : describe(this.parts.stream.failure));
+    if (turn.cancelSent && lost !== undefined) turn.cancelNotifyFailure = lost;
+    if (turn.cancelReason === undefined && leftovers === 0 && lost === undefined) return;
     await turn.emit(this.native_("turn.settled", {
       cancelReason: turn.cancelReason ?? null,
-      cancelAcknowledged: turn.cancelSent && turn.cancelNotifyFailure === undefined,
+      cancelAcknowledged: turn.cancelSent && lost === undefined,
       cancelNotifyFailure: turn.cancelNotifyFailure ?? null,
       enginePromptSettled: outcome !== undefined,
       unresolvedToolCalls: leftovers,
@@ -477,6 +482,11 @@ export class AcpSessionChannel implements EngineSessionChannel {
       await boundedRequest(this.parts.connection.agent.notify(AGENT_METHODS.session_cancel, {
         sessionId: this.native.nativeId,
       }), this.timeouts.cancelAckMs);
+      // Resolving means the SDK queued the notification, not that the frame reached the engine. A
+      // write that failed inside the writer loop surfaces on the stream, so re-read it: reporting an
+      // acknowledgement that never happened is the "cancel ACK is not stop evidence" rule inverted.
+      const late = this.parts.stream.failure;
+      if (late !== undefined) turn.cancelNotifyFailure = describe(late);
     } catch (error) {
       // The write is only an ACK. The failure is recorded and reported; quiescence still comes from the turn.
       turn.cancelNotifyFailure = describe(error);
@@ -610,7 +620,7 @@ export async function openAcpChannel(definition: AcpEngineDefinition, input: Eng
       },
       configOptions: session.configOptions,
       integrationFingerprint: integrationFingerprint(input.integration),
-      notices, observations, workspace: input.session.directory,
+      notices, observations,
     });
     channel.setConfigOptions(session.configOptions);
     dispatch.channel = channel;

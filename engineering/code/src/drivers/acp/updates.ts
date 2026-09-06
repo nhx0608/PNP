@@ -105,7 +105,17 @@ export class SessionUpdateMapper {
       case "usage_update": {
         // ACP reports session-cumulative context usage; the public event carries this turn's increment.
         const delta = positiveDelta(update.used, this.contextUsed);
-        this.contextUsed = Number.isFinite(update.used) ? Math.max(update.used, this.contextUsed) : this.contextUsed;
+        if (Number.isFinite(update.used)) {
+          // A compaction legitimately shrinks the total. Ratcheting past it would silently swallow
+          // every later increment until the old high-water mark was passed again, so follow it down
+          // and make the regression visible instead of losing it.
+          const regressed = update.used < this.contextUsed;
+          this.contextUsed = update.used;
+          if (regressed) {
+            return { events: [{ type: "usage", inputTokens: delta, source: "engine" },
+              nativeEvent("usage_update.context_reduced", update)], text: "" };
+          }
+        }
         return { events: [{ type: "usage", inputTokens: delta, source: "engine" }], text: "" };
       }
       default:

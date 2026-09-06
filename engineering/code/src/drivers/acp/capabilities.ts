@@ -21,27 +21,27 @@ export class AcpCapabilityLedger {
     const session = this.agent.sessionCapabilities ?? {};
     const prompt = this.agent.promptCapabilities ?? {};
     const mcp = this.agent.mcpCapabilities ?? {};
-    this.declare("acp.session.load", this.agent.loadSession === true, { configuration: "session", observation: "native" });
-    this.declare("acp.session.resume", session.resume !== undefined && session.resume !== null, { configuration: "session" });
-    this.declare("acp.session.close", session.close !== undefined && session.close !== null, { configuration: "session" });
-    this.declare("acp.session.delete", session.delete !== undefined && session.delete !== null, { configuration: "session" });
-    this.declare("acp.session.fork", session.fork !== undefined && session.fork !== null, { configuration: "session" });
-    this.declare("acp.session.list", session.list !== undefined && session.list !== null, { configuration: "session" });
-    this.declare("acp.session.additional_directories",
+    this.addRecord("acp.session.load", this.agent.loadSession === true, { configuration: "session", observation: "native" });
+    this.addRecord("acp.session.resume", session.resume !== undefined && session.resume !== null, { configuration: "session" });
+    this.addRecord("acp.session.close", session.close !== undefined && session.close !== null, { configuration: "session" });
+    this.addRecord("acp.session.delete", session.delete !== undefined && session.delete !== null, { configuration: "session" });
+    this.addRecord("acp.session.fork", session.fork !== undefined && session.fork !== null, { configuration: "session" });
+    this.addRecord("acp.session.list", session.list !== undefined && session.list !== null, { configuration: "session" });
+    this.addRecord("acp.session.additional_directories",
       session.additionalDirectories !== undefined && session.additionalDirectories !== null, { configuration: "session" });
-    this.declare("acp.prompt.image", prompt.image === true, { configuration: "run" });
-    this.declare("acp.prompt.audio", prompt.audio === true, { configuration: "run" });
-    this.declare("acp.prompt.embedded_context", prompt.embeddedContext === true, { configuration: "run" });
-    this.declare("acp.mcp.stdio", true, { configuration: "session", control: "tool" });
-    this.declare("acp.mcp.http", mcp.http === true, { configuration: "session", control: "tool" });
-    this.declare("acp.mcp.sse", mcp.sse === true, { configuration: "session", control: "tool" });
+    this.addRecord("acp.prompt.image", prompt.image === true, { configuration: "run" });
+    this.addRecord("acp.prompt.audio", prompt.audio === true, { configuration: "run" });
+    this.addRecord("acp.prompt.embedded_context", prompt.embeddedContext === true, { configuration: "run" });
+    this.addRecord("acp.mcp.stdio", true, { configuration: "session", control: "tool" });
+    this.addRecord("acp.mcp.http", mcp.http === true, { configuration: "session", control: "tool" });
+    this.addRecord("acp.mcp.sse", mcp.sse === true, { configuration: "session", control: "tool" });
     // Streaming updates and session/cancel are mandatory in ACP v1; only observation can raise them past `declared`.
-    this.declare("acp.session.update", true, { observation: "canonical" });
-    this.declare("acp.session.cancel", true, { control: "extension", observation: "canonical" });
-    this.declare("acp.session.permission", true, { control: "extension", observation: "canonical" });
-    this.declare("acp.session.config_option", false, { configuration: "session" });
+    this.addRecord("acp.session.update", true, { observation: "canonical" });
+    this.addRecord("acp.session.cancel", true, { control: "extension", observation: "canonical" });
+    this.addRecord("acp.session.permission", true, { control: "extension", observation: "canonical" });
+    this.addRecord("acp.session.config_option", false, { configuration: "session" });
   }
-  private declare(id: string, available: boolean, shape: Partial<Omit<Capability, "id" | "available" | "evidence">> = {}): void {
+  private addRecord(id: string, available: boolean, shape: Partial<Omit<Capability, "id" | "available" | "evidence">> = {}): void {
     this.records.set(id, {
       id, available, evidence: "declared",
       configuration: shape.configuration ?? "none",
