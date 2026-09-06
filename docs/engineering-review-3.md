@@ -138,7 +138,7 @@
 
 | 条目 | 裁决 | 边界与记录 |
 |---|---|---|
-| **R1 单执行槽** | **按 `docs/spec/contracts.md` §3.1 已写明的规范落地**：全局一个活跃 Run；同会话第二个 `prompt_async` 409 `SESSION_BUSY`；跨会话请求进入有界 FIFO 队列等待，不立即拒绝；队列满才 409 `GATEWAY_BUSY`（带 `Retry-After`）。排队中不建 Run、不发 busy；deadline 从取得槽起算；排队中可 abort 且不产生 Run。 | 队列上限默认由 8 抬到 16（评测并发开会话时 8 偏小），`PNP_RUN_QUEUE_LIMIT` 可配。并发执行池不做——同桌面干扰是规范选择单槽的理由，评测证明需要并发前不推翻。 |
+| **R1 单执行槽** | **按 `docs/spec/contracts.md` §3.1 已写明的规范落地**：全局一个活跃 Run；同会话第二个 `prompt_async` 409 `SESSION_BUSY`；跨会话请求进入有界 FIFO 队列等待，不立即拒绝；队列满才 409 `GATEWAY_BUSY`（带 `Retry-After`）。排队中不建 Run、不发 busy；deadline 从取得槽起算；排队中可 abort 且不产生 Run。 | 队列上限保持规范默认 8，`PNP_RUN_QUEUE_LIMIT` 可配（1–128）。并发执行池不做——同桌面干扰是规范选择单槽的理由，评测证明需要并发前不推翻。 |
 | **R2 model 宽松映射** | **采纳**：不在配置档的 `model` 落到配置档默认模型。 | Run 记录写 `model.requested` 与 `model.resolution: "substituted"`，日志 warn；`PNP_MODEL_STRICT=1` 恢复 403。安全论证：配置档才是端点允许清单，调用方给的只是名字；替换到已批准端点不扩大任何访问面。 |
 | **R3 默认集成** | **采纳：集成是配置，不是代码交付**。默认读取交付包内的 `configured` 档；内网模型是档里的一个端点（`openai-chat` 或以 `protocol` 字段选择的 appid 变体）；`internal` 不再是独立的、可以"未实现"的 provider。 | 只有档缺失/无效或凭据环境变量缺失才拒绝启动，并指名是哪一项。凭据仍只走环境变量，不落盘、不进仓库。C 线交付的是档与协议变体，不是启动门禁。 |
 | **R4 自动创建 directory** | **采纳，有边界**：不存在则 `mkdir -p`（父目录可写）。 | 仍拒绝相对路径、指向文件的路径、位于 `PNP_DATA_DIR` 内或系统目录下的路径；会话记录 `directoryCreated: true`；删除会话永不删除该目录。 |
@@ -167,3 +167,12 @@
 ## 9. 下一步
 
 用户确认第 7、8 节后：实现模型按 R1–R5、R8、D1–D3 落地，**每条一个独立提交并附一个测试床用例**（第 5 节的五条评测姿态断言随之补齐）；顶层模型只复审设计一致性与测试床结果，不逐行复审实现。
+
+---
+
+## 10. 确认记录
+
+- 2026-09-06：用户确认第 7、8 节的裁决，并指示"GPT 尚未实现或仍有问题的，由顶层模型确认方案后交实现模型落地，直接在 master 修改"。据此，第 7、8 节不再是待批准的建议，而是已确认的决定。
+- 其中与 `engineering/docs/spec/contracts.md` 现有文字冲突的三处，随实现一并修订规范文本，使规范与代码同步：（a）§3.1 队列——按规范落地，默认 8 不变，仅补 `PNP_RUN_QUEUE_LIMIT`；（b）"正常完成仍有非终态观察必须按协议错误处理"改为"由 Core 追加 `result_unknown` 观察，轮次终态由引擎 stopReason 决定"（D1）；（c）"只有真实 name + input 才建立 canonical tool call"改为"name 或宣告时 title（记录 `nameSource`）+ input"（D2）。
+- 实现分工：三个实现模型并行，分别负责 D1–D3、R2/R3/R5、R1/R4/R8；R7（权限 `patterns`）在三者合入后单独补做。顶层模型只复审设计一致性与测试床结果。
+- `engineering/docs/team/handoff-current.md` §2、§4 写于本确认之前，其"尚未获得用户确认"的表述以本节为准。
