@@ -6,8 +6,8 @@
       "path": ".gitattributes",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 111,
-      "sha256": "7e417a192cda810179308f84bd97f3e3a63851613172f7f72dbc3e6626325be4"
+      "bytes": 91,
+      "sha256": "6610f02bca937b2b6d06947b02cb79870576de6598126b1fb8a51bb7215d47aa"
     },
     {
       "path": ".github/workflows/ci.yml",
