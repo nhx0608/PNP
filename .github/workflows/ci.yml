@@ -9,6 +9,9 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    # The whole gate takes about three minutes; a job past this is hung, and a hung job must fail
+    # with its log released rather than hold the runner for hours.
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: engineering/code
