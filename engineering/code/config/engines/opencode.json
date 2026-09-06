@@ -3,6 +3,71 @@
   "channel": "acp",
   "owner": "A",
   "implementationEntry": "src/engines/opencode/pack.ts",
-  "engineVersion": null,
+  "engineVersion": "1.18.27",
+  "engineVersionLocked": true,
+  "protocolVersion": 1,
+  "distribution": {
+    "kind": "npm-global",
+    "packageNameCandidates": ["opencode-ai", "@opencode-ai/cli"],
+    "notes": "Stable v1 CLI package name is not directly confirmed in docs/research/T03-opencode.md (only @opencode-ai/sdk, @opencode-ai/plugin and the v2-beta @opencode-ai/cli@beta are source-confirmed). Confirm the exact v1 package at deployment time; both candidates are probed. Do not add a third guess without new evidence.",
+    "windowsNativeSupport": "official-discouraged",
+    "windowsNativeSupportEvidence": "opencode.ai/docs/windows-wsl/ strongly recommends WSL over native Windows for opencode serve; native Windows is reported to run with degraded filesystem/terminal/tool compatibility. No first-party Windows .exe build is documented. See docs/engines/opencode.md."
+  },
+  "acp": {
+    "subcommandArgs": ["acp"],
+    "subcommandEvidence": "opencode.ai/docs/acp/ documents `opencode acp` as a stdio JSON-RPC ACP agent (cross-checked in docs/research/T03-opencode.md #10 and #45 of DIGEST.md)."
+  },
+  "executable": {
+    "kindEnvironmentVariable": "PNP_OPENCODE_EXECUTABLE_KIND",
+    "defaultKind": "node-script",
+    "exe": {
+      "configuredPath": null,
+      "environmentVariable": "PNP_OPENCODE_EXE_PATH",
+      "wellKnownPaths": []
+    },
+    "node": {
+      "configuredPath": null,
+      "environmentVariable": "PNP_OPENCODE_NODE_PATH",
+      "wellKnownPaths": [
+        "${ProgramFiles}\\nodejs\\node.exe",
+        "${ProgramFiles(x86)}\\nodejs\\node.exe"
+      ],
+      "fallbackToHostRuntime": true,
+      "fallbackNotes": "When unresolved, falls back to process.execPath (the gateway's own node.exe), since PNP itself runs on Node >=24 on Windows. Override via configuredPath/environmentVariable if opencode requires a different Node major version."
+    },
+    "script": {
+      "configuredPath": null,
+      "environmentVariable": "PNP_OPENCODE_SCRIPT_PATH",
+      "wellKnownPaths": [
+        "${APPDATA}\\npm\\node_modules\\opencode-ai\\bin\\opencode",
+        "${APPDATA}\\npm\\node_modules\\@opencode-ai\\cli\\bin\\opencode",
+        "${ProgramFiles}\\nodejs\\node_modules\\opencode-ai\\bin\\opencode"
+      ]
+    },
+    "windowsShimNotes": "npm's global install on Windows produces opencode.cmd, a batch shim invoking node.exe plus the real .js entry. The shared ProcessHost spawns with shell:false and rejects any executable that is not an absolute path ending in .exe (see src/runtime/process-host.ts validation), so opencode.cmd can never be used directly. node-script mode resolves node.exe and the real script path so the host launches node.exe <script> acp instead of the shim."
+  },
+  "redirect": {
+    "variables": {
+      "XDG_CONFIG_HOME": "xdg-config",
+      "XDG_DATA_HOME": "xdg-data",
+      "XDG_CACHE_HOME": "xdg-cache",
+      "HOME": "home",
+      "USERPROFILE": "home",
+      "APPDATA": "appdata",
+      "LOCALAPPDATA": "localappdata"
+    },
+    "notes": "Every key here is set on the child process only, rooted under EngineOpenInput.nativeDataDirectory/opencode/<value>. The shared ProcessHost's baseEnvironment() otherwise inherits the gateway's real HOME/USERPROFILE/APPDATA/LOCALAPPDATA, which would point opencode at the operator's real profile; these overrides are what prevents that. docs/research/T03-opencode.md only confirms POSIX-style paths (~/.config, ~/.local/share, ~/.cache) for opencode's config/data/cache; its Windows path resolution (os.homedir()+'.config' vs an env-paths style APPDATA convention vs honoring XDG_*) is not verified, so the private opencode.json and skills are mirrored under both the HOME/.config and XDG_CONFIG_HOME hypotheses (see docs/engines/opencode.md)."
+  },
+  "model": {
+    "policy": "launch",
+    "policyEvidence": "declared",
+    "rationale": "ACP session/set_config_option with a model-category SessionConfigOption is a generic ACP v1 feature (docs/research/T12-acp-agent-client-protocol.md #57), but no research source confirms opencode acp advertises it at runtime; the only opencode-acp-specific note found is issue #18672 (update ordering), which does not mention config options. Pinning the model at launch via the private opencode.json's top-level `model` field (provider/model syntax, source-confirmed in T03) fails closed instead of assuming an unverified session-config surface: an unsupported model raises ENGINE_MODEL_SWITCH_UNSUPPORTED on the first prompt rather than every prompt. Revisit once a real opencode acp session's NewSessionResponse.configOptions has been observed."
+  },
+  "headerEnvironmentPrefix": "PNP_OPENCODE_HEADER_",
+  "timeouts": {
+    "requestMs": 30000,
+    "cancelGraceMs": 2000,
+    "cancelAckMs": 1000
+  },
   "capabilityEvidence": "unverified"
 }
