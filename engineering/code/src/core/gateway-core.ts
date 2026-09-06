@@ -260,9 +260,13 @@ export class GatewayCore {
   async createSession(directory: string, title?: string): Promise<Session> {
     if (!this.readiness) throw new PnpError("SERVICE_UNAVAILABLE", "Gateway is not ready.", 503);
     const now = new Date().toISOString();
+    const workspace = await normalizeWorkspace(directory, { dataDirectory: this.options.dataDirectory });
     return this.store.call("createSession", {
       id: `ses_${randomUUID()}`, title: title ?? "PNP session",
-      directory: await normalizeWorkspace(directory), engineId: this.engineId, channelId: this.channelId,
+      directory: workspace.directory, engineId: this.engineId, channelId: this.channelId,
+      // Recorded so an operator can tell a directory the gateway made from one it was handed;
+      // deletion still only removes what this system owns, never the working directory.
+      ...(workspace.created ? { directoryCreated: true } : {}),
       lifecycle: "active", status: "idle", recovery: "ready", createdAt: now, updatedAt: now,
     });
   }

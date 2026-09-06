@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -17,21 +17,26 @@ const prompt: PromptRequest = {
   model: { providerID: "test", modelID: "test" },
 };
 async function fixture(options: MockOptions = {}, timeout = 1000, overrides: Partial<CoreOptions> = {}) {
-  const directory = await mkdtemp(path.join(tmpdir(), "pnp-"));
+  // The working directory is a sibling of the data directory: a workspace inside the gateway's own
+  // state is refused, so the fixture uses the same layout a deployment does.
+  const root = await mkdtemp(path.join(tmpdir(), "pnp-"));
+  const directory = path.join(root, "data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(directory, { recursive: true });
   const dbPath = path.join(directory, "pnp.db");
   const store = new StateStore(dbPath);
   const pack = new MockPack(options);
   const core = new GatewayCore(store, pack, new MockIntegration(), {
     dataDirectory: directory, runTimeoutMs: timeout, cancelGraceMs: 30, ...overrides,
   });
-  const session = await core.createSession(directory);
+  const session = await core.createSession(workspace);
   return {
-    directory, dbPath, store, pack, core, session,
+    root, directory, workspace, dbPath, store, pack, core, session,
     // The store's worker thread is closed even when the core reports uncertainty, so a failing test
     // still lets its process exit and the runner prints the failure instead of waiting on the file.
     async close() {
       try { await core.close(); }
-      finally { await store.close(); await rm(directory, { recursive: true, force: true }); }
+      finally { await store.close(); await rm(root, { recursive: true, force: true }); }
     },
   };
 }
@@ -82,7 +87,7 @@ test("a second prompt on the same session is refused rather than queued", async 
 test("another session waits for the execution slot and runs after the active turn", async () => {
   const f = await fixture({ delayMs: 80 });
   try {
-    const second = await f.core.createSession(f.directory);
+    const second = await f.core.createSession(f.workspace);
     const busyOrder = busyOrderOf(f.core);
     const first = f.core.run(f.session.id, prompt);
     await waitBusy(f);
@@ -104,8 +109,8 @@ test("another session waits for the execution slot and runs after the active tur
 test("the queue is bounded and a full queue is the only remaining GATEWAY_BUSY", async () => {
   const f = await fixture({ delayMs: 80 }, 1000, { runQueueLimit: 1 });
   try {
-    const second = await f.core.createSession(f.directory);
-    const third = await f.core.createSession(f.directory);
+    const second = await f.core.createSession(f.workspace);
+    const third = await f.core.createSession(f.workspace);
     const first = f.core.run(f.session.id, prompt);
     await waitBusy(f);
     const queued = f.core.run(second.id, prompt);
@@ -120,7 +125,7 @@ test("the queue is bounded and a full queue is the only remaining GATEWAY_BUSY",
 test("aborting a queued request cancels it without creating a run", async () => {
   const f = await fixture({ delayMs: 80 });
   try {
-    const second = await f.core.createSession(f.directory);
+    const second = await f.core.createSession(f.workspace);
     const first = f.core.run(f.session.id, prompt);
     await waitBusy(f);
     const queued = f.core.run(second.id, prompt);
@@ -138,7 +143,7 @@ test("aborting a queued request cancels it without creating a run", async () => 
 test("shutdown answers a queued request instead of stranding it", async () => {
   const f = await fixture({ delayMs: 80 });
   try {
-    const second = await f.core.createSession(f.directory);
+    const second = await f.core.createSession(f.workspace);
     const first = f.core.run(f.session.id, prompt).catch((error: unknown) => error);
     await waitBusy(f);
     const queued = f.core.run(second.id, prompt);
@@ -201,13 +206,13 @@ test("unproven process termination fences its own session and leaves the gateway
     // Shutdown still refuses to claim a clean stop it cannot prove.
   } finally {
     await f.store.close();
-    await rm(f.directory, { recursive: true, force: true });
+    await rm(f.root, { recursive: true, force: true });
   }
 });
 test("two session channels preserve distinct native histories", async () => {
   const f = await fixture();
   try {
-    const second = await f.core.createSession(f.directory);
+    const second = await f.core.createSession(f.workspace);
     await f.core.run(f.session.id, prompt);
     await f.core.run(second.id, prompt);
     await f.core.run(f.session.id, prompt);
@@ -228,7 +233,7 @@ test("SQLite and native session survive a clean process lifecycle", async () => 
     await core2.run(f.session.id, prompt);
     assert.match((await core2.messages(f.session.id)).at(-1)!.content, /Mock turn 2/);
   } finally {
-    await core2.close(); await store2.close(); await rm(f.directory, { recursive: true, force: true });
+    await core2.close(); await store2.close(); await rm(f.root, { recursive: true, force: true });
   }
 });
 test("recovery records interruption and does not automatically clear busy", async () => {

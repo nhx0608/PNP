@@ -24,6 +24,8 @@ export interface Session {
   id: string;
   title: string;
   directory: string;
+  /** The gateway created `directory` for this session. Deleting the session never removes it. */
+  directoryCreated?: boolean;
   engineId: string;
   channelId: string;
   lifecycle: "active" | "deleting";

@@ -151,10 +151,12 @@ test("Windows launch failure records recoverable namespace and stop evidence", {
 });
 
 test("recovery confirms a blocked session only when every retained host is quiescent", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "pnp-recovery-"));
+  const root = await mkdtemp(path.join(tmpdir(), "pnp-recovery-"));
+  const directory = path.join(root, "data");
+  await mkdir(directory, { recursive: true });
   const store = new StateStore(path.join(directory, "pnp.db"));
   const core = new GatewayCore(store, new MockPack(), new MockIntegration(), { dataDirectory: directory });
-  const session = await core.createSession(directory);
+  const session = await core.createSession(path.join(root, "workspace"));
   try {
     await store.call("startRun", { run: { id: "interrupted", sessionId: session.id, state: "running", requestHash: "x", startedAt: new Date().toISOString() },
       message: { id: "user", role: "user", content: "do not replay", created_at: new Date().toISOString() } });
@@ -171,14 +173,16 @@ test("recovery confirms a blocked session only when every retained host is quies
     assert.equal((await store.call("getRun", { runId: "interrupted" }))?.state, "interrupted");
     assert.match(JSON.stringify((await store.call("messages", { sessionId: session.id })).find((message) => message.id === "partial-tool")?.parts), /gateway-recovery/);
     assert.equal((await core.getSession(session.id)).status, "idle");
-  } finally { await core.close(); await store.close(); await rm(directory, { recursive: true, force: true }); }
+  } finally { await core.close(); await store.close(); await rm(root, { recursive: true, force: true }); }
 });
 
 test("recovery quarantines an ownerless host record instead of fencing every session", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "pnp-recovery-global-"));
+  const root = await mkdtemp(path.join(tmpdir(), "pnp-recovery-global-"));
+  const directory = path.join(root, "data");
+  await mkdir(directory, { recursive: true });
   const store = new StateStore(path.join(directory, "pnp.db"));
   const core = new GatewayCore(store, new MockPack(), new MockIntegration(), { dataDirectory: directory });
-  const session = await core.createSession(directory);
+  const session = await core.createSession(path.join(root, "workspace"));
   try {
     await store.call("startRun", { run: { id: "interrupted-global", sessionId: session.id, state: "running", requestHash: "x", startedAt: new Date().toISOString() },
       message: { id: "user-global", role: "user", content: "do not replay", created_at: new Date().toISOString() } });
@@ -197,7 +201,7 @@ test("recovery quarantines an ownerless host record instead of fencing every ses
     assert.equal((await readdir(path.join(directory, "hosts", "quarantine"))).length, 1);
   } finally {
     await core.close();
-    await store.close(); await rm(directory, { recursive: true, force: true });
+    await store.close(); await rm(root, { recursive: true, force: true });
   }
 });
 

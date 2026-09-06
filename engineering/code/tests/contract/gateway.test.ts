@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { StateStore } from "../../src/storage/store.ts";
@@ -11,13 +11,16 @@ import { ConfiguredIntegration } from "../../src/integration/configured/provider
 import { buildApp } from "../../src/gateway/app.ts";
 
 test("original northbound create/prompt/message/status/delete contract", async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), "pnp-http-"));
+  const root = await mkdtemp(path.join(tmpdir(), "pnp-http-"));
+  const dir = path.join(root, "data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(dir, { recursive: true });
   const store = new StateStore(path.join(dir, "pnp.db"));
   const core = new GatewayCore(store, new MockPack(), new MockIntegration(), { dataDirectory: dir });
   const app = buildApp(core);
   try {
     assert.equal((await app.inject({ method: "POST", url: "/session", payload: {} })).statusCode, 400);
-    const created = await app.inject({ method: "POST", url: "/session", payload: { directory: dir } });
+    const created = await app.inject({ method: "POST", url: "/session", payload: { directory: workspace } });
     assert.equal(created.statusCode, 200); // title is optional.
     const id = (created.json() as { id: string }).id;
     // model is optional: the integration provider resolves its configured default.
@@ -39,12 +42,15 @@ test("original northbound create/prompt/message/status/delete contract", async (
     assert.equal(statuses.json()[id].type, "idle");
     assert.equal((await app.inject({ method: "DELETE", url: `/session/${id}` })).statusCode, 200);
   } finally {
-    await app.close(); await store.close(); await rm(dir, { recursive: true, force: true });
+    await app.close(); await store.close(); await rm(root, { recursive: true, force: true });
   }
 });
 
 test("HTTP input failures preserve safe 400, 413, and 415 semantics", async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), "pnp-http-errors-"));
+  const root = await mkdtemp(path.join(tmpdir(), "pnp-http-errors-"));
+  const dir = path.join(root, "data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(dir, { recursive: true });
   const store = new StateStore(path.join(dir, "pnp.db"));
   const core = new GatewayCore(store, new MockPack(), new MockIntegration(), { dataDirectory: dir });
   const app = buildApp(core);
@@ -59,17 +65,18 @@ test("HTTP input failures preserve safe 400, 413, and 415 semantics", async () =
     const unsupported = await app.inject({ method: "POST", url: "/session",
       headers: { "content-type": "application/xml" }, payload: "<session/>" });
     assert.equal(unsupported.statusCode, 415);
-    const missingPath = path.join(dir, "missing-secret-name");
-    const missing = await app.inject({ method: "POST", url: "/session", payload: { directory: missingPath } });
-    assert.equal(missing.statusCode, 400);
-    assert.doesNotMatch(missing.body, /missing-secret-name/);
-    const created = await app.inject({ method: "POST", url: "/session", payload: { directory: dir } });
+    // A path inside the gateway's own data directory is refused, and the refusal never echoes it.
+    const insidePath = path.join(dir, "missing-secret-name");
+    const inside = await app.inject({ method: "POST", url: "/session", payload: { directory: insidePath } });
+    assert.equal(inside.statusCode, 400);
+    assert.doesNotMatch(inside.body, /missing-secret-name/);
+    const created = await app.inject({ method: "POST", url: "/session", payload: { directory: workspace } });
     const id = (created.json() as { id: string }).id;
     const emptyAbort = await app.inject({ method: "POST", url: `/session/${id}/abort`,
       headers: { "content-type": "application/json" }, payload: "" });
     assert.equal(emptyAbort.statusCode, 200);
   } finally {
-    await app.close(); await store.close(); await rm(dir, { recursive: true, force: true });
+    await app.close(); await store.close(); await rm(root, { recursive: true, force: true });
   }
 });
 

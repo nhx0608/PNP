@@ -90,7 +90,7 @@ C 交付内部模型、工具和权限配置。`config/internal.example.json` �
 ## 4. 调用流程
 
 1. 检查 `/health/live` 与 `/health/ready`。后者表示公共核心可接受任务，不替代模型和工具可用性实测。
-2. `POST /session` 提供绝对 `directory` 和可选 `title`。
+2. `POST /session` 提供绝对 `directory` 和可选 `title`。目录不存在时由网关创建（会话记 `directoryCreated: true`），无权创建返回 403 `WORKSPACE_FORBIDDEN`；相对路径、指向文件、文件系统根、位于 `PNP_DATA_DIR` 内的路径返回 400，Windows 系统目录（`%SystemRoot%`、`%ProgramFiles%`、`%ProgramFiles(x86)%`）下返回 403。`DELETE /session/{id}` 永远不删除该工作目录。
 3. 建立 `GET /event` SSE。
 4. 并行调用 `POST /session/{id}/prompt_async`；请求等待本轮执行结束。反问和授权通过 SSE 及回复接口提交。
 5. 正常完成返回 HTTP 204，使用 `GET /session/{id}/message` 取得最终轨迹。

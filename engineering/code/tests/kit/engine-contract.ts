@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { GatewayCore } from "../../src/core/gateway-core.ts";
@@ -10,10 +10,12 @@ export function engineContract(name: string, factory: () => Promise<{ pack: Engi
   test(`${name}: public engine contract`, { timeout: 120_000 }, async () => {
     const { pack, integration, request } = await factory();
     const root = await mkdtemp(path.join(tmpdir(), "pnp-engine-contract-"));
-    const store = new StateStore(path.join(root, "pnp.db"));
-    const core = new GatewayCore(store, pack, integration, { dataDirectory: root, runTimeoutMs: 90_000 });
+    const data = path.join(root, "data");
+    await mkdir(data, { recursive: true });
+    const store = new StateStore(path.join(data, "pnp.db"));
+    const core = new GatewayCore(store, pack, integration, { dataDirectory: data, runTimeoutMs: 90_000 });
     try {
-      const s = await core.createSession(root);
+      const s = await core.createSession(path.join(root, "workspace"));
       const seen: string[] = [];
       core.journal.subscribe((e) => seen.push(e.type));
       await core.run(s.id, request);

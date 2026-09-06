@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, readFile, writeFile, access } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, readFile, writeFile, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -15,16 +15,19 @@ import type { CoreOptions } from "../../src/core/gateway-core.ts";
 import type { EnginePack, IntegrationProvider, PromptRequest, Json } from "../../src/contracts/index.ts";
 const request: PromptRequest = { parts: [{ type: "text", text: "test" }], model: { providerID: "test", modelID: "test" } };
 async function create(pack: EnginePack = new MockPack(), provider: IntegrationProvider = new MockIntegration(), options: Partial<CoreOptions> = {}) {
-  const dir = await mkdtemp(path.join(tmpdir(), "pnp-contract-"));
+  const root = await mkdtemp(path.join(tmpdir(), "pnp-contract-"));
+  const dir = path.join(root, "data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(dir, { recursive: true });
   const store = new StateStore(path.join(dir, "pnp.db"));
   const core = new GatewayCore(store, pack, provider, { dataDirectory: dir, cancelGraceMs: 30, ...options });
-  const session = await core.createSession(dir);
-  return { dir, store, core, session, async clean(uncertain = false) {
+  const session = await core.createSession(workspace);
+  return { root, dir, workspace, store, core, session, async clean(uncertain = false) {
     // The store's worker thread is closed whatever the core's close reports: a test that fails on the
     // core's uncertainty must still let its process exit, or the runner waits on the file instead of
     // printing the failure.
     try { if (uncertain) await assert.rejects(core.close()); else await core.close(); }
-    finally { await store.close(); await rm(dir, { recursive: true, force: true }); }
+    finally { await store.close(); await rm(root, { recursive: true, force: true }); }
   } };
 }
 async function waitFor(fn: () => Promise<boolean>) { for (let i=0;i<100;i++) { if (await fn()) return; await sleep(5); } assert.fail("condition not reached"); }
@@ -476,7 +479,7 @@ test("online diagnostics remain safely readable after storage becomes unavailabl
     assert.equal(diagnostics.ready, false);
     assert.equal(diagnostics.sessions, null);
     assert.ok(Array.isArray(diagnostics.storage));
-  } finally { await rm(f.dir, { recursive: true, force: true }); }
+  } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 test("streaming known secret prefixes are held until they can be redacted", () => {
   const redactor = new Redactor(["secret-long-key"]);
@@ -515,7 +518,7 @@ test("runtime recovery fences admission until interrupted ownership is reconcile
     // Interrupted ownership fences its own session; a different session must still be able to run.
     assert.equal(f.core.readiness, true);
     await assert.rejects(f.core.run(f.session.id, request), { code: "SESSION_UNAVAILABLE" });
-    const other = await f.core.createSession(f.dir);
+    const other = await f.core.createSession(f.workspace);
     await f.core.run(other.id, request);
   } finally { await f.clean(true); }
 });

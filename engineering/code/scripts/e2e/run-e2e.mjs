@@ -2,7 +2,7 @@
 // North-bound protocol client for the PNP end-to-end smoke test.
 // Speaks only the documented gateway HTTP surface (docs/gateway-api-baseline.md)
 // through global fetch: no gateway internals are imported.
-import { mkdir, readFile, writeFile, realpath } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
@@ -252,6 +252,11 @@ async function settleAnswering(prompt, sessionId, reply, answered, limit = 6) {
   }
   return prompt.promise;
 }
+/** True only for a directory that is really there. */
+async function isDirectory(target) {
+  try { return (await stat(target)).isDirectory(); }
+  catch { return false; }
+}
 /** Reports a file without pretending an unreadable one is an absent one. */
 async function describeFile(target) {
   try {
@@ -339,6 +344,28 @@ await step("create-session", async (evidence) => {
   assert(response.json.status === "idle", "a new session must be idle", response.json);
   currentSessionId = response.json.id;
   evidence.session_id = currentSessionId;
+});
+
+await step("create-session-missing-directory", async (evidence) => {
+  // The assessment names a working directory; it never promises to have created it first. A round
+  // that fails at POST /session over a missing folder is a round that produces no trajectory.
+  const target = path.join(workspace, `created-by-gateway-${Date.now()}`);
+  evidence.target = target;
+  evidence.existed_before = await isDirectory(target);
+  assert(evidence.existed_before === false, "the fixture directory must not exist yet", { target });
+  const response = await call("POST", "/session", { body: { directory: target, title: "pnp e2e fresh directory" } });
+  evidence.status = response.status;
+  evidence.body = response.json;
+  assert(response.status === 200 && typeof response.json?.id === "string",
+    "POST /session must accept a directory that does not exist yet", { status: response.status, body: response.json });
+  evidence.exists_after = await isDirectory(target);
+  assert(evidence.exists_after, "the gateway must create the working directory it was given", { target });
+  // Deleting the session clears gateway and native state only: the working directory is the user's.
+  const removed = await call("DELETE", `/session/${response.json.id}`, { timeoutMs: 60_000 });
+  evidence.delete = { status: removed.status, body: removed.json };
+  assert(removed.status === 200, "DELETE /session/{id} must return 200", evidence.delete);
+  evidence.exists_after_delete = await isDirectory(target);
+  assert(evidence.exists_after_delete, "deleting a session must not remove its working directory", { target });
 });
 
 if (currentSessionId !== null) {

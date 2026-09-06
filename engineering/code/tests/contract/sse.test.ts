@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { StateStore } from "../../src/storage/store.ts";
@@ -10,7 +10,9 @@ import { MockIntegration } from "../../src/integration/mock/provider.ts";
 import { buildApp } from "../../src/gateway/app.ts";
 
 test("real SSE delivers connection and persisted terminal events alongside a blocking prompt", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "pnp-sse-"));
+  const root = await mkdtemp(path.join(tmpdir(), "pnp-sse-"));
+  const directory = path.join(root, "data");
+  await mkdir(directory, { recursive: true });
   const store = new StateStore(path.join(directory, "pnp.db"));
   const core = new GatewayCore(store, new MockPack({ delayMs: 50 }), new MockIntegration(), { dataDirectory: directory });
   const app = buildApp(core);
@@ -27,7 +29,7 @@ test("real SSE delivers connection and persisted terminal events alongside a blo
     const decoder = new TextDecoder();
     let received = decoder.decode((await reader.read()).value);
     assert.match(received, /server.connected/);
-    const session = await core.createSession(directory);
+    const session = await core.createSession(path.join(root, "workspace"));
     const prompt = fetch(`${base}/session/${session.id}/prompt_async`, { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ parts: [{ type: "text", text: "test" }], model: { providerID: "test", modelID: "test" } }) });
     const timer = setTimeout(() => controller.abort(), 5000);
@@ -43,12 +45,14 @@ test("real SSE delivers connection and persisted terminal events alongside a blo
     } finally { clearTimeout(timer); }
   } finally {
     await reader?.cancel().catch(() => undefined); controller.abort();
-    await app.close(); await store.close(); await rm(directory, { recursive: true, force: true });
+    await app.close(); await store.close(); await rm(root, { recursive: true, force: true });
   }
 });
 
 test("a reconnect with Last-Event-ID replays the gap in order and without duplicates", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "pnp-sse-resume-"));
+  const root = await mkdtemp(path.join(tmpdir(), "pnp-sse-resume-"));
+  const directory = path.join(root, "data");
+  await mkdir(directory, { recursive: true });
   const store = new StateStore(path.join(directory, "pnp.db"));
   const core = new GatewayCore(store, new MockPack(), new MockIntegration(), { dataDirectory: directory });
   const app = buildApp(core);
@@ -59,7 +63,7 @@ test("a reconnect with Last-Event-ID replays the gap in order and without duplic
     assert.ok(address && typeof address === "object");
     const base = `http://127.0.0.1:${address.port}`;
     // Publish while nobody is listening: exactly the gap a dropped connection leaves behind.
-    const session = await core.createSession(directory);
+    const session = await core.createSession(path.join(root, "workspace"));
     await core.run(session.id, { parts: [{ type: "text", text: "one" }], model: { providerID: "test", modelID: "test" } });
     const committed = await core.journal.since(0, 1000);
     assert.ok(committed.length > 2, "the run must have committed events to resume from");
@@ -86,6 +90,6 @@ test("a reconnect with Last-Event-ID replays the gap in order and without duplic
     assert.deepEqual(ids, committed.filter((event) => event.sequence > resumeFrom).map((event) => event.sequence));
   } finally {
     controller.abort();
-    await app.close(); await store.close(); await rm(directory, { recursive: true, force: true });
+    await app.close(); await store.close(); await rm(root, { recursive: true, force: true });
   }
 });
