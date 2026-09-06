@@ -63,6 +63,7 @@ C 交付内部模型、工具和权限配置。`config/internal.example.json` �
 | `PNP_OPEN_TIMEOUT_MS` | `60000`（范围 1000–600000） | 原生进程/引擎握手时限。评测机首次运行叠加杀软扫描或冷编译较慢时调大 |
 | `PNP_CANCEL_GRACE_MS` | `15000`（范围 100–300000） | 取消后到判定"停止未证实"前的宽限期。引擎需要更长时间才能安全落盘（例如 Office 另存为）时调大；调小可在用例之间更快回收资源 |
 | `PNP_INTERACTION_TIMEOUT_MS` | `45000`（范围 1000–600000） | 反问/授权等待回复的时限，超时按 `reason:"TIMEOUT"` 处理为拒绝 |
+| `PNP_RUN_QUEUE_LIMIT` | `8`（范围 1–128） | 等待唯一执行槽的跨会话请求上限。全局同时只有一个活跃 Run；其他会话的 `prompt_async` 按到达顺序排队等待，不立即拒绝，队列满才返回 409 `GATEWAY_BUSY`（带 `Retry-After: 5`）。同一会话的第二个 `prompt_async` 始终立即 409 `SESSION_BUSY`。评测同时开启的会话数超过默认值时才需要调大 |
 
 规范把 `model.providerID/modelID` 定为必填，取值由评测脚本决定，本网关不掌握。因此不在配置档内的选择**不返回 403**，而是落到配置档的第一个模型（默认模型）；调用方省略 `model` 时同样使用该默认模型。每轮在模型解析成功后立即发布事件 `model.resolved`，载荷为 `{sessionID, runID, requested, selected, resolution}`，`resolution` 取值 `exact`（档内命中）、`default`（未传 `model`）、`substituted`（传入的标识不在档内）；替换时另有一行 `console.warn` 的 JSON 日志。两者都只含模型标识，不含端点、请求头或凭据。配置档才是端点允许清单，替换只发生在"名字"这一层，不扩大任何访问面。需要严格拒绝时设置 `PNP_MODEL_STRICT=1`。
 

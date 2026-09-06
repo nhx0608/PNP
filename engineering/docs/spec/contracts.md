@@ -55,7 +55,7 @@
 
 ### 3.1 并发
 
-全局同时只有一个活跃 Run。同一 Session 的第二个 `prompt_async` 立即 409 `SESSION_BUSY`，无论前一个在排队还是在执行。跨 Session 的请求进入有界队列按到达顺序等待执行槽，不立即拒绝；队列满才 409 `GATEWAY_BUSY`。队列上限默认 8，可配。排队中的请求不写 Run、不发布 busy；运行 deadline 从取得执行槽起计；排队中的请求可被 abort，此时不创建 Run。
+全局同时只有一个活跃 Run。同一 Session 的第二个 `prompt_async` 立即 409 `SESSION_BUSY`，无论前一个在排队还是在执行。跨 Session 的请求进入有界队列按到达顺序等待执行槽，不立即拒绝；队列满才 409 `GATEWAY_BUSY`（带 `Retry-After`）。队列上限默认 8，由 `PNP_RUN_QUEUE_LIMIT` 配置（范围 1–128）。排队中的请求不写 Run、不发布 busy，`GET /session/status` 与 `GET /session/{id}` 仍为 idle；运行 deadline 从取得执行槽起计；就绪、围栏与删除状态在入队前和取得槽时各判定一次；排队中的请求可被 abort（`prompt_async` 以 409 `EXECUTION_CANCELLED` 结束，abort 本身返回 `{ok:true}`），此时不创建 Run；关机排空以 503 `SERVICE_UNAVAILABLE` 结束仍在排队的请求。
 
 ### 3.2 错误码
 

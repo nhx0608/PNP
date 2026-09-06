@@ -546,6 +546,95 @@ await step("second-session/create", async (evidence) => {
 });
 if (secondSessionId !== null) await helloCase("second-session", secondSessionId, { probeDefaultModel: false });
 
+// ---------------------------------------------------------------- the evaluator's concurrency
+// One case per Agent is a shape the assessment is free to use, so two sessions may hold a prompt at
+// the same moment. The gateway serialises them on its single execution slot: both are accepted and
+// the second waits, rather than the second failing at the HTTP layer with no trajectory at all.
+let queueSessionA = null;
+let queueSessionB = null;
+await step("concurrency/create-sessions", async (evidence) => {
+  const created = [];
+  for (const title of ["pnp e2e queue a", "pnp e2e queue b"]) {
+    const response = await call("POST", "/session", { body: { directory: workspace, title } });
+    assert(response.status === 200 && typeof response.json?.id === "string",
+      "POST /session must return 200 with an id", { status: response.status, body: response.json });
+    created.push(response.json.id);
+  }
+  queueSessionA = created[0];
+  queueSessionB = created[1];
+  evidence.sessions = created;
+});
+if (queueSessionA !== null && queueSessionB !== null) {
+  await step("concurrency/cross-session-queue", async (evidence) => {
+    // Both are in flight before either can finish.
+    const first = promptAsync(queueSessionA, "E2E_HELLO");
+    const second = promptAsync(queueSessionB, "E2E_HELLO");
+    const busyObservations = [];
+    let concurrentlyBusy = null;
+    let maxQueued = 0;
+    const deadline = Date.now() + promptTimeoutMs;
+    while ((first.outcome() === undefined || second.outcome() === undefined) && Date.now() < deadline) {
+      const status = await call("GET", "/session/status", { timeoutMs: 15_000 });
+      const busy = Object.entries(status.json ?? {})
+        .filter(([id, value]) => value?.type === "busy" && (id === queueSessionA || id === queueSessionB))
+        .map(([id]) => id);
+      if (busy.length > 0) busyObservations.push(busy);
+      if (busy.length > 1 && concurrentlyBusy === null) concurrentlyBusy = busy;
+      const diagnostics = await call("GET", "/diagnostics", { timeoutMs: 15_000 });
+      maxQueued = Math.max(maxQueued, Number(diagnostics.json?.queued?.count ?? 0));
+      await sleep(150);
+    }
+    evidence.first = await first.promise;
+    evidence.second = await second.promise;
+    evidence.busy_polls = busyObservations.length;
+    evidence.busy_observations = busyObservations.slice(0, 40);
+    evidence.max_queued_observed = maxQueued;
+    assert(evidence.first.status === 204, "the first concurrent prompt_async must return 204", evidence.first);
+    assert(evidence.second.status === 204,
+      "a prompt on a second session must queue and return 204, not 409", evidence.second);
+    // The single execution slot is the contract; a poll that ever saw both busy would disprove it.
+    assert(concurrentlyBusy === null, "two sessions must never be busy at the same moment",
+      { concurrently_busy: concurrentlyBusy, observations: evidence.busy_observations });
+    const statuses = await call("GET", "/session/status");
+    evidence.final_status = [queueSessionA, queueSessionB].map((id) => statuses.json?.[id]?.type ?? null);
+    assert(evidence.final_status.every((type) => type === "idle"), "both sessions must end idle", evidence.final_status);
+    // Both really ran: a queued request that was quietly dropped would leave no trajectory.
+    evidence.finishes = [];
+    for (const id of [queueSessionA, queueSessionB]) {
+      const last = finalAssistant(await messagesOf(id));
+      evidence.finishes.push(last?.info?.finish ?? null);
+    }
+    assert(evidence.finishes.every((finish) => finish === "stop"),
+      "both queued turns must end with a committed final assistant message", evidence.finishes);
+  });
+
+  await step("concurrency/same-session-busy", async (evidence) => {
+    if (expectTools) {
+      evidence.reason = "asserted on the mock leg; a real engine turn would cost a full run per burst.";
+      return "skip";
+    }
+    // A second prompt for a session that already has one is refused immediately, and the code says
+    // which limit was hit: SESSION_BUSY is per session, GATEWAY_BUSY only ever means a full queue.
+    evidence.attempts = [];
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const burst = [];
+      for (let i = 0; i < 4; i += 1) burst.push(promptAsync(queueSessionA, "E2E_HELLO"));
+      const settled = await Promise.all(burst.map((entry) => entry.promise));
+      const record = settled.map((response) => ({ status: response.status, code: response.body?.code ?? null }));
+      evidence.attempts.push(record);
+      const refused = settled.filter((response) => response.status === 409);
+      if (refused.length === 0) continue;
+      assert(settled.some((response) => response.status === 204),
+        "one of the concurrent same-session prompts must be accepted", record);
+      assert(refused.every((response) => response.body?.code === "SESSION_BUSY"),
+        "a same-session conflict must answer SESSION_BUSY, never GATEWAY_BUSY", record);
+      evidence.winning_attempt = attempt;
+      return "pass";
+    }
+    assert(false, "no same-session conflict was observed in three concurrent bursts", evidence.attempts);
+  });
+}
+
 await step("event-sequence", async (evidence) => {
   const seen = [...new Set(events.map((event) => event.type))];
   evidence.event_types = seen;

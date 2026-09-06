@@ -121,6 +121,9 @@ export function buildApp(core: GatewayCore, options: BuildAppOptions = {}) {
   });
   app.setErrorHandler((error, _request, reply) => {
     const safe = asHttpError(error);
+    // A full execution queue is the one refusal that is purely about timing: tell the caller so
+    // rather than leaving it to guess an interval.
+    if (safe.code === "GATEWAY_BUSY") reply.header("Retry-After", "5");
     return reply.code(safe.status).send({ code: safe.code, message: safe.message });
   });
   app.get("/health/live", async () => ({ status: "alive" }));

@@ -24,6 +24,11 @@ interface ActiveRun {
   runId: string;
   reason?: StopReason;
 }
+/** A request from another session that is waiting for the execution slot. It owns no Run. */
+interface QueuedRun {
+  sessionId: string;
+  gate: ReturnType<typeof deferred<void>>;
+}
 export interface CoreOptions {
   processHost?: ProcessHost;
   dataDirectory: string;
@@ -32,6 +37,7 @@ export interface CoreOptions {
   cancelGraceMs?: number;
   interactionTimeoutMs?: number;
   maxResidentSessions?: number;
+  runQueueLimit?: number;
 }
 const makeMessage = (role: Message["role"], content: string): Message => ({
   id: randomUUID(), role, content, created_at: new Date().toISOString(),
@@ -65,6 +71,13 @@ export class GatewayCore {
     issues: RecoverySummary["issues"];
   } | null = null;
   private reserved = false;
+  /** Arrival-ordered waiters for the single slot; the head is served first. */
+  private readonly queue: QueuedRun[] = [];
+  /**
+   * Sessions that hold the slot or wait for it. A session is claimed from the moment its request is
+   * admitted, so "one run per session" also covers the window before the Run row exists.
+   */
+  private readonly claimed = new Set<string>();
   private draining = false;
   private healthy = true;
 
@@ -84,6 +97,61 @@ export class GatewayCore {
     if (!this.fenced.delete(sessionId)) return;
     try { await this.store.call("confirmStopped", { sessionId }); }
     catch (error) { this.observeFailure(error); }
+  }
+
+  /** The gateway-wide and session-wide reasons a request may not execute, whenever it is asked. */
+  private assertAdmissible(sessionId: string): void {
+    if (!this.readiness) throw new PnpError("SERVICE_UNAVAILABLE", "Gateway is not ready.", 503);
+    if (this.deleting.has(sessionId)) throw new PnpError("SESSION_UNAVAILABLE", "Session is being deleted.", 409);
+    if (this.fenced.has(sessionId)) throw new PnpError("SESSION_UNAVAILABLE", "Session is fenced until its execution stop is proven.", 409);
+  }
+  /**
+   * Admission to the single execution slot. A second request for the same session is refused at
+   * once, whether the first is running or still queued. A request for another session waits its
+   * turn instead of failing: `prompt_async` is a blocking call, so concurrent assessment cases are
+   * slow, not lost. Waiting writes nothing — no Run, no busy status, no deadline — and the checks
+   * are taken again on the way out, because a session can be deleted or fenced while it waits.
+   */
+  private async admit(sessionId: string): Promise<void> {
+    this.assertAdmissible(sessionId);
+    if (this.claimed.has(sessionId)) {
+      throw new PnpError("SESSION_BUSY", "The session already has a queued or executing run.", 409);
+    }
+    this.claimed.add(sessionId);
+    try {
+      if (!this.reserved) {
+        this.reserved = true;
+        return;
+      }
+      if (this.queue.length >= this.options.runQueueLimit) {
+        throw new PnpError("GATEWAY_BUSY", "The execution queue is full.", 409);
+      }
+      const waiter: QueuedRun = { sessionId, gate: deferred<void>() };
+      this.queue.push(waiter);
+      await waiter.gate.promise;
+      try { this.assertAdmissible(sessionId); }
+      catch (error) { this.releaseSlot(); throw error; }
+    } catch (error) {
+      this.claimed.delete(sessionId);
+      throw error;
+    }
+  }
+  /** The slot passes straight to the head of the queue; it is never briefly open to a newcomer. */
+  private releaseSlot(): void {
+    const next = this.queue.shift();
+    if (next === undefined) {
+      this.reserved = false;
+      return;
+    }
+    next.gate.resolve();
+  }
+  /** Drops a waiter that never started. Its caller settles as cancelled and leaves no trajectory. */
+  private cancelQueued(sessionId: string): boolean {
+    const index = this.queue.findIndex((waiter) => waiter.sessionId === sessionId);
+    if (index < 0) return false;
+    const [waiter] = this.queue.splice(index, 1);
+    waiter!.gate.reject(new PnpError("EXECUTION_CANCELLED", "Queued execution was cancelled before it started.", 409));
+    return true;
   }
 
   private async disposeSessionResources(id: string, operation: "terminate" | "close"): Promise<boolean> {
@@ -136,6 +204,7 @@ export class GatewayCore {
       cancelGraceMs: options.cancelGraceMs ?? 15_000,
       interactionTimeoutMs: options.interactionTimeoutMs ?? 45_000,
       maxResidentSessions: options.maxResidentSessions ?? 16,
+      runQueueLimit: options.runQueueLimit ?? 8,
     };
     this.journal = new EventJournal(store);
     this.interactions = new InteractionBroker(store, this.journal, this.options.interactionTimeoutMs);
@@ -185,7 +254,8 @@ export class GatewayCore {
       degraded: this.fenced.size > 0,
       fencedSessions: [...this.fenced].map(([id, entry]) => ({ id, reason: entry.reason, at: entry.at })),
       recovery: this.recovery,
-      activeRuns: this.active.size, residentChannels: this.channels.size, engine: this.engineId, channel: this.channelId };
+      activeRuns: this.active.size, residentChannels: this.channels.size, engine: this.engineId, channel: this.channelId,
+      queued: { count: this.queue.length, sessions: this.queue.map((waiter) => waiter.sessionId) } };
   }
   async createSession(directory: string, title?: string): Promise<Session> {
     if (!this.readiness) throw new PnpError("SERVICE_UNAVAILABLE", "Gateway is not ready.", 503);
@@ -234,13 +304,10 @@ export class GatewayCore {
         await this.store.call("releaseIdempotencyKey", { runId: previous.id });
       }
     }
-    if (!this.readiness) throw new PnpError("SERVICE_UNAVAILABLE", "Gateway is not ready.", 503);
-    if (this.reserved) throw new PnpError("GATEWAY_BUSY", "Execution slot is occupied.", 409);
-    if (this.deleting.has(sessionId)) throw new PnpError("SESSION_UNAVAILABLE", "Session is being deleted.", 409);
-    if (this.fenced.has(sessionId)) throw new PnpError("SESSION_UNAVAILABLE", "Session is fenced until its execution stop is proven.", 409);
-    this.reserved = true;
+    await this.admit(sessionId);
     const ctx: ActiveRun = { controller: new AbortController(), stop: deferred<StopReason>(), done: deferred<void>(), runId: `run_${randomUUID()}` };
     this.active.set(sessionId, ctx);
+    // The deadline is the execution budget, so it starts when the slot is taken, never while queued.
     const timer = setTimeout(() => this.requestStop(sessionId, "deadline"), this.options.runTimeoutMs);
     let started = false;
     let quiescent = true;
@@ -658,7 +725,9 @@ export class GatewayCore {
       if (this.channels.has(sessionId)) this.lastUsedAt.set(sessionId, Date.now());
       this.active.delete(sessionId);
       // The execution slot belongs to one turn; the fence, not the slot, carries the uncertainty.
-      this.reserved = false;
+      // It is handed to the session that has waited longest rather than released into a race.
+      this.claimed.delete(sessionId);
+      this.releaseSlot();
       ctx.done.resolve();
     }
     // An unproven stop is the more severe fact and must not be reported as a plain cancellation.
@@ -680,6 +749,9 @@ export class GatewayCore {
     const session = await this.getSession(id);
     const current = this.active.get(id);
     if (current === undefined) {
+      // A queued request owns no Run and no native state, so removing the waiter is the whole of
+      // its cancellation: its caller settles as cancelled and nothing was started to prove stopped.
+      if (this.cancelQueued(id)) return;
       if (session.status === "idle" && session.recovery !== "blocked" && !this.fenced.has(id)) return;
       // Nothing is in flight, so this reports the state of this session only. The gateway is unaffected.
       throw new PnpError("SESSION_UNAVAILABLE", "Session execution stop is unverified.", 409);
@@ -718,6 +790,11 @@ export class GatewayCore {
   }
   async close(): Promise<void> {
     this.draining = true;
+    // Waiters are drained before the active run is stopped, so the slot it releases is not handed
+    // to a request that shutdown has already refused.
+    for (const waiter of this.queue.splice(0)) {
+      waiter.gate.reject(new PnpError("SERVICE_UNAVAILABLE", "Gateway is draining for shutdown.", 503));
+    }
     for (const id of this.active.keys()) this.requestStop(id, "shutdown");
     await Promise.all([...this.active.values()].map((ctx) => bounded(ctx.done.promise,
       this.options.openTimeoutMs + this.options.cancelGraceMs * 4 + 15_000)));

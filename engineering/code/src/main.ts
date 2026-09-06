@@ -47,6 +47,7 @@ const runTimeoutMs = duration("PNP_RUN_TIMEOUT_MS", 900_000, 1_000, 86_400_000);
 const openTimeoutMs = duration("PNP_OPEN_TIMEOUT_MS", 60_000, 1_000, 600_000);
 const cancelGraceMs = duration("PNP_CANCEL_GRACE_MS", 15_000, 100, 300_000);
 const interactionTimeoutMs = duration("PNP_INTERACTION_TIMEOUT_MS", 45_000, 1_000, 600_000);
+const runQueueLimit = duration("PNP_RUN_QUEUE_LIMIT", 8, 1, 128);
 const data = path.resolve(process.env.PNP_DATA_DIR ?? "data");
 await mkdir(data, { recursive: true });
 const unlock = await acquireProcessLifetimeLock(data);
@@ -76,7 +77,7 @@ try {
   const processHost = new LocalProcessHost(data);
   const core = new GatewayCore(state, engine, provider, {
     dataDirectory: data, maxResidentSessions: capacity, processHost,
-    runTimeoutMs, openTimeoutMs, cancelGraceMs, interactionTimeoutMs,
+    runTimeoutMs, openTimeoutMs, cancelGraceMs, interactionTimeoutMs, runQueueLimit,
   });
   app = buildApp(core);
   process.once("SIGINT", () => { void shutdown().catch(() => { process.exitCode = 1; }); });

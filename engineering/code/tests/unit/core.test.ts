@@ -9,19 +9,20 @@ import { GatewayCore } from "../../src/core/gateway-core.ts";
 import { MockPack } from "../../src/engines/mock/pack.ts";
 import type { MockOptions } from "../../src/engines/mock/pack.ts";
 import { MockIntegration } from "../../src/integration/mock/provider.ts";
+import type { CoreOptions } from "../../src/core/gateway-core.ts";
 import type { PromptRequest } from "../../src/contracts/index.ts";
 
 const prompt: PromptRequest = {
   parts: [{ type: "text", text: "inspect the workspace" }],
   model: { providerID: "test", modelID: "test" },
 };
-async function fixture(options: MockOptions = {}, timeout = 1000) {
+async function fixture(options: MockOptions = {}, timeout = 1000, overrides: Partial<CoreOptions> = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), "pnp-"));
   const dbPath = path.join(directory, "pnp.db");
   const store = new StateStore(dbPath);
   const pack = new MockPack(options);
   const core = new GatewayCore(store, pack, new MockIntegration(), {
-    dataDirectory: directory, runTimeoutMs: timeout, cancelGraceMs: 30,
+    dataDirectory: directory, runTimeoutMs: timeout, cancelGraceMs: 30, ...overrides,
   });
   const session = await core.createSession(directory);
   return {
@@ -33,6 +34,17 @@ async function fixture(options: MockOptions = {}, timeout = 1000) {
       finally { await store.close(); await rm(directory, { recursive: true, force: true }); }
     },
   };
+}
+/** Records the session order in which runs actually took the execution slot. */
+function busyOrderOf(core: GatewayCore): string[] {
+  const order: string[] = [];
+  core.journal.subscribe((event) => {
+    if (event.type !== "session.status") return;
+    const status = event.properties.status;
+    const busy = typeof status === "object" && status !== null && !Array.isArray(status) && status.type === "busy";
+    if (busy) order.push(String(event.properties.sessionID));
+  });
+  return order;
 }
 async function waitBusy(f: Awaited<ReturnType<typeof fixture>>) {
   for (let i = 0; i < 100; i++) {
@@ -57,14 +69,84 @@ test("normal execution commits final message before idle is visible", async () =
     assert.equal(messages.filter((m) => m.role === "assistant" && m.content.includes("Mock turn 1")).length, 1);
   } finally { await f.close(); }
 });
-test("one global slot and per-session busy cannot run two prompts", async () => {
+test("a second prompt on the same session is refused rather than queued", async () => {
   const f = await fixture({ delayMs: 100 });
   try {
     const first = f.core.run(f.session.id, prompt);
     await waitBusy(f);
-    await assert.rejects(f.core.run(f.session.id, prompt), { code: "GATEWAY_BUSY" });
+    await assert.rejects(f.core.run(f.session.id, prompt), { code: "SESSION_BUSY" });
     await first;
     assert.equal(f.pack.executions, 1);
+  } finally { await f.close(); }
+});
+test("another session waits for the execution slot and runs after the active turn", async () => {
+  const f = await fixture({ delayMs: 80 });
+  try {
+    const second = await f.core.createSession(f.directory);
+    const busyOrder = busyOrderOf(f.core);
+    const first = f.core.run(f.session.id, prompt);
+    await waitBusy(f);
+    const queued = f.core.run(second.id, prompt);
+    // Waiting is not executing: no Run, no busy status, and nothing an assessor could read as work.
+    assert.equal((await f.core.getSession(second.id)).status, "idle");
+    assert.deepEqual((await f.core.status())[second.id], { type: "idle" });
+    assert.deepEqual(await f.core.messages(second.id), []);
+    assert.deepEqual((await f.core.diagnostics()).queued, { count: 1, sessions: [second.id] });
+    // The rule holds for a queued run as much as for an executing one.
+    await assert.rejects(f.core.run(second.id, prompt), { code: "SESSION_BUSY" });
+    await first;
+    await queued;
+    assert.equal(f.pack.executions, 2);
+    assert.deepEqual(busyOrder, [f.session.id, second.id]);
+    assert.deepEqual((await f.core.diagnostics()).queued, { count: 0, sessions: [] });
+  } finally { await f.close(); }
+});
+test("the queue is bounded and a full queue is the only remaining GATEWAY_BUSY", async () => {
+  const f = await fixture({ delayMs: 80 }, 1000, { runQueueLimit: 1 });
+  try {
+    const second = await f.core.createSession(f.directory);
+    const third = await f.core.createSession(f.directory);
+    const first = f.core.run(f.session.id, prompt);
+    await waitBusy(f);
+    const queued = f.core.run(second.id, prompt);
+    await assert.rejects(f.core.run(third.id, prompt), { code: "GATEWAY_BUSY" });
+    await first;
+    await queued;
+    // The refused session was never started, and the queued one still ran.
+    assert.equal(f.pack.executions, 2);
+    assert.deepEqual(await f.core.messages(third.id), []);
+  } finally { await f.close(); }
+});
+test("aborting a queued request cancels it without creating a run", async () => {
+  const f = await fixture({ delayMs: 80 });
+  try {
+    const second = await f.core.createSession(f.directory);
+    const first = f.core.run(f.session.id, prompt);
+    await waitBusy(f);
+    const queued = f.core.run(second.id, prompt);
+    const cancelled = assert.rejects(queued, { code: "EXECUTION_CANCELLED" });
+    // Abort of a waiting session is a normal operation: there is nothing to prove stopped.
+    await f.core.abort(second.id);
+    await cancelled;
+    assert.deepEqual(await f.core.messages(second.id), []);
+    assert.equal((await f.core.getSession(second.id)).status, "idle");
+    await first;
+    assert.equal(f.pack.executions, 1);
+    assert.equal((await f.core.messages(f.session.id)).at(-1)?.info?.finish, "stop");
+  } finally { await f.close(); }
+});
+test("shutdown answers a queued request instead of stranding it", async () => {
+  const f = await fixture({ delayMs: 80 });
+  try {
+    const second = await f.core.createSession(f.directory);
+    const first = f.core.run(f.session.id, prompt).catch((error: unknown) => error);
+    await waitBusy(f);
+    const queued = f.core.run(second.id, prompt);
+    const drained = assert.rejects(queued, { code: "SERVICE_UNAVAILABLE" });
+    await f.core.close();
+    await drained;
+    await first;
+    assert.deepEqual(await f.core.messages(second.id), []);
   } finally { await f.close(); }
 });
 test("idempotency reuses completed result but rejects a different payload", async () => {
