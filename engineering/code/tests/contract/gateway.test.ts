@@ -81,7 +81,10 @@ test("HTTP input failures preserve safe 400, 413, and 415 semantics", async () =
 });
 
 test("an unrecognised model runs on the configured default and is published as model.resolved", async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), "pnp-model-"));
+  const root = await mkdtemp(path.join(tmpdir(), "pnp-model-"));
+  const dir = path.join(root, "data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(dir, { recursive: true });
   const store = new StateStore(path.join(dir, "pnp.db"));
   // A small configured profile, the same shape the shipped one has: one model, no credentials.
   const integration = new ConfiguredIntegration(
@@ -92,7 +95,7 @@ test("an unrecognised model runs on the configured default and is published as m
   const core = new GatewayCore(store, new MockPack(), integration, { dataDirectory: dir });
   const app = buildApp(core);
   try {
-    const created = await app.inject({ method: "POST", url: "/session", payload: { directory: dir } });
+    const created = await app.inject({ method: "POST", url: "/session", payload: { directory: workspace } });
     const id = (created.json() as { id: string }).id;
     // The specification makes `model` required and the evaluator supplies identifiers this
     // deployment does not control. That is a 204 on the profile's default model, never a 403.
@@ -113,6 +116,46 @@ test("an unrecognised model runs on the configured default and is published as m
       payload: { parts: [{ type: "text", text: "again" }], model: { providerID: "competition", modelID: "default" } } })).statusCode, 204);
     assert.equal((await core.eventsSince(0)).filter((event) => event.type === "model.resolved").at(-1)?.properties.resolution, "exact");
   } finally {
-    await app.close(); await store.close(); await rm(dir, { recursive: true, force: true });
+    await app.close(); await store.close(); await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("evaluator-facing bodies ignore unknown fields but still require the documented ones", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pnp-http-unknown-"));
+  const dir = path.join(root, "data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(dir, { recursive: true });
+  const store = new StateStore(path.join(dir, "pnp.db"));
+  const core = new GatewayCore(store, new MockPack(), new MockIntegration(), { dataDirectory: dir });
+  const app = buildApp(core);
+  try {
+    // An assessment client that carries its own correlation field must not lose the case to a 400.
+    const created = await app.inject({ method: "POST", url: "/session",
+      payload: { directory: workspace, title: "unknown fields", trace_id: "trace-1", metadata: { run: 7 } } });
+    assert.equal(created.statusCode, 200);
+    const id = (created.json() as { id: string }).id;
+    const prompted = await app.inject({ method: "POST", url: `/session/${id}/prompt_async`, payload: {
+      parts: [{ type: "text", text: "hello" }], mode: "task", trace_id: "trace-2",
+      model: { providerID: "test", modelID: "test", temperature: 0.2 },
+    } });
+    assert.equal(prompted.statusCode, 204);
+    // Ignoring the unknown is not the same as accepting anything: the documented fields still hold.
+    const missingDirectory = await app.inject({ method: "POST", url: "/session", payload: { trace_id: "trace-3" } });
+    assert.equal(missingDirectory.statusCode, 400);
+    assert.equal(missingDirectory.json().code, "VALIDATION_ERROR");
+    const missingParts = await app.inject({ method: "POST", url: `/session/${id}/prompt_async`, payload: { mode: "task" } });
+    assert.equal(missingParts.statusCode, 400);
+    assert.equal(missingParts.json().code, "VALIDATION_ERROR");
+    const missingModelId = await app.inject({ method: "POST", url: `/session/${id}/prompt_async`,
+      payload: { parts: [{ type: "text", text: "hello" }], model: { providerID: "test", trace_id: "trace-4" } } });
+    assert.equal(missingModelId.statusCode, 400);
+    assert.equal(missingModelId.json().code, "VALIDATION_ERROR");
+    // Types are still checked where a value cannot be coerced (Fastify coerces scalars by default).
+    const wrongType = await app.inject({ method: "POST", url: `/session/${id}/prompt_async`,
+      payload: { parts: [{ type: "text", text: "hello" }], model: { providerID: "test", modelID: { deep: true } } } });
+    assert.equal(wrongType.statusCode, 400);
+    assert.equal(wrongType.json().code, "VALIDATION_ERROR");
+  } finally {
+    await app.close(); await store.close(); await rm(root, { recursive: true, force: true });
   }
 });

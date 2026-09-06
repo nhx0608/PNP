@@ -71,7 +71,9 @@ function parseModelSelection(model: PromptBody["model"]): ModelSelection {
     }
     return { providerID: model.slice(0, slash), modelID: model.slice(slash + 1) };
   }
-  return model;
+  // Projected field by field: an unknown field inside `model` is ignored here rather than travelling
+  // on into the request hash, the provider and the driver.
+  return { providerID: model.providerID, modelID: model.modelID };
 }
 function resolvePromptRequest(body: PromptBody): PromptRequest {
   const parts = body.parts.filter(isTextPart);

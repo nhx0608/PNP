@@ -153,8 +153,8 @@ async function openEventStream() {
 }
 
 // ---------------------------------------------------------------- prompt helpers
-function promptBody(text, withModel = true) {
-  return { parts: [{ type: "text", text }], ...(withModel ? { model } : {}) };
+function promptBody(text, withModel = true, extra = {}) {
+  return { parts: [{ type: "text", text }], ...(withModel ? { model } : {}), ...extra };
 }
 async function messagesOf(sessionId) {
   const response = await call("GET", `/session/${sessionId}/message`);
@@ -186,8 +186,8 @@ function inFlight(promise) {
   const tracked = promise.then((value) => { state.outcome = value; return value; });
   return { promise: tracked, outcome: () => state.outcome };
 }
-function promptAsync(sessionId, text) {
-  return inFlight(call("POST", `/session/${sessionId}/prompt_async`, { body: promptBody(text), timeoutMs: promptTimeoutMs })
+function promptAsync(sessionId, text, extra = {}) {
+  return inFlight(call("POST", `/session/${sessionId}/prompt_async`, { body: promptBody(text, true, extra), timeoutMs: promptTimeoutMs })
     .then((response) => ({ status: response.status, body: response.json ?? response.text.slice(0, 200) }))
     .catch((error) => ({ status: null, error: String(error) })));
 }
@@ -336,7 +336,10 @@ await step("event-stream-open", async (evidence) => {
 });
 
 await step("create-session", async (evidence) => {
-  const response = await call("POST", "/session", { body: { directory: workspace, title: "pnp e2e smoke" } });
+  // The unknown `trace_id` is the evaluator's own; an inbound body must ignore what it does not know.
+  const body = { directory: workspace, title: "pnp e2e smoke", trace_id: "e2e-trace-session" };
+  const response = await call("POST", "/session", { body });
+  evidence.unknown_fields_sent = ["trace_id"];
   evidence.status = response.status;
   evidence.body = response.json;
   assert(response.status === 200, "POST /session must return 200", { status: response.status, body: response.json });
@@ -593,8 +596,11 @@ await step("concurrency/create-sessions", async (evidence) => {
 });
 if (queueSessionA !== null && queueSessionB !== null) {
   await step("concurrency/cross-session-queue", async (evidence) => {
-    // Both are in flight before either can finish.
-    const first = promptAsync(queueSessionA, "E2E_HELLO");
+    // Both are in flight before either can finish. The first also carries fields the gateway does
+    // not define, at the top level and inside `model`: they are ignored, never a 400.
+    const unknownFields = { mode: "task", trace_id: "e2e-trace-prompt", model: { ...model, trace_id: "e2e-trace-model" } };
+    evidence.unknown_fields_sent = unknownFields;
+    const first = promptAsync(queueSessionA, "E2E_HELLO", unknownFields);
     const second = promptAsync(queueSessionB, "E2E_HELLO");
     const busyObservations = [];
     let concurrentlyBusy = null;
