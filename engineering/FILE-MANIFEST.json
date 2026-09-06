@@ -258,8 +258,8 @@
       "path": "code/scripts/test.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 1664,
-      "sha256": "d0f509ae971ca1234fb9a4569aecc21284da62075da3c34b5c464e4409ed22ec"
+      "bytes": 2154,
+      "sha256": "bde5ede73d43f5e9a697549b6ae16269e258e6b61e8ada6ca84efdc51dfa118f"
     },
     {
       "path": "code/src/assets/resolver.ts",
@@ -755,15 +755,15 @@
       "path": "code/tests/unit/contracts.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 20541,
-      "sha256": "53a4ef50092303c115beb5acbd4db95bca3eac8b4af2106d00d58eb03bfdb8e6"
+      "bytes": 21074,
+      "sha256": "6f73673e7babdf9deed768f48f7843addf4a41fd3ec38d0212eacd18c00120b5"
     },
     {
       "path": "code/tests/unit/core.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 11317,
-      "sha256": "90a9cf10dbc21858d849fb06eba1939867ffa4efbef4c6b683a3291c75fba25e"
+      "bytes": 11555,
+      "sha256": "28088b6b61c72d41bee1e061345cf801158e342584dc4ebb1a048c26d3440110"
     },
     {
       "path": "code/tests/unit/process-host.test.ts",

@@ -26,7 +26,12 @@ async function fixture(options: MockOptions = {}, timeout = 1000) {
   const session = await core.createSession(directory);
   return {
     directory, dbPath, store, pack, core, session,
-    async close() { await core.close(); await store.close(); await rm(directory, { recursive: true, force: true }); },
+    // The store's worker thread is closed even when the core reports uncertainty, so a failing test
+    // still lets its process exit and the runner prints the failure instead of waiting on the file.
+    async close() {
+      try { await core.close(); }
+      finally { await store.close(); await rm(directory, { recursive: true, force: true }); }
+    },
   };
 }
 async function waitBusy(f: Awaited<ReturnType<typeof fixture>>) {

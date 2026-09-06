@@ -20,8 +20,11 @@ async function create(pack: EnginePack = new MockPack(), provider: IntegrationPr
   const core = new GatewayCore(store, pack, provider, { dataDirectory: dir, cancelGraceMs: 30, ...options });
   const session = await core.createSession(dir);
   return { dir, store, core, session, async clean(uncertain = false) {
-    if (uncertain) await assert.rejects(core.close()); else await core.close();
-    await store.close(); await rm(dir, { recursive: true, force: true });
+    // The store's worker thread is closed whatever the core's close reports: a test that fails on the
+    // core's uncertainty must still let its process exit, or the runner waits on the file instead of
+    // printing the failure.
+    try { if (uncertain) await assert.rejects(core.close()); else await core.close(); }
+    finally { await store.close(); await rm(dir, { recursive: true, force: true }); }
   } };
 }
 async function waitFor(fn: () => Promise<boolean>) { for (let i=0;i<100;i++) { if (await fn()) return; await sleep(5); } assert.fail("condition not reached"); }
@@ -36,8 +39,11 @@ test("late channel after startup timeout is terminated and its proof lifts the s
     assert.equal(f.core.readiness, true);
     await assert.rejects(f.core.run(f.session.id, request), { code: "SESSION_UNAVAILABLE" });
     assert.equal((await f.core.getSession(f.session.id)).recovery, "blocked");
-    await sleep(130); assert.equal(cleanup, 1);
-    assert.equal((await f.core.getSession(f.session.id)).recovery, "ready");
+    // The late channel arrives ~100 ms in, then its termination, the scope stop and the fence lift each
+    // hit storage; on a loaded Windows runner that is more than a fixed 130 ms, so the evidence is
+    // awaited rather than assumed to have landed by then.
+    await waitFor(async () => cleanup === 1 && (await f.core.getSession(f.session.id)).recovery === "ready");
+    assert.equal(cleanup, 1);
     assert.equal((await f.core.diagnostics()).degraded, false);
   } finally { await f.clean(); }
 });
