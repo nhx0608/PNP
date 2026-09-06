@@ -121,6 +121,32 @@ function permissionOperation(mappedName: string | undefined, call: RequestPermis
   }
   return "tool";
 }
+/** A title the engine used as a path: an absolute POSIX path, a drive-letter path, or a UNC share. */
+const PATH_SHAPED_TITLE = /^(?:[a-zA-Z]:[\\/]|\\\\[^\\/]|\/[^/])/;
+/**
+ * The paths a permission request is about, published as the specification's `patterns`. Every entry is
+ * something the engine itself named, never a target the driver decided on: the ACP `locations` are the
+ * structured statement of which files a call touches, so they come first; failing those, the raw input's
+ * own file keys; failing those, the title, but only when the engine used the title as a path — opencode
+ * 1.18.29 does exactly that for an edit (docs/engines/opencode.md section 4.2), while a title like
+ * "Write a file" says nothing about a path. Nothing path-like means no patterns, not a guess.
+ */
+function permissionPatterns(call: RequestPermissionRequest["toolCall"]): string[] {
+  const named: string[] = [];
+  for (const location of call.locations ?? []) {
+    // The engine's payload is unvalidated JSON whatever the declared type says.
+    if (typeof location?.path === "string" && location.path !== "") named.push(location.path);
+  }
+  if (named.length === 0) {
+    const input = jsonObject(call.rawInput);
+    for (const key of ["filepath", "filePath", "path"]) {
+      const value = input[key];
+      if (typeof value === "string" && value !== "") named.push(value);
+    }
+  }
+  if (named.length === 0 && typeof call.title === "string" && PATH_SHAPED_TITLE.test(call.title)) named.push(call.title);
+  return [...new Set(named)];
+}
 export function mcpServersFor(tools: readonly ToolBinding[]): McpServer[] {
   return tools.filter((tool) => tool.transport === "mcp-stdio").map((tool) => ({
     name: tool.id, command: tool.command, args: [...tool.args],
@@ -285,6 +311,9 @@ export class AcpSessionChannel implements EngineSessionChannel {
         payload: toJson({
           toolCallId: call.toolCallId, title: call.title ?? null, name: call.name ?? null, kind: call.kind ?? null,
           locations: call.locations ?? null, rawInput: call.rawInput ?? null,
+          // The specification's permission object names the paths the request is about. It is read off
+          // what the engine asked for; an empty list means the engine named none.
+          patterns: permissionPatterns(call),
           // OpenCode puts the proposed diff here (type "diff" with oldText/newText), not in rawInput;
           // an approver deciding on an edit needs it.
           content: call.content ?? null,

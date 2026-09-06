@@ -48,7 +48,7 @@
 | POST | /session/:id/abort | 确认停止后 `{ok:true}`；无活跃 Run 的 idle 会话为空操作；无活跃 Run 的 blocked 会话 409；不改变进程级就绪 |
 | POST | /session/:id/stop | abort 别名 |
 | GET | /event | SSE，15 秒心跳 |
-| GET | /question、/permission | 尚有活跃等待者的请求；返回的标识是网关标识，不被引擎载荷覆盖 |
+| GET | /question、/permission | 尚有活跃等待者的请求；返回的标识是网关标识，不被引擎载荷覆盖；权限条目的字段见 7 |
 | POST | /question/:id/reply | `answers:string[][]` |
 | POST | /permission/:id/reply | `reply:once/always/reject` |
 | GET | /health/live、/health/ready、/diagnostics | 本地诊断扩展，不替代赛题接口 |
@@ -159,6 +159,8 @@ ToolBinding 的 executable、args、env 来自可信配置。工具凭据与模�
 ## 7. 交互规则
 
 组织授权返回 allow、deny、ask。deny 不进入可由用户覆盖的等待状态；ask 才发布可回复请求。question 回答为数组形式，权限 allow/deny 不当作 question 答案。重复答复、跨类型答复、已过期请求明确失败。
+
+`GET /permission` 的条目与 `permission.asked` 事件是同一个权限对象：`{id, sessionID, permission, patterns, created_at}` 加驱动载荷（`title`、`name`、`kind`、`locations`、`rawInput`、`content`、`options` 等），网关标识排在最后，不被引擎载荷覆盖。`permission` 是策略可写的工具名（取名规则同第 4 节，与轨迹一致）。`patterns` 是本次请求涉及的路径数组，永远存在：驱动按 `locations[].path` → `rawInput` 的 `filepath`/`filePath`/`path` → 引擎把 title 当作路径使用时的 title 依次取值，保序去重；引擎没有指明任何路径时为空数组。`patterns` 只转述引擎请求里已有的事实，网关不推断、不补写目标，也不因缺少 `patterns` 拒绝或改写请求。question 的载荷形状不受本段约束。
 
 `InteractionResponse.source` 标明决定来源：`policy` 为组织策略直接裁决，`user` 为回复接口提交，`timeout` 为等待过期，`cancelled` 为 Run 取消或终止清理等待者。`reasonCode` 携带非敏感原因码。Adapter 据此区分组织拒绝与无人应答，把两者映射为各自引擎的原生拒绝原因；组织拒绝依然不可被用户回复覆盖。
 

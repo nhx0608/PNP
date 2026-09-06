@@ -301,3 +301,75 @@ test("a permission asked outside any turn is refused without asking anyone", asy
     await channel.close();
   }
 });
+
+// --- the paths the request is about: the specification's `patterns` --------------------------------------------
+
+const ALLOW_ONCE: RequestPermissionRequest["options"] = [
+  { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+  { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+];
+/** Reads the `patterns` the driver published on the request an approver sees. */
+function patternsOf(asked: Asked): unknown {
+  const payload = asked.interactions[0]?.payload;
+  assert.ok(payload !== null && typeof payload === "object" && !Array.isArray(payload));
+  return payload["patterns"];
+}
+
+test("the patterns are the locations the engine named, in order and without repeats", async () => {
+  const asked = await askDuringTurn({
+    answer: (): Promise<InteractionResponse> => Promise.resolve({ decision: "allow", source: "user" }),
+    request: {
+      sessionId: NATIVE_SESSION,
+      toolCall: {
+        toolCallId: "call-locations", title: "Edit two files", name: "edit",
+        locations: [
+          { path: "C:\\workspace\\a.txt" }, { path: "C:\\workspace\\b.txt" }, { path: "C:\\workspace\\a.txt" },
+        ],
+        // The structured statement of which files the call touches outranks anything read off the input.
+        rawInput: { filepath: "C:\\workspace\\unrelated.txt" },
+      },
+      options: ALLOW_ONCE,
+    },
+  });
+  assert.deepEqual(patternsOf(asked), ["C:\\workspace\\a.txt", "C:\\workspace\\b.txt"]);
+});
+
+test("without locations the patterns come from the file key of the raw input", async () => {
+  const asked = await askDuringTurn({
+    answer: (): Promise<InteractionResponse> => Promise.resolve({ decision: "allow", source: "user" }),
+    // opencode 1.18.29 asks for an edit with no `name` and no `locations`; the target is in `rawInput`.
+    request: {
+      sessionId: NATIVE_SESSION,
+      toolCall: {
+        toolCallId: "call-raw-input", title: "C:\\workspace\\out.txt", kind: "edit",
+        rawInput: { filepath: "C:\\workspace\\out.txt", content: "hi" },
+      },
+      options: ALLOW_ONCE,
+    },
+  });
+  assert.deepEqual(patternsOf(asked), ["C:\\workspace\\out.txt"]);
+});
+
+test("a title the engine used as a path is the last thing the patterns fall back to", async () => {
+  const asked = await askDuringTurn({
+    answer: (): Promise<InteractionResponse> => Promise.resolve({ decision: "allow", source: "user" }),
+    request: {
+      sessionId: NATIVE_SESSION,
+      // Nothing but the display title, and the engine put a path in it.
+      toolCall: { toolCallId: "call-title", title: "/home/user/workspace/out.txt", kind: "edit" },
+      options: ALLOW_ONCE,
+    },
+  });
+  assert.deepEqual(patternsOf(asked), ["/home/user/workspace/out.txt"]);
+});
+
+test("a request that names no path at all carries no patterns rather than an invented one", async () => {
+  const asked = await askDuringTurn({
+    answer: (): Promise<InteractionResponse> => Promise.resolve({ decision: "allow", source: "user" }),
+    // The default request has a prose title, a tool name, and no location or path-bearing input.
+    request: permissionRequest(),
+  });
+  assert.deepEqual(patternsOf(asked), []);
+  // The gateway states the field either way; it does not guess what the engine did not say.
+  assert.equal(asked.interactions[0]?.operation, "write");
+});

@@ -205,6 +205,9 @@ function permissionEvidence(entry) {
     id: entry.id ?? null,
     session_id: entry.sessionID ?? null,
     permission: entry.permission ?? null,
+    // The specification's permission object carries the paths the request is about; it is always
+    // present, so an entry without the key is a contract failure and not merely "no paths named".
+    patterns: Array.isArray(entry.patterns) ? entry.patterns : null,
     title: entry.title ?? null,
     name: entry.name ?? null,
     kind: entry.kind ?? null,
@@ -397,6 +400,25 @@ if (currentSessionId !== null) {
     evidence.permission.names_target = named.some((value) => typeof value === "string" && value.includes(writeFileName));
     assert(evidence.permission.names_target,
       "the payload must tell the approver which file is being written", evidence.permission);
+    // `patterns` is the specification's own field for that target, and it is read off what the engine
+    // asked for. It must be there, and it must name the file this prompt asked to write.
+    assert(Array.isArray(evidence.permission.patterns),
+      "the permission object must carry patterns", evidence.permission);
+    evidence.permission.patterns_exact_target = evidence.permission.patterns.includes(writeTarget);
+    assert(evidence.permission.patterns.some((value) => typeof value === "string" && value.includes(writeFileName)),
+      "the permission patterns must name the file being written", evidence.permission);
+    // The published request carries the same field, so a subscriber learns the target without polling.
+    const askedEvent = await waitForEvent((event) => event.type === "permission.asked"
+      && event.properties?.id === asked.entry.id, 10_000);
+    evidence.permission.event = askedEvent === null ? null : {
+      permission: askedEvent.properties?.permission ?? null,
+      patterns: Array.isArray(askedEvent.properties?.patterns) ? askedEvent.properties.patterns : null,
+    };
+    assert(evidence.permission.event !== null,
+      "the pending permission must have been published as permission.asked", { id: asked.entry.id });
+    assert(Array.isArray(evidence.permission.event.patterns)
+      && evidence.permission.event.patterns.some((value) => typeof value === "string" && value.includes(writeFileName)),
+      "the permission.asked event must carry the same patterns", evidence.permission.event);
     // 3. Answer once, and prove a repeated answer cannot pass for a second approval.
     const once = await replyPermission(asked.entry.id, "once");
     evidence.reply = once;

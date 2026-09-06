@@ -298,6 +298,37 @@ test("organization deny is final and exposes no overridable pending approval", a
     assert.deepEqual(await f.core.interactions.list("permission"), []);
   } finally { await f.clean(); }
 });
+test("a pending permission always states patterns, empty when the driver named no path", async () => {
+  const pack = new MockPack(); const open = pack.open.bind(pack);
+  pack.open = async (input) => { const channel = await open(input); const run = channel.run.bind(channel);
+    channel.run = async (runInput) => {
+      // The first request is one the driver could read a path off; the second names no path at all.
+      await runInput.services.interact({ kind: "permission", operation: "write",
+        payload: { title: "C:/workspace/out.txt", patterns: ["C:/workspace/out.txt"] } });
+      await runInput.services.interact({ kind: "permission", operation: "bash", payload: { title: "Run a command" } });
+      return run(runInput);
+    }; return channel; };
+  const provider = new MockIntegration(); const prepare = provider.prepare.bind(provider);
+  provider.prepare = async (input) => ({ ...(await prepare(input)), authorize: async () => ({ effect: "ask", reasonCode: "ASK" }) });
+  const f = await create(pack, provider);
+  const asked: { [key: string]: Json }[] = [];
+  f.core.journal.subscribe((event) => { if (event.type === "permission.asked") asked.push(event.properties); });
+  try {
+    const running = f.core.run(f.session.id, request);
+    for (const expected of [["C:/workspace/out.txt"], []]) {
+      await waitFor(async () => (await f.core.interactions.list("permission")).length === 1);
+      // This is the body of GET /permission verbatim: `patterns` sits beside `permission`, as the specification says.
+      const pending = (await f.core.interactions.list("permission"))[0]!;
+      assert.deepEqual(pending["patterns"], expected);
+      assert.equal(typeof pending["permission"], "string");
+      await f.core.interactions.reply(pending.id, "permission", { decision: "allow" });
+    }
+    await running;
+    // The published request carries the same field, so a subscriber never has to poll to learn the paths.
+    assert.deepEqual(asked.map((event) => event["patterns"]), [["C:/workspace/out.txt"], []]);
+    assert.deepEqual(asked.map((event) => event["permission"]), ["write", "bash"]);
+  } finally { await f.clean(); }
+});
 test("question policy allow still asks and uses question event names", async () => {
   const pack = new MockPack(); const open = pack.open.bind(pack); let observed: unknown;
   pack.open = async (input) => { const channel = await open(input); const run = channel.run.bind(channel);

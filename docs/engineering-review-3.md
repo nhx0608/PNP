@@ -79,6 +79,8 @@
 ### R7 权限载荷缺 `patterns`
 规范 5.3/6.1.4 的权限对象是 `{id, sessionID, permission, patterns[], created_at}`。master 的 `interactions.ts:100-105` 给出 `id/sessionID/created_at/permission` 加驱动载荷，但没有 `patterns`。评测脚本回复只需要 `id`，所以不致命；但按规范补上更稳：由驱动载荷的 `locations[].path` / `title` 推出 `patterns`，`permission` 保持工具名（如 `write`）或映射成规范示例的 `file.write` 风格，二者取其一并写进文档。
 
+**已实现（2026-09-06）**：ACP 驱动按 `locations[].path` → `rawInput.filepath`/`filePath`/`path` → 路径形状的 title 依次取值并保序去重，Core 保证 `GET /permission` 条目与 `permission.asked` 事件都带 `patterns`（引擎未指明路径时为空数组）；`permission` 仍取工具名，规范文本见 `engineering/docs/spec/contracts.md` §7，真实引擎证据见冒烟 `case2` 的 `permission.patterns`。
+
 ### R8 入站请求体 `additionalProperties: false`
 `gateway/schemas.ts` 对 `POST /session` 与 `prompt_async` 拒绝任何未知字段。评测脚本若多带一个字段（例如 MyAgent 风格的 `trace_id`），就是 400。对评测方入站体应**忽略未知字段**，只校验必填项的类型。
 

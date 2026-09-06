@@ -6,6 +6,17 @@ import { PnpError } from "./errors.ts";
 import { deferred, bounded } from "../runtime/deadline.ts";
 import { Redactor } from "../security/redaction.ts";
 
+/**
+ * The specification's permission object always carries `patterns`, so the gateway states the field
+ * whether or not the driver could name a path. A driver that observed none contributes an empty list;
+ * the gateway never fills one in on its behalf.
+ */
+function patternsOf(payload: Json): Json[] {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return [];
+  const named = payload["patterns"];
+  return Array.isArray(named) ? named : [];
+}
+
 /** Questions and approvals are run-scoped; permission answers cannot override policy denial. */
 export class InteractionBroker {
   private readonly liveRuns = new Set<string>();
@@ -80,7 +91,7 @@ export class InteractionBroker {
       const body = payload !== null && !Array.isArray(payload) && typeof payload === "object" ? payload : {};
       await this.journal.publish(`${request.kind}.asked`, {
         ...body, sessionID: input.sessionId, runID: input.runId, id,
-        ...(request.kind === "permission" ? { permission: request.operation } : {}),
+        ...(request.kind === "permission" ? { permission: request.operation, patterns: patternsOf(body) } : {}),
       });
       if (signal.aborted) choice.resolve({ decision: "deny", source: "cancelled", reasonCode: "RUN_CANCELLED" });
       let answer: InteractionResponse;
@@ -103,7 +114,7 @@ export class InteractionBroker {
   async list(kind: "permission" | "question") {
     return (await this.store.call("listInteractions", { kind })).filter((row) => this.pending.has(row.id)).map((row) => ({
       ...(typeof row.payload === "object" && row.payload !== null && !Array.isArray(row.payload) ? row.payload : {}),
-      ...(kind === "permission" ? { permission: row.operation } : {}),
+      ...(kind === "permission" ? { permission: row.operation, patterns: patternsOf(row.payload) } : {}),
       // Gateway identity comes last: an engine payload carrying its own id must not replace the
       // identifier a client has to send back, which is the same order the published event uses.
       id: row.id, sessionID: row.sessionId, created_at: row.createdAt,
