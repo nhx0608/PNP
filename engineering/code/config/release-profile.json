@@ -1,7 +1,9 @@
 {
-  "engines": [
+  "requiredEngines": [
     "opencode",
-    "pi",
+    "pi"
+  ],
+  "optionalEngines": [
     "hermes"
   ],
   "minimumDistinctEngines": 2,

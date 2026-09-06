@@ -33,6 +33,37 @@ npm start -- --port 6217 --host localhost
 
 C 交付内部模型、工具和权限配置。`config/internal.example.json` 是结构示例，不表示内网 API 已验证。
 
+### 3.1 环境变量
+
+完整清单与默认值见 `code/.env.example`；以下几项此前未写入本说明：
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `PNP_INTEGRATION` | 未设置（非 mock 引擎回退 `internal`，无实现会拒绝启动；mock 引擎回退 `mock`） | 模型/工具/权限的集成方式：`internal`（内网，C 交付）、`configured`（读取下方配置档）、`mock`（仅限 mock 引擎）。选错或与所选引擎不匹配会在启动阶段失败，见 3.2 |
+| `PNP_CONFIGURED_PROFILE` | 无 | `PNP_INTEGRATION=configured` 时必填的**绝对路径**，指向形如 `config/configured.example.json` 的模型/工具/策略档；其他集成方式下忽略 |
+| `PNP_MAX_RESIDENT_SESSIONS` | `16`（范围 1–64） | 常驻原生通道上限；到达上限按最久未用淘汰非活跃会话的通道，不再直接拒绝第 17 个会话。评测一轮同时保有的会话数持续高于默认值时才需要调大 |
+| `PNP_RUN_TIMEOUT_MS` | `900000`（15 分钟，范围 1000–86400000） | 单次 Prompt 执行的总时限。任务涉及大文档转换、多步网页检索等确需更久时再调大 |
+| `PNP_OPEN_TIMEOUT_MS` | `60000`（范围 1000–600000） | 原生进程/引擎握手时限。评测机首次运行叠加杀软扫描或冷编译较慢时调大 |
+| `PNP_CANCEL_GRACE_MS` | `15000`（范围 100–300000） | 取消后到判定"停止未证实"前的宽限期。引擎需要更长时间才能安全落盘（例如 Office 另存为）时调大；调小可在用例之间更快回收资源 |
+| `PNP_INTERACTION_TIMEOUT_MS` | `45000`（范围 1000–600000） | 反问/授权等待回复的时限，超时按 `reason:"TIMEOUT"` 处理为拒绝 |
+
+以上数值型变量留空（`VAR=`）等同于不设置，按默认值处理，不会被解析成 `0` 而拒绝启动。
+
+### 3.2 启动阶段错误码
+
+以下错误在监听端口之前发生，进程以非零退出码结束，不会进入"运行中但未就绪"状态；错误对象的 `code` 字段与下表对应：
+
+| `code` | 触发条件 |
+|---|---|
+| `UNSUPPORTED_BIND_ADDRESS` | `PNP_HOST`/`--host` 不是回环地址（`127.0.0.1`/`localhost`/`::1`） |
+| `VALIDATION_ERROR` | 端口、`PNP_MAX_RESIDENT_SESSIONS` 或四个超时变量之一超出取值范围 |
+| `ENGINE_NOT_FOUND` / `ENGINE_CONFIGURATION_CONFLICT` | `AGENT_ENGINE`/`--engine` 未设置、未知，或二者冲突 |
+| `MOCK_FORBIDDEN` | 非开发模式下选择了仅限开发的引擎或集成方式 |
+| `ENGINE_UNAVAILABLE` | 所选 Engine Pack 尚无实现 |
+| `INTEGRATION_NOT_FOUND` / `INTEGRATION_CONFIG_INVALID` | `PNP_INTEGRATION` 取值非法，或 `configured` 模式下配置档缺失/路径非绝对/JSON 不合法/字段不合规 |
+| `INSTANCE_LOCKED` | `PNP_DATA_DIR` 已被另一个存活的网关进程占用 |
+| `INSTANCE_GUARD_FAILED` | Windows 独占句柄获取失败，且回退到文件锁也未成功 |
+
 ## 4. 调用流程
 
 1. 检查 `/health/live` 与 `/health/ready`。后者表示公共核心可接受任务，不替代模型和工具可用性实测。
@@ -56,7 +87,9 @@ C 交付内部模型、工具和权限配置。`config/internal.example.json` �
 
 可使用 `Idempotency-Key` 请求级防重，但不能保证外部消息系统 exactly-once。
 
-异常退出不自动重放。Gateway 启动时会在取得进程生命周期独占锁后自动核验全部宿主记录；只有停止证据完整的 Session 才解除阻断。停止证据不足时保持 not-ready，可退出后执行 `npm run recover` 重试同一核验流程。禁止手动删锁后立即运行新任务。
+异常退出不自动重放。**围栏是会话级的，不是网关级的**：网关取得进程生命周期独占锁、打开存储、开始监听端口之后，才异步核验上一轮遗留的宿主归属记录（有总时限，超时不阻塞健康检查）；核验结果只收窄到它点名的会话，`GET /health/ready` 只反映存储是否可用，不受任何单个会话的停止证据影响，其余会话与后续新建会话不受影响。
+
+核验的处置方式：能自证已停止的会话解除阻断并归档其记录；找不到对应会话的孤儿记录被隔离且计数，不再点名任何会话；停止证据不足或核验本身失败的会话保持 `recovery=blocked`，该会话的 `prompt`/执行请求返回 409 `SESSION_UNAVAILABLE`，但删除该会话（`DELETE /session/{id}`）仍然允许，且本身就是解除围栏的合法方式。执行 `npm run recover` 可在网关停止运行时重跑同一核验流程；它会打印每条问题记录的文件名、原因（不可读、格式不合法、无对应会话、未证实、核验失败）与所属会话，而不只是计数，仍处于阻断状态的会话据此可以逐条排查而非只知道"还有几个"。禁止手动删锁后立即运行新任务；`PNP_DATA_DIR` 下的归属记录会随核验结果被移动或删除，不要手工清空整个数据目录。
 
 ## 6. 诊断与关闭
 
@@ -70,6 +103,10 @@ Ctrl+C 触发取消、通道关闭、SSE 与数据库关闭。Job Object 只监�
 npm run release:check
 ```
 
-门禁要求 Windows 实测、真实依赖/引擎锁、同一代码 SHA 的内网证据、真实引擎实现。赛题至少两种 Harness；项目发布支持清单列出的全部引擎都须通过。Mock 不计入。
+门禁要求 Windows 实测、真实依赖/引擎锁、同一代码 SHA 的内网证据、真实引擎实现。赛题只要求两种以上 Harness；`config/release-profile.json` 的 `requiredEngines`（当前 opencode、pi）必须全部通过，`optionalEngines`（当前 hermes，早期 Windows beta）不计入门禁——有完整证据按 bonus 记录通过与否，没有证据只报告"未提交"，均不阻断发布。Mock 不计入任何一类。
 
-最终 `solution.zip` 包含 `INSTRUCTION.md` 与完整 `code/`，不包含密钥、用户数据或 node_modules。
+```powershell
+npm run package:release
+```
+
+按 `solution/{INSTRUCTION.md, code/}` 结构打包，默认输出到 `code/dist/release/`（已被 `.gitignore` 排除）。只拷贝 `src/`、`native/`、`config/`、`scripts/`、`assets/`、`package.json`、`package-lock.json`、`tsconfig.json`、`toolchain.json`、`.env.example`、`code/README.md`；`tests/` 默认不打包，需要时加 `--include-tests`。`engineering/` 顶层的评审材料、规范、提示词与验证证据不进包；`engineering/INSTRUCTION.md` 被复制为 `solution/INSTRUCTION.md`。打包后自动自检包内不含凭据模式字符串、运行数据（数据库/日志/证书私钥）或依赖目录（`node_modules`），自检不通过时退出码非零，需要人工复核后再提交。

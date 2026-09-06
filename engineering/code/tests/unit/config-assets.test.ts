@@ -90,3 +90,13 @@ test("configured integration is explicit and strict, and mock never substitutes 
       { code: "INTEGRATION_NOT_FOUND" });
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test("an empty AGENT_ENGINE is unset, not a value", () => {
+  // A wrapper that exports the variable without a value must not disable --engine.
+  assert.equal(selectEngine("opencode", ""), "opencode");
+  assert.equal(selectEngine("opencode", "   "), "opencode");
+  assert.equal(selectEngine(undefined, "pi"), "pi");
+  assert.equal(selectEngine("", "pi"), "pi");
+  assert.throws(() => selectEngine("", ""), { code: "ENGINE_NOT_FOUND" });
+  assert.throws(() => selectEngine("opencode", "pi"), { code: "ENGINE_CONFIGURATION_CONFLICT" });
+});

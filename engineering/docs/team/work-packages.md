@@ -69,8 +69,9 @@ flowchart LR
 | B05 | 原生扩展桥 | 通过 Pi 原生工具/Extension 接入 ToolBinding；不重新实现内部 CLI |
 | B06 | 事件与交互 | 工具状态收敛、UI 交互映射、错误和扩展事件保留 |
 | B07 | 版本、配置与测试 | 声明确切安装方式和能力证据；使用共同测试套件 |
+| B08 | Office 能力包（`code/assets/packs/office/**`） | docx/xlsx/pptx/csv 的读写、转换与产物自检；`pack.json`（`owner:"B"`）、`SKILL.md`、`instructions/office.md` 齐备；探测（`probes[]`）失败时按 `onFailure` 处理，不静默通过；投影到两个必过引擎（opencode、pi）后各自产生一次 `pack.projected` 原生事件；包内不含 `task_id`、固定答案或测试材料；自检步骤在无引擎环境下可单独运行 |
 
-B 的完成不依赖 A 的 ACP Driver。B 不承担“等 ACP 完成后再接 Hermes”的串行工作；Hermes 与 ACP 由 A 同域维护。
+B 的完成不依赖 A 的 ACP Driver。B 不承担“等 ACP 完成后再接 Hermes”的串行工作；Hermes 与 ACP 由 A 同域维护。能力包骨架与字段定义见 [`code/assets/packs/README.md`](../../code/assets/packs/README.md) 与 [`docs/spec/contracts.md` 第 10 节](../spec/contracts.md#10-能力包)；验收对应 [`dfx-and-testing.md`](../spec/dfx-and-testing.md) E03。
 
 ## 5. C 工作包：独立内网接入
 
@@ -87,6 +88,15 @@ B 的完成不依赖 A 的 ACP Driver。B 不承担“等 ACP 完成后再接 He
 C01 模型协议与认证；C02 员工助手 CLI 包装/工具目录；C03 组织权限与审批；C04 脱敏夹具；C05 内网部署/证书/网络自检；C06 最终联合验收证据。
 
 C 不修改 Agent Loop、不把每种引擎的配置格式写进内网服务、不根据测试任务 ID 提供专用答案。
+
+### 新增：能力包（桌面交互与网页检索）
+
+目录：`code/assets/packs/windows-desktop/**`、`code/assets/packs/web-search/**`。骨架与字段定义同 B08，见 [`code/assets/packs/README.md`](../../code/assets/packs/README.md)。
+
+| ID | 任务 | 验收 |
+|---|---|---|
+| C07 | Windows 桌面交互能力包（`windows-desktop/`） | 打开应用、UI 自动化、即时通讯客户端；`pack.json`（`owner:"C"`）、`SKILL.md` 齐备；`sideEffect` 如实标注 `write`/`external`；投影到两个必过引擎各产生一次 `pack.projected`；不访问网关存储、不 spawn 引擎；包内不含任务标识或固定答案 |
+| C08 | 网页检索能力包（`web-search/`） | 网页检索与来源引用；同 C07 的投影与探测验收；返回结果可核查来源，不编造引用 |
 
 ## 6. 共同与集成责任
 
