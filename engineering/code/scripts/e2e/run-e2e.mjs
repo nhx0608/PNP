@@ -392,6 +392,8 @@ if (currentSessionId !== null) {
       tool: part.tool ?? null,
       phase: part.phase ?? null,
       status: part.state?.status ?? null,
+      name_source: part.state?.nameSource ?? null,
+      state_title: part.state?.title ?? null,
       terminal_status: part.state?.terminalStatus ?? null,
       input_keys: part.input !== null && typeof part.input === "object" ? Object.keys(part.input) : null,
     }));
@@ -400,23 +402,28 @@ if (currentSessionId !== null) {
     assert(observations.some((part) => ["completed", "failed"].includes(part.state?.status)),
       "the observed tool trajectory must reach an engine-reported terminal state", evidence.tool_observations);
 
-    // ACP permits a call without a programmatic name. Contract 1.1 deliberately keeps that as
-    // observations rather than inventing a canonical call from its display title/kind. If the engine
-    // does provide a real name, the stronger canonical call/result assertions still apply.
-    if (toolCallMessage !== undefined) {
-      evidence.tool_calls = toolCallMessage.tool_calls.map((call) => call.name);
-      evidence.tool_call_finish = toolCallMessage.info?.finish ?? null;
-      assert(evidence.tool_call_finish === "tool-calls",
-        "the canonical tool-calling assistant message must finish with tool-calls", { info: toolCallMessage.info });
-      assert(evidence.tool_calls.includes("write"), "the canonical recorded tool call must be write", evidence.tool_calls);
-      const toolResult = messages.find((message) => message.role === "tool");
-      assert(toolResult !== undefined, "a canonical tool call must have a tool result message");
-      evidence.tool_result_name = toolResult.tool_name ?? null;
-    } else {
-      evidence.canonical_tool_call = "not-asserted: engine supplied no programmatic tool name";
-      assert(!messages.some((message) => message.role === "tool"),
-        "an unnamed observation must not fabricate a canonical role=tool result");
-    }
+    // opencode announces this call with `title: "write"` and no programmatic `name`; the announced title
+    // is the engine's own label for the call, so it is the canonical identity and its provenance is
+    // recorded. The trajectory therefore carries the reference shape a judge reads, without inventing
+    // anything: a call named by a later title, or a result the engine never produced.
+    const identified = observations.filter((part) => typeof part.tool === "string");
+    evidence.name_sources = [...new Set(identified.map((part) => part.state?.nameSource ?? null))];
+    assert(identified.length > 0, "a canonical observation must carry the tool it belongs to", evidence.tool_observations);
+    assert(evidence.name_sources.every((source) => source === "name" || source === "announced-title"),
+      "every canonical observation must record where its name came from", evidence.name_sources);
+    assert(identified.some((part) => typeof part.state?.title === "string"),
+      "the observation must mirror the engine's title into the spec-shaped state", evidence.tool_observations);
+    assert(toolCallMessage !== undefined, "the engine's announced call must be recorded as a canonical tool call",
+      evidence.messages);
+    evidence.tool_calls = toolCallMessage.tool_calls.map((call) => call.name);
+    evidence.tool_call_finish = toolCallMessage.info?.finish ?? null;
+    assert(evidence.tool_call_finish === "tool-calls",
+      "the canonical tool-calling assistant message must finish with tool-calls", { info: toolCallMessage.info });
+    assert(evidence.tool_calls.includes("write"), "the canonical recorded tool call must be write", evidence.tool_calls);
+    const toolResult = messages.find((message) => message.role === "tool");
+    assert(toolResult !== undefined, "a canonical tool call must have a tool result message");
+    evidence.tool_result_name = toolResult.tool_name ?? null;
+    assert(evidence.tool_result_name === "write", "the tool result must name the tool that ran", evidence.tool_result_name);
     const last = finalAssistant(messages);
     assert(last?.info?.finish === "stop", "the final assistant message must finish with stop", { info: last?.info });
     const content = await readFile(writeTarget, "utf8");

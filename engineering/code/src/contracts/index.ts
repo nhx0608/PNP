@@ -76,7 +76,15 @@ export type DriverEvent =
     callId: string;
     source: "engine";
     title?: string;
+    /** The call's identity. A driver resolves it once and repeats it; it never changes mid-call. */
     name?: string;
+    /**
+     * Contract 1.1.0, additive and optional: where `name` came from. `name` is the engine's programmatic
+     * field; `announced-title` is the title the call was announced under, which for some engines is the
+     * only label a call ever carries. Absent means the driver stated no provenance for `name`. A later
+     * display title is reported as `title` and never renames the call.
+     */
+    nameSource?: "name" | "announced-title";
     input?: Json;
     output?: Json;
     content?: Json[];

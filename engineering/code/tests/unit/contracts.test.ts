@@ -155,7 +155,7 @@ test("a tool call cannot mix observed and legacy event families", async () => {
   try { await assert.rejects(f.core.run(f.session.id, request), { code: "ENGINE_PROTOCOL_ERROR" }); }
   finally { await f.clean(); }
 });
-test("normal completion rejects an observation whose actual status remains nonterminal", async () => {
+test("normal completion records result_unknown for a nonterminal observation and keeps the engine's completion", async () => {
   const pack = new MockPack(); const open = pack.open.bind(pack);
   pack.open = async (input) => {
     const channel = await open(input); const run = channel.run.bind(channel);
@@ -168,10 +168,50 @@ test("normal completion rejects an observation whose actual status remains nonte
   };
   const f = await create(pack);
   try {
-    await assert.rejects(f.core.run(f.session.id, request), { code: "ENGINE_PROTOCOL_ERROR" });
-    const observation = (await f.core.messages(f.session.id)).find((message) => JSON.stringify(message.parts ?? []).includes("no canonical identity"))!;
+    // The engine finished this turn; a call it left open is reported, never a verdict on the turn.
+    await f.core.run(f.session.id, request);
+    const messages = await f.core.messages(f.session.id);
+    const observation = messages.find((message) => JSON.stringify(message.parts ?? []).includes("no canonical identity"))!;
     assert.equal(observation.tool_calls, undefined);
-    assert.equal((await f.core.messages(f.session.id)).some((message) => message.role === "tool" && message.tool_call_id === "unfinished"), false);
+    assert.match(JSON.stringify(observation.parts), /result_unknown/);
+    assert.match(JSON.stringify(observation.parts), /gateway-observation/);
+    assert.equal(messages.some((message) => message.role === "tool" && message.tool_call_id === "unfinished"), false);
+  } finally { await f.clean(); }
+});
+test("an engine that completes with a call it never closed keeps its answer and records result_unknown", async () => {
+  const pack = new MockPack(); const open = pack.open.bind(pack);
+  pack.open = async (input) => {
+    const channel = await open(input); const run = channel.run.bind(channel);
+    channel.run = async (runInput) => {
+      // Announced under a title, arguments bound by the next update, and then never given a terminal
+      // update: what a real engine produces when it answers without closing the call it opened.
+      await runInput.services.events.emit({ type: "tool.observed", source: "engine", callId: "open-call", phase: "created",
+        status: "pending", name: "write", nameSource: "announced-title", title: "write", input: {} });
+      await runInput.services.events.emit({ type: "tool.observed", source: "engine", callId: "open-call", phase: "updated",
+        status: "running", input: { filePath: "C:/work/out.txt" } });
+      return run(runInput);
+    };
+    return channel;
+  };
+  const f = await create(pack);
+  try {
+    await f.core.run(f.session.id, request, "unclosed-call");
+    const messages = await f.core.messages(f.session.id);
+    const call = messages.find((message) => message.tool_calls?.[0]?.id === "open-call")!;
+    assert.deepEqual(call.tool_calls?.[0], { id: "open-call", name: "write", arguments: { filePath: "C:/work/out.txt" } });
+    const closing = (call.parts ?? []).at(-1) as { state?: { terminalStatus?: string; source?: string; status?: string } };
+    assert.equal(closing.state?.status, "error");
+    assert.equal(closing.state?.terminalStatus, "result_unknown");
+    assert.equal(closing.state?.source, "gateway-observation");
+    // A call the engine never finished never becomes an engine result.
+    assert.equal(messages.some((message) => message.role === "tool" && message.tool_call_id === "open-call"), false);
+    // The engine did finish the turn, so the run and the final message say exactly that.
+    const stored = await f.store.call("findRunByKey", { sessionId: f.session.id, key: "unclosed-call" });
+    assert.equal(stored?.state, "completed");
+    assert.equal(stored?.errorCode, undefined);
+    const last = messages.at(-1)!;
+    assert.equal(last.info?.finish, "stop");
+    assert.deepEqual((last.parts ?? []).map((part) => (part as { type: string }).type), ["text", "step-finish"]);
   } finally { await f.clean(); }
 });
 test("channel mismatch rejects reuse even when the engine id matches", async () => {

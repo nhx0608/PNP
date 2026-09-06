@@ -162,14 +162,16 @@ OpenCode 的 `session/request_permission` 对一次编辑**不带 `name`**、`ki
 
 驱动（`src/drivers/acp/channel.ts` 的 `permissionOperation`）按这个顺序取第一个非空值：
 
-1. `SessionUpdateMapper.nameOf(toolCallId)` —— 该 call 的策略标签；优先使用 ACP 的程序化 `name`，没有 `name` 时才为
-   授权匹配回退到 `title/kind`。这个回退只服务策略，不会被写成 canonical tool name；
+1. `SessionUpdateMapper.nameOf(toolCallId)` —— 该 call 宣告时解析出的身份：优先 ACP 的程序化 `name`，没有 `name` 时用宣告
+   时的 `title`（OpenCode 的 `write` 就是这么来的）。两者都没有时这一档为空，继续往下取；
 2. 请求自带的 `toolCall.name`；
 3. `toolCall.kind`（ACP 的封闭小词表，至少能写进策略）；
 4. `toolCall.title`；
 5. `toolCall.toolCallId`（兜底，唯一，匹配不上任何策略，但不会谎报成别的操作）。
 
 载荷本身不变，仍然把 `title`/`name`/`kind`/`locations`/`rawInput`/`content`/`options` 原样交给审批方。
+
+**轨迹侧用的是同一条取名规则。** 契约 1.1 的 `tool.observed` 把这次调用的 canonical 名称定为 `name ?? 宣告时的 title`，并用 `nameSource`（`"name"` | `"announced-title"`）标注出处，因此 OpenCode 的 `write` 在轨迹里就是 `write`：assistant 消息带 `tool_calls: [write]` 与 `info.finish: "tool-calls"`，随后是 `tool_name: "write"` 的 role=tool 消息。宣告之后引擎把 `title` 改写成目标文件路径（§4.2 的时序），那条改写只作为 `title` 记录，**不改名**。策略与轨迹因此永远不会对同一次调用给出两个名字；只有既无 `name` 又无宣告 title 的 call 才停留在非 canonical 的观察上。
 
 `"ask"` 路线在真实 1.18.29 二进制（Linux）上实跑过一次 `write` 工具，观察到的时序与载荷（probed）：
 
@@ -179,9 +181,9 @@ OpenCode 的 `session/request_permission` 对一次编辑**不带 `name`**、`ki
 
 4. **`reject_once` 也实跑过了**（probed，Linux 1.18.29，见 §11 的 `case2b`）：选 `reject_once` 后引擎把该 call 记为
    `status: failed`，内容是 `"The user rejected permission to use this specific tool call."`，目标文件**没有**被创建，
-   本轮随后正常结束（最终 assistant 消息 `finish: "stop"`），会话回到 `idle`。契约 1.1 逐字段保留这条失败观察；只有 ACP
-   同时给出真实程序化 `name`、`rawInput` 和终态 `rawOutput` 时才投影 canonical tool call/result，缺项时保留
-   `tool.observed`/`result_unknown`，不补造失败结果。
+   本轮随后正常结束（最终 assistant 消息 `finish: "stop"`），会话回到 `idle`。契约 1.1 逐字段保留这条失败观察；
+   canonical tool call 需要该 call 的名称（`name` 或宣告时的 title）与 `input` 都被观察到，role=tool 结果还额外需要终态
+   `rawOutput`，缺项时保留 `tool.observed`/`result_unknown`，不补造失败结果。
 
 `bash: "ask"` 的实际行为未观察；Windows 上 `edit: "ask"` 的允许一次与拒绝一次两条路线已通过真实二进制端到端检查。
 
@@ -348,6 +350,8 @@ Linux 上对 1.18.29 的实跑结果（probed；当时为契约 1.0，网关**�
 
 契约 1.1 把 ACP 工具更新改为逐字段 `tool.observed` 后，上述真实引擎腿必须重新执行才能把 14/14 证据迁移到当前提交；旧结果只证明
 进程、协议、权限与模型链路曾经跑通，不证明当前工具轨迹投影已在真实二进制上复验。
+
+**D1–D3 落地后在 Linux 上对 1.18.29 重跑过一次（probed，14/14，模型端点仍是 mock；Windows 未复跑）**：`case2` 的 assistant 消息带 `tool_calls: ["write"]` 与 `info.finish: "tool-calls"`，`role: "tool"` 消息的 `tool_name` 是 `write`，三条观察 part 的 `state.nameSource` 全部是 `announced-title`，`state.title` 依次是 `write`、`write`、被引擎改写后的目标文件路径，最终 assistant 消息 `finish: "stop"`。
 
 CI 里 `engine-smoke` 作业以四条腿跑同一套：ubuntu/mock、ubuntu/opencode、windows/mock、windows/opencode，其中 windows/opencode 用 `npm install -g opencode-ai@1.18.29` 装出真实 `opencode.exe`，通过 `npm root -g` 定位。每条腿的工件（网关日志、模型请求日志、报告、归属记录、`/diagnostics`）随作业上传。
 

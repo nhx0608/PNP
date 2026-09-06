@@ -366,7 +366,9 @@ export class AcpSessionChannel implements EngineSessionChannel {
       // A local stop outranks the engine's self-report: interrupted turns report drifting completion fields.
       return this.finish(turn, true, stopReason, true);
     }
-    if (unresolved > 0) return this.finish(turn, true, "tool_result_missing", false);
+    // A call the engine never closed is reported in the turn diagnostic above and closed by Core as
+    // `result_unknown`. It is not a verdict on the turn: the engine's stop reason decides that, or a
+    // correct final answer would be replaced by an error the evaluator never saw the engine give.
     return {
       state: stopReason === "cancelled" ? "cancelled" : "completed",
       finish: finishFor(stopReason),

@@ -265,6 +265,8 @@ export class GatewayCore {
     const tools = new Map<string, {
       family: "legacy" | "observed";
       name?: string;
+      /** Where the canonical name came from; a driver may name a call by the title it announced it under. */
+      nameSource?: "name" | "announced-title";
       input?: Json;
       inputObserved: boolean;
       message: Message;
@@ -428,6 +430,7 @@ export class GatewayCore {
               if (hasName) {
                 if (tool.name !== undefined && tool.name !== name) throw new PnpError("ENGINE_PROTOCOL_ERROR", "Tool identity changed during execution.", 502);
                 tool.name = name;
+                if (event.nameSource !== undefined) tool.nameSource = event.nameSource;
               }
               if (hasInput) {
                 tool.input = redactor.json(event.input ?? null);
@@ -445,17 +448,22 @@ export class GatewayCore {
               if (!tool.terminal && event.status !== undefined) tool.status = event.status;
               if (!tool.terminal && observedTerminal) tool.terminal = true;
               const status = tool.terminal ? (tool.status ?? "failed") : (event.status ?? tool.status ?? "pending");
+              // The spec's tool part is {type, tool, state:{status, title}}; the observation keeps its own
+              // fields and mirrors that shape, so a reader of the reference shape sees the call as well.
+              const observedTitle = event.title === undefined ? undefined : redactor.text(event.title);
               const observation: { [key: string]: Json } = {
                 type: "tool", callID: event.callId, source: event.source, phase: event.phase,
                 state: {
                   status,
+                  ...(observedTitle === undefined ? {} : { title: observedTitle }),
+                  ...(tool.nameSource === undefined ? {} : { nameSource: tool.nameSource }),
                   ...(observedTerminal && !tool.terminalOutputObserved ? { terminalStatus: "result_unknown" } : {}),
                   ...(event.nativeStatus === undefined ? {} : { nativeStatus: redactor.text(event.nativeStatus) }),
                   ...(event.nativeType === undefined ? {} : { nativeType: redactor.text(event.nativeType) }),
                 },
               };
-              if (hasName) observation.tool = redactor.text(event.name!);
-              if (event.title !== undefined) observation.title = redactor.text(event.title);
+              if (tool.name !== undefined) observation.tool = redactor.text(tool.name);
+              if (observedTitle !== undefined) observation.title = observedTitle;
               if (hasInput) observation.input = redactor.json(event.input ?? null);
               if (hasOutput) observation.output = redactor.json(event.output ?? null);
               if (hasContent) observation.content = redactor.json(event.content ?? []);
@@ -548,9 +556,9 @@ export class GatewayCore {
       await eventTail;
       acceptingEvents = false;
       if (eventFailure !== undefined) throw eventFailure;
-      if (state === "completed" && [...tools.values()].some((t) => !t.terminal)) {
-        throw new PnpError("ENGINE_PROTOCOL_ERROR", "Engine ended with unresolved tool states.", 502);
-      }
+      // A call the engine never closed is not a failed turn: the engine's own stop reason decides the
+      // state, and the finally block records `result_unknown` for each call left non-terminal. Judging
+      // the turn on it would replace a real final answer with an error the engine never gave.
     } catch (error) {
       failure = this.observeFailure(error);
       state = "failed";
@@ -586,7 +594,9 @@ export class GatewayCore {
         if (started) {
           ctx.controller.abort(ctx.reason ?? "settled");
           await this.interactions.endRun(ctx.runId);
-          // Record an observation, not a fabricated tool response or success.
+          // Record an observation, not a fabricated tool response or success. A turn the engine completed
+          // takes this path too: its stop reason stands and each call it left open is recorded here as
+          // `result_unknown`, so nothing is invented and nothing is silently dropped.
           for (const [callId, tool] of tools) {
             if (tool.terminal) continue;
             tool.message.parts = [...(tool.message.parts ?? []), { type: "tool",

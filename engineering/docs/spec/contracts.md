@@ -98,7 +98,11 @@
 
 正常轨迹：user → assistant/tool 若干轮 → final assistant。`step-finish` 不单独证明完成。错误/中断轨迹不能补造 `finish=stop`。
 
-Driver 可使用 `tool.observed` 保留引擎的部分工具事实：`content`、`locations`、原生类型和状态都按实际收到的值持久化。它不是工具结果的替代品：只有同一 call 的真实 `name` 与 `input` 才建立 canonical tool call，且只有该 canonical call 的真实 `output` 才建立 role=tool 消息；字段缺失与显式 `null` 必须区分。`completed`/`failed` 是终态，即使没有 output 也记录 `result_unknown` 事实；终态后的元数据不得重新打开调用。正常完成时仍有非终态观察必须按协议错误处理。
+Driver 可使用 `tool.observed` 保留引擎的部分工具事实：`content`、`locations`、原生类型和状态都按实际收到的值持久化。它不是工具结果的替代品：只有同一 call 的 `name` 与 `input` 都被观察到才建立 canonical tool call，且只有该 canonical call 的真实 `output` 才建立 role=tool 消息；字段缺失与显式 `null` 必须区分。`completed`/`failed` 是终态，即使没有 output 也记录 `result_unknown` 事实；终态后的元数据不得重新打开调用。
+
+canonical 名称的来源有两种，Driver 用 `nameSource` 如实标注（契约 1.1.0 新增的可选字段，不改版本号）：`"name"` 是引擎的程序化 `name`；`"announced-title"` 是宣告该 call 时（phase `created`）的 title —— 有的引擎（OpenCode）只给这一个标签，用它是观察，不是发明。身份只解析一次：之后的 title 变更照常作为 `title` 记录，但**永不改名**；既没有 `name` 也没有宣告 title 的 call 不成为 canonical call。权限侧的 operation 取名用同一条规则，策略与轨迹不会对同一次调用给出两个名字。观察 part 同时镜像规范的工具 part 形状：`tool` 在名称确定后即写入，`title` 与 `nameSource` 同时出现在 `state` 里，原有字段一个不删。
+
+**未闭合的工具观察不改判轮次。** 轮次终态由引擎的 stopReason 决定：引擎正常结束却留下非终态观察时，Core 为每个这样的 call 追加 gateway-observation（`state.status: "error"`、`terminalStatus: "result_unknown"`、`source: "gateway-observation"`），最终 assistant 消息仍按引擎的完成记 `finish: "stop"` 与 `step-finish`，Driver 也不得因此把轮次报成 failed。既不伪造 role=tool 结果，也不把引擎给出的正确答复替换成网关自己造的错误。
 
 `finalText` 不覆盖已流式提交的文本：`finalText` 为空串时，最终消息使用累计的流式文本；本轮以失败或取消结束时，最终消息不得只留下引擎的乐观文案，Core 追加失败或取消的观察态说明。
 

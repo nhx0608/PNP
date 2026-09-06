@@ -110,7 +110,8 @@ test("a tool call opens, updates and finishes as one identity", async () => {
   assert.deepEqual(services.types, ["tool.observed", "tool.observed", "tool.observed"]);
   const observations = services.ofType("tool.observed");
   assert.deepEqual(observations[0], { type: "tool.observed", source: "engine", callId: "call-1", phase: "created",
-    status: "pending", name: "read_file", title: "Reading file", input: { path: "README.md" }, nativeStatus: "pending" });
+    status: "pending", name: "read_file", nameSource: "name", title: "Reading file",
+    input: { path: "README.md" }, nativeStatus: "pending" });
   assert.equal(observations[1]?.status, "running");
   assert.equal(observations[1]?.title, "Reading README.md");
   assert.equal(observations[2]?.status, "completed");
@@ -140,13 +141,25 @@ test("a tool call that arrives already terminal opens and closes in one step", a
   assert.deepEqual(services.ofType("tool.observed")[0]?.output, { hit: true });
 });
 
-test("a title-only tool call remains an observation without inventing a programmatic name", async () => {
+test("a title-only tool call is named by the title it was announced under, with that provenance", async () => {
   const { services } = await turnWith((agent) => {
     update(agent, { sessionUpdate: "tool_call", toolCallId: "call-1", title: "Search the web" });
   });
   const observed = services.ofType("tool.observed")[0];
-  assert.equal(observed?.name, undefined);
+  // The engine announced the call under this label; taking it is an observation, not an invention.
+  assert.equal(observed?.name, "Search the web");
+  assert.equal(observed?.nameSource, "announced-title");
   assert.equal(observed?.title, "Search the web");
+});
+
+test("a call announced with neither a name nor a title stays unnamed", async () => {
+  const { services } = await turnWith((agent) => {
+    update(agent, { sessionUpdate: "tool_call", toolCallId: "call-1", title: "", kind: "edit", rawInput: {} });
+  });
+  const observed = services.ofType("tool.observed")[0];
+  // A kind is a category, not the identity of a call, so nothing here can name it.
+  assert.equal(observed?.name, undefined);
+  assert.equal(observed?.nameSource, undefined);
 });
 
 /**
@@ -181,10 +194,12 @@ test("a call preserves both the announced and later bound arguments", async () =
   assert.deepEqual(observed[1]?.input, { filePath: "/abs/path/probe-output.txt", content: "hello-from-probe" });
 });
 
-test("a title change never becomes a fabricated programmatic name", async () => {
+test("a later title never renames the call the engine announced", async () => {
   const { services } = await turnWith(writeCall);
   const observed = services.ofType("tool.observed");
-  assert.equal(observed.every((event) => event.name === undefined), true);
+  // opencode announces `title: "write"` with no `name`, then rewrites the title to the written path.
+  assert.equal(observed.every((event) => event.name === "write"), true);
+  assert.equal(observed.every((event) => event.nameSource === "announced-title"), true);
   assert.equal(observed.at(-1)?.title, "tmp/probe/probe-output.txt");
 });
 
@@ -316,14 +331,18 @@ test("an update after the call closed is observed as late instead of reopening i
   assert.equal(services.native("tool_call_update.late").length, 1);
 });
 
-test("an unresolved tool call fails the turn without fabricating a terminal tool event", async () => {
+test("an unresolved tool call is reported in the diagnostic and does not fail the engine's turn", async () => {
   const { services, result } = await turnWith((agent) => {
     update(agent, { sessionUpdate: "tool_call", toolCallId: "call-1", title: "Run", name: "run", status: "in_progress" });
     update(agent, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "done" } });
   });
   assert.equal(services.ofType("tool.finished").length, 0);
   assert.equal(services.ofType("tool.observed").length, 1);
-  assert.equal(result.state, "failed");
+  // The engine ended the turn itself, so its stop reason is the turn's state. Core records the call it
+  // never closed as an observation, keeping the answer without fabricating any result.
+  assert.equal(result.state, "completed");
+  assert.equal(result.finish, "stop");
+  assert.equal(result.nativeStopReason, "end_turn");
   assert.equal(result.taskOutcome, "unknown");
   const settled = nativePayload(services, "turn.settled");
   assert.equal(settled["unresolvedToolCalls"], 1);
@@ -501,11 +520,10 @@ test("nameOf reports the name locked when the call was announced, not what a lat
   assert.equal(mapper.nameOf("call-1"), "write");
 });
 
-test("nameOf can use a later engine label for policy without making it canonical transcript identity", () => {
+test("nameOf uses the first label the engine showed for a call it never announced", () => {
   const mapper = new SessionUpdateMapper();
   assert.equal(mapper.nameOf("call-unknown"), undefined);
-  // An unmatched update is still a real observation. Its label may guide policy while the
-  // emitted tool observation remains nameless unless ACP supplied a programmatic name.
+  // An unmatched update is still this call's first appearance, so its label announces it.
   mapper.map({ sessionUpdate: "tool_call_update", toolCallId: "call-unknown", status: "in_progress", title: "late" });
   assert.equal(mapper.nameOf("call-unknown"), "late");
 });
@@ -513,6 +531,18 @@ test("nameOf can use a later engine label for policy without making it canonical
 test("nameOf falls back to what the announcement did carry", () => {
   const mapper = new SessionUpdateMapper();
   mapper.map({ sessionUpdate: "tool_call", toolCallId: "call-2", title: "Edit out.txt", kind: "edit" });
-  // Same resolution order the recorded tool call uses: an engine that announces no name is taken at its word.
+  // Same resolution the recorded tool call uses: an engine that announces no name is taken at its word.
   assert.equal(mapper.nameOf("call-2"), "Edit out.txt");
+});
+
+test("policy and the transcript resolve one identity, never two different names for one call", () => {
+  const mapper = new SessionUpdateMapper();
+  const announced = mapper.map({
+    sessionUpdate: "tool_call", toolCallId: "call-3", title: "write", kind: "edit", status: "pending", rawInput: {},
+  });
+  const observation = announced.events[0];
+  assert.equal(observation?.type, "tool.observed");
+  if (observation?.type !== "tool.observed") return;
+  assert.equal(observation.name, mapper.nameOf("call-3"));
+  assert.equal(observation.nameSource, "announced-title");
 });

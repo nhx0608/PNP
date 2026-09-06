@@ -24,11 +24,13 @@ export interface MappedUpdate {
   /** Assistant text contributed to the final message. Thought chunks are excluded. */
   text: string;
 }
+interface ToolIdentity {
+  name: string;
+  source: "name" | "announced-title";
+}
 interface TrackedTool {
-  /** Programmatic identity only; display titles and kinds must not become canonical tool names. */
-  name?: string;
-  /** Policy can still use the best native operation label without making it transcript identity. */
-  policyName: string;
+  /** Resolved once, when the call is first observed, and never changed by a later update. */
+  identity?: ToolIdentity;
   title: string;
   /** True until the engine itself reports a terminal status. */
   open: boolean;
@@ -55,10 +57,18 @@ function positiveDelta(current: number, previous: number): number {
 function nonEmptyText(value: string | null | undefined): string | undefined {
   return value === null || value === undefined || value === "" ? undefined : value;
 }
-/** The public tool name, resolved once so a later title never renames a call that already started. */
-function toolName(name: string | null | undefined, title: string | null | undefined,
-  kind: string | null | undefined): string {
-  return nonEmptyText(name) ?? nonEmptyText(title) ?? nonEmptyText(kind) ?? "tool";
+/**
+ * How the engine named this call, resolved once from the announcement and used for both the transcript and
+ * the policy label. ACP's programmatic `name` is preferred; without it the title the call was announced
+ * under is the engine's own label for the call, which is an observation rather than an invention (opencode
+ * announces `title: "write"` and supplies no `name` at all). A call announced with neither has no identity:
+ * a display `kind` is a category, not a call, and a later title never renames a call that already started.
+ */
+function identityOf(name: string | null | undefined, title: string | null | undefined): ToolIdentity | undefined {
+  const programmatic = nonEmptyText(name);
+  if (programmatic !== undefined) return { name: programmatic, source: "name" };
+  const announced = nonEmptyText(title);
+  return announced === undefined ? undefined : { name: announced, source: "announced-title" };
 }
 /**
  * Whether an update actually carries arguments. ACP lets an engine announce a call before the model has
@@ -79,11 +89,12 @@ function arrayValue(value: unknown): Json[] {
 /**
  * Translates ACP session updates into public driver events.
  *
- * The mapper owns the tool-call table so late updates cannot reopen a terminal identity and permissions can use
- * the best native operation label. Every ACP tool update is emitted as `tool.observed`: name, input, output,
- * content and locations retain patch semantics, and Core alone decides when enough real evidence exists for a
- * canonical call/result. This avoids converting a title into a tool name or a missing terminal result into a
- * fabricated failed result.
+ * The mapper owns the tool-call table so late updates cannot reopen a terminal identity, and it resolves one
+ * identity per call (the programmatic `name`, else the announcing title, with `nameSource` recording which)
+ * that both the transcript and the permission layer use. Every ACP tool update is emitted as `tool.observed`:
+ * name, input, output, content and locations retain patch semantics, and Core alone decides when enough real
+ * evidence exists for a canonical call/result. This avoids letting a renamed title rename a call, or a
+ * missing terminal result become a fabricated failed result.
  */
 export class SessionUpdateMapper {
   private readonly tools = new Map<string, TrackedTool>();
@@ -115,10 +126,9 @@ export class SessionUpdateMapper {
         this.sawStreamedContent = true;
         const existing = this.tools.get(update.toolCallId);
         if (existing !== undefined) return this.mapToolProgress(update.toolCallId, existing, update, "tool_call.duplicate");
-        const name = nonEmptyText(update.name);
+        const identity = identityOf(update.name, update.title);
         const tracked: TrackedTool = {
-          ...(name === undefined ? {} : { name }),
-          policyName: toolName(update.name, update.title, update.kind),
+          ...(identity === undefined ? {} : { identity }),
           title: update.title,
           open: true,
         };
@@ -128,10 +138,10 @@ export class SessionUpdateMapper {
       case "tool_call_update": {
         let tracked = this.tools.get(update.toolCallId);
         if (tracked === undefined) {
-          const name = nonEmptyText(update.name);
+          // This update is the first the engine ever showed of this call, so it is what announced it.
+          const identity = identityOf(update.name, update.title);
           tracked = {
-            ...(name === undefined ? {} : { name }),
-            policyName: toolName(update.name, update.title, update.kind),
+            ...(identity === undefined ? {} : { identity }),
             title: nonEmptyText(update.title) ?? nonEmptyText(update.kind) ?? "tool",
             open: true,
           };
@@ -171,15 +181,16 @@ export class SessionUpdateMapper {
   }
 
   /**
-   * The tool name locked when the call was announced, or undefined for a call this mapper never saw.
+   * The name locked when the call was announced, or undefined for a call this mapper never saw and for one
+   * the engine announced with no label at all.
    *
    * A permission request identifies its call by id and may carry nothing else the policy layer can key on:
    * opencode's `session/request_permission` sends no `name` and puts the target file path in `title`. The
-   * announcing `tool_call` did carry the name, so it is read from here instead of from the request.
+   * announcing `tool_call` did carry the label, so it is read from here instead of from the request. This is
+   * the same identity the transcript records: policy and trajectory must not disagree about what ran.
    */
   nameOf(callId: string): string | undefined {
-    const tool = this.tools.get(callId);
-    return tool?.name ?? tool?.policyName;
+    return this.tools.get(callId)?.identity?.name;
   }
 
   /** Every call the engine has not finished, including one still held for its arguments. */
@@ -188,12 +199,11 @@ export class SessionUpdateMapper {
   }
 
   /**
-   * Closes every call the engine left open. The engine omitted the terminal state, so the call is recorded as
-   * failed with an explicit source; this is an observation, never a fabricated tool result.
-   *
-   * A call still held for its arguments is started here first, with whatever the engine did show: the
-   * transcript must carry every call the engine declared, and the core rejects a result for a call it never
-   * saw begin.
+   * Closes every call the engine left open, so a late update cannot reopen this turn's table. The engine
+   * omitted the terminal state, so nothing terminal is emitted here: Core appends the gateway observation
+   * (`result_unknown`) for the calls the engine never closed, and the turn keeps the engine's own stop
+   * reason. An unclosed call is reported, never fabricated as a failed tool result and never a verdict on
+   * the turn the engine itself finished.
    */
   closeOpenCalls(_errorCode: string, _detail: string): DriverEvent[] {
     for (const tool of this.tools.values()) {
@@ -207,8 +217,12 @@ export class SessionUpdateMapper {
 
   private observation(callId: string, phase: "created" | "updated", tracked: TrackedTool,
     raw: ToolObservation): Extract<DriverEvent, { type: "tool.observed" }> {
-    const candidate = nonEmptyText(raw.name);
-    if (tracked.name === undefined && candidate !== undefined) tracked.name = candidate;
+    // A call announced with nothing to name it can still gain a programmatic identity later; an identity
+    // already resolved is never replaced, so a rewritten title cannot rename the call.
+    if (tracked.identity === undefined) {
+      const late = identityOf(raw.name, phase === "created" ? raw.title : undefined);
+      if (late !== undefined) tracked.identity = late;
+    }
     const title = nonEmptyText(raw.title);
     if (title !== undefined) tracked.title = title;
     const status = publicStatus(raw.status);
@@ -216,7 +230,7 @@ export class SessionUpdateMapper {
     return {
       type: "tool.observed", source: "engine", callId, phase,
       ...(status === undefined ? {} : { status }),
-      ...(candidate === undefined && tracked.name === undefined ? {} : { name: candidate ?? tracked.name }),
+      ...(tracked.identity === undefined ? {} : { name: tracked.identity.name, nameSource: tracked.identity.source }),
       ...(title === undefined ? {} : { title }),
       ...(ownsValue(raw, "rawInput") ? { input: toJson(raw.rawInput) } : {}),
       ...(ownsValue(raw, "rawOutput") ? { output: toJson(raw.rawOutput) } : {}),
