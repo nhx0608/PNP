@@ -4,7 +4,9 @@ export interface LaunchSpec {
   args: readonly string[];
   cwd: string;
   env: Readonly<Record<string, string>>;
+  /** The gateway Session identifier. A native or engine-scoped identifier here breaks ownership recovery. */
   sessionId: string;
+  /** Non-empty. An empty token makes the ownership record unverifiable on the next start. */
   ownerToken: string;
 }
 export interface HostedProcess {
