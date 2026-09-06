@@ -206,3 +206,37 @@ test("cached native channel receives freshly resolved integration for every run"
     await f.close();
   }
 });
+test("the driver receives the provider-resolved model, not the caller's default sentinel", async () => {
+  const f = await fixture();
+  const observed: PromptRequest["model"][] = [];
+  const originalOpen = f.pack.open.bind(f.pack);
+  f.pack.open = async (input) => {
+    const channel = await originalOpen(input);
+    const originalRun = channel.run.bind(channel);
+    channel.run = async (run) => {
+      observed.push(run.request.model);
+      return originalRun(run);
+    };
+    return channel;
+  };
+  // Mirrors the configured provider: an empty selection means "the default", which the provider
+  // resolves to a concrete binding. A driver that compared the raw request against its launch-bound
+  // model would report a model switch for a caller that asked for nothing at all.
+  const provider = new MockIntegration();
+  const originalPrepare = provider.prepare.bind(provider);
+  provider.prepare = async (input) => {
+    const context = await originalPrepare(input);
+    const wantsDefault = input.request.model.providerID === "" && input.request.model.modelID === "";
+    const selection = wantsDefault ? { providerID: "configured", modelID: "default-model" } : input.request.model;
+    return { ...context, model: { ...context.model, selection } };
+  };
+  const core = new GatewayCore(f.store, f.pack, provider, { dataDirectory: f.directory });
+  try {
+    await core.run(f.session.id, { ...prompt, model: { providerID: "", modelID: "" } });
+    await core.run(f.session.id, prompt);
+    assert.deepEqual(observed, [{ providerID: "configured", modelID: "default-model" }, prompt.model]);
+  } finally {
+    await core.close();
+    await f.close();
+  }
+});

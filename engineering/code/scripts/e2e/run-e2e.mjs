@@ -180,9 +180,10 @@ async function helloCase(label, sessionId, { probeDefaultModel }) {
       evidence.status = response.status;
       evidence.body = response.json ?? response.text.slice(0, 200);
       if (response.status === 204) { evidence.default_model_resolution = "supported"; return "pass"; }
+      // `model` is optional on the wire (PromptSchema) and the integration provider resolves the
+      // omitted selection to its default; the driver must then see that binding, not a switch.
       evidence.default_model_resolution = "unsupported";
-      evidence.note = "PromptSchema in src/gateway/schemas.ts marks `model` required, so the gateway rejects a prompt without it.";
-      assert(!requireDefaultModel, "prompt_async without model must return 204", { status: response.status });
+      assert(!requireDefaultModel, "prompt_async without model must return 204", { status: response.status, body: evidence.body });
       return "warn";
     });
   }

@@ -412,7 +412,11 @@ export class GatewayCore {
         },
       };
       quiescent = false;
-      const execution = channel.run({ runId: run.id, request, integration, services, signal: ctx.controller.signal });
+      // The provider is the authority on the model this turn runs on: it resolved an omitted
+      // selection to the default and validated an explicit one. The driver receives that binding,
+      // never the caller's raw wish, so "use the default" is not mistaken for a model switch.
+      const bound: PromptRequest = { ...request, model: integration.model.selection };
+      const execution = channel.run({ runId: run.id, request: bound, integration, services, signal: ctx.controller.signal });
       const first = await Promise.race([
         execution.then((result) => ({ kind: "result" as const, result })),
         ctx.stop.promise.then((reason) => ({ kind: "stop" as const, reason })),

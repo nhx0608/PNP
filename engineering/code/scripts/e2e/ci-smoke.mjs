@@ -209,13 +209,14 @@ try {
     PNP_DATA_DIR: dataDirectory,
     PNP_HOST: "127.0.0.1",
     PNP_PORT: String(gatewayPort),
-    // Both engines run under development mode: src/integration/index.ts refuses the
-    // configured profile outside it, and the mock engine is development-only by design.
-    PNP_MODE: "development",
     AGENT_ENGINE: engine,
     [AUTH_VARIABLE]: AUTH_VALUE,
   };
+  // Only the mock engine needs development mode (it is development-only by design). The real
+  // engine runs in the same posture as a deployment: no development flag, configured profile.
+  delete environment.PNP_MODE;
   if (engine === "mock") {
+    environment.PNP_MODE = "development";
     environment.PNP_INTEGRATION = "mock";
     delete environment.PNP_CONFIGURED_PROFILE;
   } else {
@@ -248,6 +249,8 @@ try {
     "--report", reportPath,
     "--model-provider", MODEL.providerID,
     "--model-id", MODEL.modelID,
+    // A prompt without `model` must run on the provider's default; this is contract, not a nicety.
+    "--require-default-model",
   ];
   if (engine === "opencode") {
     runnerArgs.push("--expect-tools", "--marker", "E2E_HELLO_OK", "--abort-attempts", "1",
