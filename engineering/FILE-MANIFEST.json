@@ -209,8 +209,8 @@
       "path": "code/scripts/e2e/run-e2e.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 39739,
-      "sha256": "e387e31f160866b7774aac226203dd3953ac98e9803d77b631eecb64ba86a59f"
+      "bytes": 41541,
+      "sha256": "81dbea60917177239080ca41de426acb06130ad019071e5bab4c586f303c4ca9"
     },
     {
       "path": "code/scripts/export-diagnostics.mjs",
@@ -342,15 +342,15 @@
       "path": "code/src/core/gateway-core.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 47581,
-      "sha256": "9ac6114a731d4b137b731894caf7cf7ab715984c970515d2d1dc9a6f0883527b"
+      "bytes": 48691,
+      "sha256": "c5c78424b0c3cc0f3d60c52b3197801aebe2b236ad4e118dc149c9c8601c4195"
     },
     {
       "path": "code/src/core/interactions.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 7582,
-      "sha256": "2abaf5dbe4ebc6fc15cfc6f3272e34f61491ce796245fd73f75777d336872e79"
+      "bytes": 8126,
+      "sha256": "f007a453bde716c95d25ffd031a27e70f448af598f6f3fbbe414a1df1eeaac0a"
     },
     {
       "path": "code/src/core/journal.ts",
@@ -377,8 +377,8 @@
       "path": "code/src/drivers/acp/channel.ts",
       "owner": "A",
       "category": "实现源码",
-      "bytes": 34278,
-      "sha256": "53d3c5ed6e5fb2540acc3110b6c0ab6991a980d17f38f7b6ba8cb603919e1fb5"
+      "bytes": 36047,
+      "sha256": "462e1de7853413adb634faab294dd15689f833a97ffabf8197b9a68ca68d10d7"
     },
     {
       "path": "code/src/drivers/acp/json.ts",
@@ -692,8 +692,8 @@
       "path": "code/tests/adapters/acp/permission.test.ts",
       "owner": "A",
       "category": "测试代码",
-      "bytes": 14649,
-      "sha256": "58b54dfd9f15dad51c5152d19654be70e19cc6b80067ee18b46eafab6bb16cb1"
+      "bytes": 17956,
+      "sha256": "e79b75843ce1c400dd112ddc3e25c80e992f1cae8826611e6553174201958f96"
     },
     {
       "path": "code/tests/adapters/acp/projection.test.ts",
@@ -790,15 +790,15 @@
       "path": "code/tests/unit/contracts.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 32323,
-      "sha256": "c591e500d64769d31ae35be937fd7d0128a44054c8b391c870c515ea7a308476"
+      "bytes": 34475,
+      "sha256": "65e260fcf5e17a0af55f19882e1ce31fcafa0e67dfae23b34e7eb4a09395424c"
     },
     {
       "path": "code/tests/unit/core.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 15887,
-      "sha256": "d7a86644a20e202ea723dcae81039114ceb767e382de26a6b1c650fa75b7021c"
+      "bytes": 17148,
+      "sha256": "88f3190b7bf9092b6bb2864371d7caf4d8206790cf6d9fb4cdef404bb5077075"
     },
     {
       "path": "code/tests/unit/process-host.test.ts",
@@ -895,8 +895,8 @@
       "path": "docs/spec/contracts.md",
       "owner": "共同",
       "category": "架构与契约",
-      "bytes": 22368,
-      "sha256": "dc4ac96c1ce1584bca10064cdffaf2ced2ed0efabef1e00fa7c4164c0626ad4d"
+      "bytes": 23239,
+      "sha256": "2cd90b2a409dbd70ecfe0fe278280b611289f12dab05a0db5b4c0365a35ae4a8"
     },
     {
       "path": "docs/spec/dfx-and-testing.md",
