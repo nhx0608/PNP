@@ -218,3 +218,21 @@
 
 **记录：** `loadIntegration` 在显式旧档且无显式设置时仍先加载默认 `settings.json`，默认文件缺失会让本不依赖它的部署失败，A 落地时改为按需加载；`probe()` 仍只探测默认模型点名的变量。
 - 2026-09-07：第 12 节 A–D 已落地（契约 `IntegrationContext.permissions`、Pack 只从上下文投影并由边界脚本禁止导入 `src/config/`、交付档 tool-only、INSTRUCTION.md 与 `.env.example` 同步、被删注释恢复）。真实 OpenCode 1.18.29 冒烟在只设 `PNP_CONFIGURED_POLICY_OVERRIDES={"write":"ask"}`、不设旧开关的条件下通过 17/18（case2 写文件审批 once、case2b reject 均执行）。E 项仍待用户定。
+
+---
+
+## 13. 增量审查：`bb10a1c`（PR #4 统一 MCP 设置）
+
+**结论：schema 可以保留；它现在只被解析、没有任何消费者，必须接到 `IntegrationContext.tools`，否则与交付档的 `tools` 形成第三处真相源。** 安全扫描：只有变量名与示例命令名，无主机名、无凭据。该合并的 CI：ubuntu 与四条冒烟绿；windows shared-contract 红，三个失败都与本提交无关（见下"记录"）。
+
+认可：`common.mcp.servers` + `cores.<id>.mcp.servers` 按服务器 id 合并、Core 可只覆盖个别字段或 `enabled: false`；`stdio` 与 `streamable-http` 两种传输；`env`/`headerEnvironment` 只写环境变量**名字**；远端 URL 的 https/回环规则与模型端点一致。
+
+**裁决：**
+
+1. **消费路径。** `loadIntegration` 把有效设置中 `enabled` 的 MCP 服务器转成 `ToolBinding` 放进 `IntegrationContext.tools`（这是 ACP 驱动 `mcpServersFor()` 已经消费的形状）：`stdio` → `transport: "mcp-stdio"`，`command` 沿用现有规则必须是绝对路径（Windows 上不做 PATH 查找），`args`、`timeoutMs` 照抄，`env` 在加载期把变量名解析为值（缺失即 503 `INTEGRATION_CONFIG_INVALID`，与旧 `tools[].env` 同语义）。历史档的 `tools` 只在"显式历史档且未显式设置 `PNP_SETTINGS`"时生效，与模型/策略的兼容规则一致；交付档已是 `{"tools": []}`，默认路径以设置文件为准。
+2. **`sideEffect`。** `ToolBinding` 要求 `sideEffect`，设置 schema 没有。增加可选字段 `sideEffect: "read" | "write" | "external"`，默认 `"external"`（最保守）。
+3. **`cwd` 删除。** ACP 的 stdio MCP 服务器定义没有工作目录字段，该字段无处投影；与其静默丢弃，不如不提供。
+4. **`streamable-http`。** ACP v1 的 `McpServer` 含 `http`/`sse` 变体，且 agent 在 `initialize` 里用 `agentCapabilities.mcpCapabilities.http` 声明支持。裁决：契约 `ToolBinding` 增加 `transport: "mcp-http"`（`url` 与解析后的 `headers`），单独提交；ACP 驱动仅在引擎声明了 `mcpCapabilities.http` 时投影为 `{type: "http"}`，否则沿用现有"丢弃并向读者报告"的机制，绝不静默。用真实 OpenCode 1.18.29 的 `initialize` 应答记录它是否声明该能力，写进 `docs/engines/opencode.md` 的能力表。
+5. **文档。** `config/SETTINGS.md` 的 `command` 示例改为绝对路径并说明 `env` 的解析时机与缺失行为；`INSTRUCTION.md` 环境变量表补一句"MCP 服务器来自设置文件的 `mcp.servers`"。
+
+**记录（与本提交无关的 Windows 失败）：** (a) `process-host.test.ts` "a missing Windows session id degrades the verdict"——`reconcile()` 里 `helper.on("exit")` 立刻判 `quiescent:false`，与 `start()` 已修的同一顺序竞态（假 supervisor 发出 inspection 帧后立即 `process.exit`），改为在 `close`（进程退出且流已结束）上判否，外层 `bounded` 仍作上限；三个 reconcile 测试的假主机超时从 400 ms 放宽。(b) `core.test.ts` 两个排队测试在慢 Windows 机上撞到夹具 1000 ms 的 run 期限（`EXECUTION_TIMEOUT`，随后 `close()` 拒绝未完成写入）；排队测试不依赖期限，改用 10 s。
