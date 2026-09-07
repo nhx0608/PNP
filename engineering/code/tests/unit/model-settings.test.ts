@@ -15,19 +15,26 @@ const session: Session = {
 test("default real-engine integration reads the shared model-settings file", async () => {
   assert.match(DEFAULT_MODEL_SETTINGS, /model-settings\.json$/);
   const environment = {
+    PNP_MODEL_ENDPOINT: "http://127.0.0.1:9000/v1",
+    PNP_MODEL_AUTHORIZATION: "Bearer test-only",
     PNP_HIS_MODEL_ENDPOINT: "http://127.0.0.1:9000/v1",
-    PNP_HIS_AUTHORIZATION: "Bearer test-only",
+    PNP_HIS_AUTHORIZATION: "Bearer his-test-only",
   };
   const provider = await loadIntegration({ kind: undefined, development: false, engineDevelopmentOnly: false, environment });
   await probeIntegration(provider);
-  const context = await provider.prepare({
+  const defaultContext = await provider.prepare({
     session,
     request: { parts: [{ type: "text", text: "test" }], model: { providerID: "", modelID: "" } },
     signal: new AbortController().signal,
   });
-  assert.deepEqual(context.model.selection, { providerID: "his", modelID: "GLM-V5.1-DX" });
-  assert.equal(context.model.endpoint, "http://127.0.0.1:9000/v1");
-  assert.equal(context.model.headers.Authorization, "Bearer test-only");
+  assert.deepEqual(defaultContext.model.selection, { providerID: "competition", modelID: "default" });
+  const hisContext = await provider.prepare({
+    session,
+    request: { parts: [{ type: "text", text: "test" }], model: { providerID: "his", modelID: "GLM-V5.1-DX" } },
+    signal: new AbortController().signal,
+  });
+  assert.deepEqual(hisContext.model.selection, { providerID: "his", modelID: "GLM-V5.1-DX" });
+  assert.equal(hisContext.model.headers.Authorization, "Bearer his-test-only");
 });
 
 test("PNP_MODEL_SETTINGS-style explicit file overrides model settings for every real engine", async () => {
