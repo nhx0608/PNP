@@ -1,6 +1,6 @@
 {
   "contractVersion": "1.1.0",
-  "payloadFileCount": 169,
+  "payloadFileCount": 174,
   "files": [
     {
       "path": ".gitattributes",
@@ -101,11 +101,25 @@
       "sha256": "d7dbe76ce641163ba6be7db9f0126b49f770cbeb35c89165ef57a45ad55c0ebf"
     },
     {
+      "path": "code/config/local.env.example",
+      "owner": "共同",
+      "category": "入口与配置",
+      "bytes": 825,
+      "sha256": "d56c92b086e4fa1a11052b6bc2319b654db129bf4682c7e69d76650f418b9dfe"
+    },
+    {
       "path": "code/config/release-profile.json",
       "owner": "共同",
       "category": "入口与配置",
       "bytes": 219,
       "sha256": "7a51787a6ee7a38347974dbeffd9197b9fa10d659c2e875d7fd9456d075a3a6e"
+    },
+    {
+      "path": "code/config/settings.his.example.json",
+      "owner": "共同",
+      "category": "入口与配置",
+      "bytes": 1011,
+      "sha256": "0fdf793f0491e62d7979efe3798b8811f51d481bbad5b262a5bf71d2b4b987de"
     },
     {
       "path": "code/config/settings.json",
@@ -183,6 +197,13 @@
       "category": "入口与配置",
       "bytes": 1412,
       "sha256": "91b882b9aa597f08e2139842226b8363ba2045015be3ebd80b875e5000bb7d27"
+    },
+    {
+      "path": "code/pnp.cmd",
+      "owner": "共同",
+      "category": "其他",
+      "bytes": 541,
+      "sha256": "dc03ee03caac4fc6bddfec0f0d4b2a981ca612dc52c3ca4256d566bdcf3ef38b"
     },
     {
       "path": "code/README.md",
@@ -267,6 +288,13 @@
       "category": "执行脚本",
       "bytes": 6431,
       "sha256": "6affd90fe3806b49b123e8eb4f1f85b1be0c9caa592e2bc51393d4cc0f5d54f1"
+    },
+    {
+      "path": "code/scripts/pnp-local.ps1",
+      "owner": "共同",
+      "category": "执行脚本",
+      "bytes": 15522,
+      "sha256": "dfa451f508a04359e932c6504fc1f5994c707470af31283bda77525c2cb995e3"
     },
     {
       "path": "code/scripts/recover.mjs",
@@ -1116,11 +1144,18 @@
       "sha256": "ed90828cc10b9eff4c0288d818123022e9ed744bfb96b9d9f301b76e2db8aba8"
     },
     {
+      "path": "QUICKSTART.md",
+      "owner": "共同",
+      "category": "其他",
+      "bytes": 4203,
+      "sha256": "d1a2619995460db3384024ff6ed09cea2e94a6c87925b30aae94d6c0de1c935e"
+    },
+    {
       "path": "README.md",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 2600,
-      "sha256": "85b11a0323d2b92a7f03f74adf3a399e820f1313dac29e703c82fe5b484fd096"
+      "bytes": 2693,
+      "sha256": "d19bfa8ed32a464bf81cca5181d408511939b8d6013b149d3cbb1876516bc997"
     },
     {
       "path": "verification/coverage.md",
