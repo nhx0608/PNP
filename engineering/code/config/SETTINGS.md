@@ -207,6 +207,9 @@ $env:PNP_MODEL_STRICT='1'
 Core-specific additions or partial overrides. PNP uses protocol-neutral names rather than copying one Core's native
 settings format.
 
+Every enabled server becomes one tool binding on each run's IntegrationContext, which is what an Engine Pack or
+driver projects. A server with `"enabled": false` is simply absent from that list.
+
 ### stdio
 
 A local MCP server uses the standard MCP stdio process model:
@@ -214,13 +217,13 @@ A local MCP server uses the standard MCP stdio process model:
 ```json
 "welink": {
   "transport": "stdio",
-  "command": "welink-mcp",
+  "command": "D:\\pnp-mcp\\welink-mcp.exe",
   "args": ["serve"],
-  "cwd": "D:\\pnp-mcp",
   "env": {
     "WELINK_HOME": "PNP_WELINK_HOME"
   },
   "enabled": true,
+  "sideEffect": "external",
   "timeoutMs": 10000
 }
 ```
@@ -228,13 +231,23 @@ A local MCP server uses the standard MCP stdio process model:
 Fields:
 
 - `transport`: `stdio`.
-- `command`: MCP server executable/command supplied by the adapter owner.
+- `command`: MCP server executable supplied by the adapter owner. It must be an **absolute path**: PNP never
+  searches PATH, so what runs is what this file names. A relative command fails the load with
+  `INTEGRATION_CONFIG_INVALID` (400).
 - `args`: optional argument array; defaults to `[]`.
-- `cwd`: optional working directory.
 - `env`: child-process environment variable name -> PNP process environment variable name. Values are references,
-  not secrets.
+  not secrets. The names are resolved to values once, while the gateway loads its integration, so a variable this
+  file names but the environment does not set fails the load with `INTEGRATION_CONFIG_INVALID` (503) instead of
+  producing a tool that silently does nothing during a run. No value is ever written back into this file, logged,
+  or included in an error message.
 - `enabled`: optional, defaults to `true`.
+- `sideEffect`: optional `read`, `write` or `external`; defaults to `external`. It is what the permission policy
+  judges the server's calls by, so the default is the strongest of the three — a server that does not say what it
+  does must not slip past a policy that asks about `external`.
 - `timeoutMs`: optional positive integer.
+
+There is no `cwd`: ACP's stdio MCP server has no working-directory field, so a value here could only have been
+discarded without saying so.
 
 For the employee-assistant integration, C is responsible for producing the MCP server executable/command. Once C
 provides it, deployment only fills this MCP entry; there is no WeLink-specific configuration in PNP Core code.
@@ -251,27 +264,33 @@ A remote MCP server uses MCP Streamable HTTP:
     "Authorization": "PNP_KNOWLEDGE_MCP_AUTHORIZATION"
   },
   "enabled": true,
+  "sideEffect": "read",
   "timeoutMs": 10000
 }
 ```
 
 Use exactly one of `url` or `urlEnvironment`. Literal remote URLs require HTTPS; loopback development endpoints may
-use HTTP. `headerEnvironment` maps HTTP header names to environment variable names so credentials stay out of the
-settings file.
+use HTTP, and a URL that arrives through a variable faces the same rule at the moment it resolves, because this file
+cannot know what the variable will hold. A rejected address is reported by setting name, never by value.
+`headerEnvironment` maps HTTP header names to environment variable names so credentials stay out of the settings
+file; like `env` above, the names resolve to values at load and a missing variable fails with
+`INTEGRATION_CONFIG_INVALID` (503). `enabled`, `sideEffect` and `timeoutMs` mean exactly what they mean for stdio.
 
 MCP configuration in this file is the public, cross-Core contract. How an Engine Pack projects an effective MCP
 server into OpenCode, Pi, Hermes, or another native Core configuration is adapter work and does not change this
-schema.
+schema. A native channel that cannot carry a transport drops that server and reports it rather than reaching it by
+some other route: an ACP engine, for instance, receives a `streamable-http` server only when its `initialize`
+declared `mcpCapabilities.http`.
 
 ## Compatibility
 
 `PNP_MODEL_SETTINGS` is retained as a deprecated model-only override for existing deployments. New deployments
 should use `PNP_SETTINGS`.
 
-An explicitly supplied legacy `PNP_CONFIGURED_PROFILE` may still contain inline `models` and `policy`; when no
-explicit `PNP_SETTINGS` is supplied those legacy fields are honored. If `PNP_SETTINGS` is supplied explicitly, it
-is authoritative for unified settings while the configured profile remains a legacy tool-binding compatibility
-surface.
+An explicitly supplied legacy `PNP_CONFIGURED_PROFILE` may still contain inline `models`, `policy` and `tools`;
+when no explicit `PNP_SETTINGS` is supplied, all three are honored and that profile is the whole source. Every
+other deployment — the shipped default path included — takes its models, its policy and its MCP servers from this
+settings file, and the profile's `tools` are not read.
 
 `PNP_CONFIGURED_POLICY_OVERRIDES` remains a final deployment-side operation override and is applied after the
 resolved settings policy.

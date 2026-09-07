@@ -42,7 +42,7 @@ $env:AGENT_ENGINE='opencode'; npm start -- --port 6217 --host localhost
 
 `gateway.cmd`/`gateway.ps1`/`gateway` 都在 `code/` 下，内部执行 `node dist/main.js`，因此先按第 2 节 `npm run build`。引擎既可用 `--engine` 指定，也可用环境变量 `AGENT_ENGINE`；两者都给出时必须一致，冲突以 `ENGINE_CONFIGURATION_CONFLICT` 启动失败，都不给出以 `ENGINE_NOT_FOUND` 失败。`--port` 默认 6217；`--host` 默认 `localhost`，会同时绑定 `127.0.0.1` 与 `::1`，允许的绑定地址仍只有回环（`127.0.0.1`/`localhost`/`::1`）。修改环境变量后重启。正式运行不设置 `PNP_MODE=development`。
 
-集成是交付包内的**配置**，不是启动门禁：非 mock 引擎默认按 `PNP_INTEGRATION=configured` 运行。模型与权限来自随包交付的统一设置文件 `code/config/settings.json`（`common` 为基线，`cores.<engineId>` 只覆盖自己声明的项），交付档 `code/config/competition-profile.json` 只提供工具（当前为 `{"tools": []}`）。设置文件只写环境变量的**名字**（`PNP_MODEL_ENDPOINT`、`PNP_MODEL_AUTHORIZATION`），端点地址与凭据只存在于启动进程的环境变量里，不落盘、不入仓库。有效默认模型点名的变量缺失时在监听端口之前以 `MODEL_ENVIRONMENT_MISSING` 失败，并列出缺少哪几个变量名（不打印取值）。设置要放在仓库外时用 `PNP_SETTINGS` 指向绝对路径；需要自带工具档时用 `PNP_CONFIGURED_PROFILE` 指向绝对路径（自带 `models`/`policy` 的历史档在未显式设置 `PNP_SETTINGS` 时仍按旧语义读取）；只需在设置之上改某个操作的策略时用 `PNP_CONFIGURED_POLICY_OVERRIDES`（JSON，例如 `{"write":"ask"}`），它在设置之后生效，并经 IntegrationContext 投影进内核的原生权限配置，因此只设这一项就足以让引擎发出授权请求。
+集成是交付包内的**配置**，不是启动门禁：非 mock 引擎默认按 `PNP_INTEGRATION=configured` 运行。模型、权限与 MCP 工具都来自随包交付的统一设置文件 `code/config/settings.json`（`common` 为基线，`cores.<engineId>` 只覆盖自己声明的项）：其中 `mcp.servers` 里每个 `enabled` 的服务器就是本轮交给引擎的工具绑定，`env`/`headerEnvironment` 写的仍是环境变量名，在启动加载时解析成取值，缺变量即启动失败；交付档 `code/config/competition-profile.json` 是历史工具档（当前为 `{"tools": []}`），只有在显式指定 `PNP_CONFIGURED_PROFILE` 且未显式指定 `PNP_SETTINGS` 时才按旧语义读取它的 `tools`。设置文件只写环境变量的**名字**（`PNP_MODEL_ENDPOINT`、`PNP_MODEL_AUTHORIZATION`），端点地址与凭据只存在于启动进程的环境变量里，不落盘、不入仓库。有效默认模型点名的变量缺失时在监听端口之前以 `MODEL_ENVIRONMENT_MISSING` 失败，并列出缺少哪几个变量名（不打印取值）。设置要放在仓库外时用 `PNP_SETTINGS` 指向绝对路径；需要自带工具档时用 `PNP_CONFIGURED_PROFILE` 指向绝对路径（自带 `models`/`policy` 的历史档在未显式设置 `PNP_SETTINGS` 时仍按旧语义读取）；只需在设置之上改某个操作的策略时用 `PNP_CONFIGURED_POLICY_OVERRIDES`（JSON，例如 `{"write":"ask"}`），它在设置之后生效，并经 IntegrationContext 投影进内核的原生权限配置，因此只设这一项就足以让引擎发出授权请求。
 
 C 交付内部模型、工具和权限配置。`config/internal.example.json` 是结构示例，不表示内网 API 已验证；`PNP_INTEGRATION=internal` 目前只能显式选择，且显式选择时在启动阶段以 `INTEGRATION_UNAVAILABLE` 失败。
 
@@ -53,8 +53,8 @@ C 交付内部模型、工具和权限配置。`config/internal.example.json` �
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `PNP_INTEGRATION` | 未设置（非 mock 引擎回退 `configured`；mock 引擎回退 `mock`） | 模型/工具/权限的集成方式：`configured`（读取下方配置档，默认）、`internal`（内网，C 交付，显式选择且尚无实现时启动失败）、`mock`（仅限 mock 引擎）。与所选引擎不匹配会在启动阶段失败，见 3.2 |
-| `PNP_SETTINGS` | 交付包内的 `code/config/settings.json` | 统一运行设置的**绝对路径**：模型清单、有效默认模型、权限默认值与 operation 覆盖，按 `common` + `cores.<engineId>` 继承。凭据只按环境变量**名字**引用，文件内不出现取值。格式见 `config/SETTINGS.md`；文件缺失或不合规以 `SETTINGS_INVALID` 启动失败 |
-| `PNP_CONFIGURED_PROFILE` | 交付包内的 `code/config/competition-profile.json` | 工具档的**绝对路径**；不设置即使用交付档。结构见 `config/configured.example.json`。历史兼容：显式档自带 `models`/`policy` 且未显式设置 `PNP_SETTINGS` 时，该档仍是模型与策略来源，端点可用 `endpoint`（字面 URL）或 `endpointEnvironment`（存放 URL 的环境变量名）二选一 |
+| `PNP_SETTINGS` | 交付包内的 `code/config/settings.json` | 统一运行设置的**绝对路径**：模型清单、有效默认模型、权限默认值与 operation 覆盖、`mcp.servers`（MCP 工具的唯一来源），按 `common` + `cores.<engineId>` 继承。凭据只按环境变量**名字**引用，文件内不出现取值。格式见 `config/SETTINGS.md`；文件缺失或不合规以 `SETTINGS_INVALID` 启动失败 |
+| `PNP_CONFIGURED_PROFILE` | 交付包内的 `code/config/competition-profile.json` | 历史工具档的**绝对路径**；不设置即使用交付档。结构见 `config/configured.example.json`。历史兼容：只有显式指定本变量且未显式设置 `PNP_SETTINGS` 时，该档的 `models`/`policy`/`tools` 才被读取（端点可用 `endpoint` 字面 URL 或 `endpointEnvironment` 环境变量名二选一）；其余情况工具一律来自设置文件的 `mcp.servers` |
 | `PNP_MODEL_ENDPOINT` | 无（设置文件点名此变量） | 模型服务地址，设置文件以变量名引用。必须是 https；http 只允许回环地址 |
 | `PNP_MODEL_AUTHORIZATION` | 无（设置文件点名此变量） | 模型服务的 `Authorization` 请求头取值。只从环境变量读取，不写入设置文件、日志或数据库 |
 | `PNP_CONFIGURED_POLICY_OVERRIDES` | 无 | 部署侧策略覆盖（JSON 对象，如 `{"write":"ask"}`），在设置文件的 `permissions.operations` 之上生效，取值同为 `allow`/`deny`/`ask`。合并后的有效策略同时用于网关裁决和内核原生权限投影（经 IntegrationContext 交给 Engine Pack），因此不改设置文件就能把某个操作改成需要审批；非法 JSON 或非法取值在启动阶段失败 |
