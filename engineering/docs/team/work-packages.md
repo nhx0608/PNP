@@ -83,11 +83,24 @@ B 的完成不依赖 A 的 ACP Driver。B 不承担“等 ACP 完成后再接 He
 - `docs/internal/**`
 - `verification/internal/**` 中的脱敏证明
 
+### 统一工具边界
+
+C 的员工助手/内网工具对 A/B 的唯一公共交付边界是 [`PNP-MCP/1`](../spec/mcp-integration-profile.md)。C 可以在 MCP Server 内部调用员工助手 CLI 或内网 API，但不能要求 A/B 解析 CLI 文本、复制 CLI wrapper 或理解内网私有参数。
+
+MCP Server 的跨 Core 配置使用 `code/config/settings.json` 的 `common.mcp.servers`；Core 只在确有差异时覆盖 `cores.<engineId>.mcp.servers`。配置格式见 [`code/config/SETTINGS.md`](../../code/config/SETTINGS.md)。
+
 ### 交付内容
 
-C01 模型协议与认证；C02 员工助手 CLI 包装/工具目录；C03 组织权限与审批；C04 脱敏夹具；C05 内网部署/证书/网络自检；C06 最终联合验收证据。
+| ID | 任务 | 验收 |
+|---|---|---|
+| C01 | 模型协议与认证 | 确认真实 wire 协议、模型 id、鉴权/Header、代理/CA、流式与工具回传；提供脱敏正常/异常夹具 |
+| C02 | 员工助手 CLI → PNP-MCP/1 | 交付标准 `stdio`（本地默认）或 `streamable-http` MCP Server；实现 `tools/list`/`tools/call`、稳定 schema/错误/取消/副作用/幂等语义；通过 PNP-MCP/1 M01–M12；A/B 不解析 CLI |
+| C03 | 组织权限与审批 | allow/deny/ask 与真实服务权限一致；`deny` 不被默认 allow、MCP annotations 或用户回复覆盖 |
+| C04 | 脱敏夹具 | 模型 + MCP 目录/调用/错误/unknown submission/UTF-8/权限夹具；不含内网地址、账号、密钥、真实用户材料 |
+| C05 | 内网部署/证书/网络自检 | Windows 身份、桌面可用性、CLI/MCP Server 版本、证书/代理/网络、环境变量名称与缺失诊断可复现 |
+| C06 | 最终联合验收证据 | 记录代码 SHA、Harness/MCP/CLI/模型版本、实际 protocol revision、权限、任务轨迹和脱敏输出；真实员工助手 + 至少两个必过 Core 完成同一 MCP contract 调用 |
 
-C 不修改 Agent Loop、不把每种引擎的配置格式写进内网服务、不根据测试任务 ID 提供专用答案。
+C 不修改 Agent Loop、不把每种引擎的配置格式写进内网服务、不根据测试任务 ID 提供专用答案。PNP-MCP/1 是统一 wire/profile；OpenCode/Pi/Hermes 的原生 MCP 配置投影属于 A/B Engine Adapter。
 
 ### 新增：能力包（桌面交互与网页检索）
 
