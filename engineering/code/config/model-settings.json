@@ -1,9 +1,20 @@
 {
   "default": {
-    "providerID": "his",
-    "modelID": "GLM-V5.1-DX"
+    "providerID": "competition",
+    "modelID": "default"
   },
   "models": [
+    {
+      "selection": {
+        "providerID": "competition",
+        "modelID": "default"
+      },
+      "endpointEnvironment": "PNP_MODEL_ENDPOINT",
+      "protocol": "openai-chat",
+      "headerEnvironment": {
+        "Authorization": "PNP_MODEL_AUTHORIZATION"
+      }
+    },
     {
       "selection": {
         "providerID": "his",
