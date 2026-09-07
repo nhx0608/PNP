@@ -695,7 +695,12 @@ export class LocalProcessHost implements ProcessHost {
     helper.stderr.resume();
     helper.stdin.on("error", () => result.resolve({ quiescent: false }));
     helper.on("error", () => result.resolve({ quiescent: false }));
-    helper.on("exit", () => result.resolve({ quiescent: false }));
+    // Node emits "exit" as soon as the process is reaped, while its standard output may still hold
+    // bytes nobody has read, and the supervisor writes the inspection frame and exits in the same
+    // breath. "close" is the event that also waits for the stdio streams, so the frame it did write
+    // is parsed before its absence can become a negative verdict; the bound below stays the safety
+    // net for an output pipe some unrelated grandchild holds open.
+    helper.on("close", () => result.resolve({ quiescent: false }));
     try {
       await controlWrite(helper, { operation: "inspect", jobNames: [jobName] });
       helper.stdin.end();

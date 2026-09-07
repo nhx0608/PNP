@@ -31,6 +31,17 @@ function log(value) { if (config.record) fs.appendFileSync(config.record, JSON.s
 function handle(frame) {
   log(frame);
   if (frame.operation === "inspect") {
+    if (mode === "inspect-holding-stdout") {
+      // A supervisor that answers nothing at all while a detached grandchild keeps its standard
+      // output open, so the stream ends long after the process that owned it did.
+      const held = require("node:child_process").spawn(process.execPath,
+        ["-e", "setTimeout(() => {}, " + (config.holdMs ?? 400) + ")"],
+        { detached: true, windowsHide: true, stdio: ["ignore", "inherit", "ignore"] });
+      held.unref();
+      process.exit(0);
+    }
+    // The frame and the supervisor's own exit leave in the same tick, as the real one's do: nothing
+    // makes the parent read the frame before it observes the exit.
     emit({ type: "inspection", windowsSessionId: config.sessionId ?? 1, quiescent: config.inspectQuiescent === true,
       results: (frame.jobNames ?? []).map((name) => ({ jobName: name, quiescent: config.inspectQuiescent === true, error: 0 })) });
     process.exit(0);
@@ -232,7 +243,9 @@ test("reconciliation grades evidence and never spawns a supervisor it does not n
 
 test("a missing Windows session id degrades the verdict instead of vetoing it", async () => {
   const { directory, script } = await workspace("session");
-  const host = new FakeWindowsHost(directory, script, { inspectQuiescent: true, sessionId: 9 });
+  // The inspection is what these verdicts turn on, never a deadline, so the bound is generous
+  // enough that spawning the supervisor on a loaded machine cannot decide the answer.
+  const host = new FakeWindowsHost(directory, script, { inspectQuiescent: true, sessionId: 9 }, 5000);
   try {
     assert.equal((await host.reconcile(baseRecord({ windowsSessionId: null }))).quiescent, true);
     assert.equal((await host.reconcile(baseRecord({ windowsSessionId: 9 }))).quiescent, true);
@@ -250,7 +263,7 @@ test("a reused process id is decided by image name before the job is inspected",
     assert.equal((await host.reconcile(baseRecord({}))).quiescent, true, "the image name proves the id was reused");
     assert.equal(host.helperStarts, 0, "process id reuse must be settled without an inspection");
     const matching = new FakeWindowsHost(directory, script, { inspectQuiescent: false,
-      tool: () => ({ code: 0, stdout: `"powershell.exe","${process.pid}","Console","1","9,000 K"\r\n` }) });
+      tool: () => ({ code: 0, stdout: `"powershell.exe","${process.pid}","Console","1","9,000 K"\r\n` }) }, 5000);
     assert.equal((await matching.reconcile(baseRecord({}))).quiescent, false,
       "a live supervisor with a matching image and a non-empty job is not quiescent");
     assert.equal(matching.helperStarts, 1);
@@ -259,9 +272,55 @@ test("a reused process id is decided by image name before the job is inspected",
 
 test("an unreadable process list is unknown liveness, never stop evidence", async () => {
   const { directory, script } = await workspace("unknown");
-  const host = new FakeWindowsHost(directory, script, { inspectQuiescent: false, tool: () => ({ code: 1, stdout: "" }) });
+  // A generous bound so the verdict is the supervisor's answer and not an expired deadline that
+  // would report the same thing for the wrong reason.
+  const host = new FakeWindowsHost(directory, script, { inspectQuiescent: false, tool: () => ({ code: 1, stdout: "" }) }, 5000);
   try { assert.equal((await host.reconcile(baseRecord({}))).quiescent, false); }
   finally { await removeTree(directory); }
+});
+
+test("the inspection frame decides the verdict even when the supervisor's exit is observed first", async () => {
+  // Node emits a child's exit while its pipes may still hold unread bytes, and the supervisor writes
+  // its inspection frame and exits in the same tick, so the two are observed in either order. The
+  // frame must win every time; only the absence of one makes the verdict negative.
+  const { directory, script } = await workspace("inspect-at-once");
+  const host = new FakeWindowsHost(directory, script, { inspectQuiescent: true }, 5000);
+  try {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      assert.equal((await host.reconcile(baseRecord({}))).quiescent, true,
+        `attempt ${attempt} lost the inspection frame to the supervisor's exit`);
+    }
+    assert.equal(host.helperStarts, 20);
+  } finally { await removeTree(directory); }
+});
+
+test("a supervisor that answers nothing is a negative verdict only once its stream ends", async () => {
+  // The supervisor exits with no inspection frame while a grandchild holds its standard output. The
+  // verdict must wait for that stream rather than fire at the process exit, because on the ordering
+  // above the frame that decides the answer is still in the pipe when the exit is seen.
+  const live = `"powershell.exe","${process.pid}","Console","1","9,000 K"\r\n`;
+  const patient = await workspace("inspect-holding");
+  const waiting = new FakeWindowsHost(patient.directory, patient.script,
+    { mode: "inspect-holding-stdout", holdMs: 400, tool: () => ({ code: 0, stdout: live }) }, 2000);
+  try {
+    const started = Date.now();
+    const evidence = await waiting.reconcile(baseRecord({}));
+    const waited = Date.now() - started;
+    assert.deepEqual(evidence, { quiescent: false, method: "process-tree" });
+    assert.ok(waited >= 300, `the verdict must wait for the stream to end, but it arrived after ${waited}ms`);
+  } finally { await removeTree(patient.directory); }
+  // The same supervisor against a 150 ms bound. The hold is long enough that the interpreter's own
+  // startup, which is inside the measured window here, cannot be mistaken for the capped wait.
+  const impatient = await workspace("inspect-holding-bounded");
+  const capped = new FakeWindowsHost(impatient.directory, impatient.script,
+    { mode: "inspect-holding-stdout", holdMs: 1200, tool: () => ({ code: 0, stdout: live }) }, 150);
+  try {
+    const started = Date.now();
+    const evidence = await capped.reconcile(baseRecord({}));
+    const waited = Date.now() - started;
+    assert.deepEqual(evidence, { quiescent: false, method: "process-tree" });
+    assert.ok(waited < 700, `the bounded wait must cap the verdict, but it took ${waited}ms`);
+  } finally { await removeTree(impatient.directory); }
 });
 
 /* ------------------------------------------- fix 3: degraded mode and the taskkill path */
