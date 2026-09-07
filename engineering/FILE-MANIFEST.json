@@ -202,8 +202,8 @@
       "path": "code/pnp.cmd",
       "owner": "共同",
       "category": "其他",
-      "bytes": 1601,
-      "sha256": "01c593db9f6b947a4986f5f24ae0126c4ab78dadce73221d1b3501e522037f9b"
+      "bytes": 1885,
+      "sha256": "cebf5983a1e846af132ab63a7fdf2d2acfbc156c7ffe2fbfb0e28d6427d7676f"
     },
     {
       "path": "code/README.md",
@@ -293,8 +293,8 @@
       "path": "code/scripts/pnp-local.ps1",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 15619,
-      "sha256": "f2691c756c6e486a38ac5c8995d532196a1b6892fe20544fc371917dfbd8fb4c"
+      "bytes": 16009,
+      "sha256": "51c87fb072bf2900eafd35e287c92aced930b06c8c9a4fdbe12fb2c60e1995dc"
     },
     {
       "path": "code/scripts/recover.mjs",
@@ -1000,8 +1000,8 @@
       "path": "docs/spec/requirements.md",
       "owner": "共同",
       "category": "架构与契约",
-      "bytes": 6162,
-      "sha256": "80147960012734cc3142670c783cfe7dae07d542785df7fe16266001a7f0d07d"
+      "bytes": 7281,
+      "sha256": "695331a8e8783edf909152ce6f77db9068a5881c31c04d6d782937c8f0bcaed6"
     },
     {
       "path": "docs/spec/sources.md",
@@ -1147,8 +1147,8 @@
       "path": "QUICKSTART.md",
       "owner": "共同",
       "category": "其他",
-      "bytes": 5190,
-      "sha256": "8155d7cdc7a0a4f7fb3f76f762ce42fe691c889f139c320e7405b1358369bdec"
+      "bytes": 8719,
+      "sha256": "d16d39db350633b58968d5e7d628b9983ce7caa63945f5008e10d5a73a385129"
     },
     {
       "path": "README.md",
