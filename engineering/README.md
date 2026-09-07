@@ -7,6 +7,7 @@ PNP 是运行于 Windows 10/11 的自研 Agent Gateway。它以稳定的会话�
 | 文件 | 内容 |
 |---|---|
 | [审核目录](REVIEW-INDEX.md) | 所有交付文件的用途、职责与查看入口 |
+| [快速启动](QUICKSTART.md) | Windows 内网一键自举、模型配置与最小验证 |
 | [需求与范围](docs/spec/requirements.md) | 赛题约束、项目约束、必须项、亮点和 V2 边界 |
 | [架构设计](docs/spec/architecture.md) | 模块、运行拓扑、持久化、生命周期和能力模型 |
 | [技术栈](docs/spec/technology.md) | 唯一技术选型、依赖规则和运行环境 |
