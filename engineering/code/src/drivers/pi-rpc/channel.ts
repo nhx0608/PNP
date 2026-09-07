@@ -7,7 +7,7 @@ import { PnpError } from "../../core/errors.ts";
 import { deferred } from "../../runtime/deadline.ts";
 import { PiRpcClient } from "./client.ts";
 import type { PiEvent } from "./protocol.ts";
-import { buildLaunchSpec, resolvePiLaunchConfig, resolveSessionPaths } from "./launch.ts";
+import { buildLaunchSpec, resolvePiLaunchConfig, resolveSessionPaths, writePiModelsConfig } from "./launch.ts";
 import type { PiSessionPaths } from "./launch.ts";
 import { writeToolBridge } from "./tool-bridge.ts";
 
@@ -55,6 +55,7 @@ export async function openPiSession(input: EngineOpenInput): Promise<EngineSessi
   const config = resolvePiLaunchConfig();
   const paths = resolveSessionPaths(input.nativeDataDirectory);
   const extensionPath = await writeToolBridge(paths, input.integration.tools);
+  await writePiModelsConfig(paths, input.integration.model);
   const spec = buildLaunchSpec(config, {
     sessionId: input.session.id, ownerToken: input.session.id, cwd: input.session.directory,
     paths, extensionPath, model: input.integration.model,
@@ -81,11 +82,13 @@ export class PiSessionChannel implements EngineSessionChannel {
   };
   private readonly client: PiRpcClient;
   private readonly process: HostedProcess;
+  private readonly paths: PiSessionPaths;
   private readonly toolFingerprint: string;
   private currentModelKey: string;
   private active: { tracker: RunTracker; services: DriverServices; cancelling: boolean } | undefined;
   constructor(process: HostedProcess, paths: PiSessionPaths, tools: readonly ToolBinding[], initialModelKey: string) {
     this.process = process;
+    this.paths = paths;
     this.toolFingerprint = fingerprintTools(tools);
     this.currentModelKey = initialModelKey;
     this.client = new PiRpcClient(process, {
@@ -151,14 +154,19 @@ export class PiSessionChannel implements EngineSessionChannel {
         return;
       }
       case "agent_end":
-        run.tracker.lastStopReason = event.stopReason;
+        // Real pi (0.85.1, verified) puts the terminal stop reason on the *last* message in
+        // `messages`, not on a top-level `agent_end.stopReason` field — that field never
+        // actually occurs on the wire. Reading a nonexistent top-level field previously left
+        // `lastStopReason` permanently `undefined`, which `mapFinish` defaults to "stop": every
+        // real run (including genuine upstream errors) was silently reported as a success.
+        run.tracker.lastStopReason = event.messages.at(-1)?.stopReason;
         if (!event.willRetry) {
           // `agent_settled` should always follow (docs/research/T02-pi-harness.md), but an older
           // or divergent build might omit it; settle from `agent_end` after a short grace window
           // instead of hanging forever on an event that never arrives.
           clearTimeout(run.tracker.fallbackTimer);
           run.tracker.fallbackTimer = setTimeout(() => {
-            if (this.active === run) run.tracker.settle.resolve({ finalText: run.tracker.finalText, nativeStopReason: event.stopReason ?? "agent_end" });
+            if (this.active === run) run.tracker.settle.resolve({ finalText: run.tracker.finalText, nativeStopReason: run.tracker.lastStopReason ?? "agent_end" });
           }, 2_000);
         }
         return;
@@ -196,6 +204,11 @@ export class PiSessionChannel implements EngineSessionChannel {
     }
     const requestedModelKey = modelKey(input.integration);
     if (requestedModelKey !== this.currentModelKey) {
+      // The new model's provider/credential must exist in this session's models.json *before*
+      // pi is asked to switch to it (docs/models.md: the file "reloads each time you open
+      // /model"); writing it first avoids a race where `set_model` asks for a provider pi has
+      // not seen yet.
+      await writePiModelsConfig(this.paths, input.integration.model);
       await this.client.send("set_model", { provider: input.integration.model.selection.providerID, model: input.integration.model.selection.modelID });
       this.currentModelKey = requestedModelKey;
     }

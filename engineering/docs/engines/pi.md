@@ -6,8 +6,9 @@
 
 - **已有源码**：上述五个文件 + `engines/pi/pack.ts`；`descriptor.implementationProvided = true` 仅表示代码存在。
 - **`capabilityEvidence: "declared"`**（`code/config/engines/pi.json`）：字段名和事件流来自 `docs/research/T02-pi-harness.md`（对 `earendil-works/pi` ~0.84.x 源码/文档的二手调研，非本仓库自带的一手协议文件），尚未对照真实安装的 `pi` 二进制核验，`engineVersion` 保持 `null`。
-- **已验证（Linux/Windows 均可执行，本次在 Windows 10 沙箱内实际跑过）**：帧关联、乱序/损坏帧隔离、settled 语义状态机、取消语义、原生恢复标识——但验证对象是本仓库自带的 JSONL **fixture 进程**（`code/tests/adapters/pi/fixtures/fake-pi-cli.mjs`），不是真实 `pi` 可执行文件。这条证据链证明的是"驱动代码 + 公共 `LocalProcessHost`/`JsonlDecoder` 按文档协议正确工作"，不是"已完成真实 Pi 版本验收"。
-- **未验证**：真实 `pi` 安装、真实模型调用、Windows 上对真实 `pi` 进程的 Job Object 生命周期、至少一项原生扩展在真实环境里的执行证据、`get_state`/`set_model` 等命令在真实版本下的准确返回结构。
+- **已验证（Linux/Windows 均可执行，本次在 Windows 10 沙箱内实际跑过）**：帧关联、乱序/损坏帧隔离、settled 语义状态机、取消语义、原生恢复标识——验证对象是本仓库自带的 JSONL **fixture 进程**（`code/tests/adapters/pi/fixtures/fake-pi-cli.mjs`），不是真实 `pi` 可执行文件。这条证据链证明的是"驱动代码 + 公共 `LocalProcessHost`/`JsonlDecoder` 按文档协议正确工作"，不是"已完成真实 Pi 版本验收"。
+- **额外手工核验（本次新增，见下方 B08）**：真实安装了 `@earendil-works/pi-coding-agent` 0.85.1（`npm install -g`），手工跑通 `get_state` 与一次完整 `prompt`→`agent_settled` 往返（模型侧接一个本地 OpenAI Chat Completions mock 服务器代替真实凭据）。这证明 `--mode rpc` 的帧格式与本驱动此前的字段假设**部分不一致**，已按实测结果修正代码（见 B08）；但这是**手工命令行复现**，尚未接入自动化测试套件对真实二进制持续跑（自动化测试仍然只跑 fixture 进程），也没有做过真实内网模型/真实原生扩展/Windows Job Object 对真实 `pi` 进程生命周期的验收。
+- **仍未验证**：真实内网模型调用、Windows 上对真实 `pi` 进程的 Job Object 生命周期、至少一项原生扩展在真实环境里的执行证据、`set_model`/`get_available_models`/`extension_ui_response` 等命令在真实版本下的准确返回结构（只核验了 `get_state`/`prompt`/`agent_*`/`message_*`/`turn_*`）。
 
 ## 安装与连接（B01）
 
@@ -32,7 +33,7 @@
 
 ## 模型、工具与资产（B04/B05）
 
-- **模型**：每轮比较 `IntegrationContext.model.selection` 与已打开进程当前使用的 provider/model；不同则发 `set_model` 命令（pi 文档承认这是公共能力，运行期可切换）。Bearer header 到 provider 凭据的映射是**声明但未核验**的最佳努力（`launch.ts#buildModelEnv`）：`anthropic-messages` → `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL`；`openai-chat` → `OPENAI_API_KEY`/`OPENAI_BASE_URL`；`custom`/`test` 协议目前没有已知的 RPC 侧注入点，需要运维方另外维护 `~/.pi/agent/models.json`。
+- **模型**：每轮比较 `IntegrationContext.model.selection` 与已打开进程当前使用的 provider/model；不同则发 `set_model` 命令（pi 文档承认这是公共能力，运行期可切换）。凭据/端点注入机制已按 B08 的真实核验结果重写：`launch.ts#writePiModelsConfig` 把 `ResolvedModel` 声明成一个 pi 自定义 provider，写进这次 Session 私有的 `models.json`（`<nativeDataDirectory>/pi-agent/models.json`），并把 `PI_CODING_AGENT_DIR` 指向同一目录（pi 把这个环境变量当整个配置根的**整体替换**，不是叠加层，因此这个目录与运维方真实的 `~/.pi/agent` 及其他并发 Session 完全隔离）。协议映射：`openai-chat` → pi 的 `openai-completions`；`anthropic-messages` → pi 的 `anthropic-messages`；`custom`/`test` 协议没有已知的 pi 传输格式，不写任何 provider 条目（声明的已知限制，不是猜测一个映射）。旧版本用 `OPENAI_BASE_URL`/`ANTHROPIC_BASE_URL` 环境变量做端点覆盖的方案已确认**不成立**（见 B08），已删除。
 - **工具**：pi 的 RPC 协议里没有"运行期新增自定义工具"的命令，因此工具绑定只能在 `open()` 时通过 `-e <生成的扩展文件>` 一次性注入（B05）。`run()` 会对本轮 `IntegrationContext.tools` 做指纹比较（id/command/args/env key 集合/sideEffect/inputSchema），不同就直接拒绝执行（`ENGINE_TOOLS_IMMUTABLE`），不会静默套用旧工具或丢历史重开 Session——这正是契约要求的"不支持的修改明确拒绝"。
 - **资产**：目前没有额外的资产投影逻辑；`AssetBinding` 的 `instruction`/`skill` 类型可通过运维方在 `PNP_PI_EXTRA_ARGS` 里附加 `--append-system-prompt`/`--skill` 等已文档化的 CLI 参数达成，未来若需要网关直接管理资产文件，需要在 `tool-bridge.ts` 旁新增等价的生成逻辑（尚未实现，不在本次交付范围内虚报）。
 
@@ -59,13 +60,40 @@ PowerShell 会直接以 `UnauthorizedAccess` 拒绝执行 `job-host.ps1`，导�
 36 个 unit 测试，无回归）。**这条改动影响 A（ACP/OpenCode/Hermes）和 C（内网）在 Windows 上的真实进程验收，
 建立真实分支/PR 协作后应单独找靖诗/黔总过一遍**，不要把它当作 Pi 专属实现细节忽略掉。
 
+## 真实 Pi 二进制手工核验记录（B08，新增）
+
+之前所有 `--mode rpc` 字段假设都标注为"声明证据"，因为只对照了 `docs/research/T02-pi-harness.md`（二手调研），没有真实二进制核验。本次在这台开发环境里补上了这一步：
+
+**安装**：`npm install -g --ignore-scripts @earendil-works/pi-coding-agent`，得到真实版本 `0.85.1`（`pi --version`）。Windows 上的全局安装只落一个 `pi.cmd` shim；真实入口是 `%APPDATA%\npm\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js`（`node cli.js ...` 直接可跑），印证了 `docs/engines/pi.md`（B01）此前"不猜 shim 路径，要求显式声明 `PNP_PI_NODE`/`PNP_PI_ENTRY`"的判断是对的。
+
+**核验方式**：用 `node.exe cli.js --mode rpc --no-session --session-dir <tmp>` 直接起真实 pi 进程，手工写 RPC 帧到 stdin、读 stdout，不经过网关。先发 `get_state`，确认 `response` 帧结构与 `protocol.ts` 一致。再接一个本地零依赖 OpenAI Chat Completions 模拟服务器（复用 A 已有的 `code/scripts/e2e/mock-model-server.mjs`）跑一次完整 `prompt`→`agent_settled`，拿到真实的事件序列。
+
+**发现并已修复的两个真实缺陷**：
+
+1. **`agent_end` 的 stopReason 字段位置错了，导致每次真实运行都被误报为成功。** 真实事件是 `{"type":"agent_end","willRetry":false,"messages":[...,{"role":"assistant","stopReason":"stop"|"error"|...}]}`——从来没有顶层 `stopReason` 字段。旧代码读 `event.stopReason`（永远是 `undefined`），`mapFinish(undefined)` 的默认分支又恰好返回 `"stop"`，于是**包括真实上游报错在内的每一次运行都会被上报为 `finish:"stop"`（成功）**。这正是仓库规则明确禁止的"伪造成功"类问题，只是当时没有真实二进制可测出来。已修复为从 `messages` 数组最后一条的 `stopReason` 取值（`protocol.ts`/`channel.ts`），并补了回归测试（`channel.test.ts`、`protocol.test.ts`）。
+2. **`OPENAI_BASE_URL`/`ANTHROPIC_BASE_URL` 对内网自定义 endpoint 完全不生效。** 实测：给真实 pi 进程设置 `OPENAI_BASE_URL=http://127.0.0.1:<mock port>/v1` 并选 `--provider openai`，pi 直接打到了真实 `api.openai.com`（返回真实 401），mock 服务器完全没收到请求。查阅 `packages/coding-agent/docs/providers.md`/`models.md` 一手文档确认：pi 只在 Azure OpenAI 这一个特例上支持 `*_BASE_URL` 环境变量覆盖；通用的自定义 provider/端点必须写进 `~/.pi/agent/models.json`，并且这个目录可以用 `PI_CODING_AGENT_DIR` 整体重定向（不是叠加层，指哪个目录就完全用哪个目录，验证细节见 `packages/coding-agent/docs/environment-variables.md`）。改用这个机制后，同一个 mock 服务器真实收到了请求并流式返回了文本（`message_update`/`text_delta` 一路到 `agent_settled`）。旧的环境变量方案已删除，改为 `launch.ts#writePiModelsConfig` + `PI_CODING_AGENT_DIR`（见上文"模型"小节）。
+
+**复现命令**（不含真实凭据，供后续复核）：
+
+```powershell
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+node "$env:APPDATA\npm\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js" `
+  --mode rpc --no-session --session-dir <tmp> --provider <providerId> --model <modelId>
+# stdin: {"id":"1","type":"get_state"}
+# 若要跑通真实 prompt，先起 code/scripts/e2e/mock-model-server.mjs，
+# 再在 PI_CODING_AGENT_DIR 指向的目录写 models.json 声明该 provider（见 launch.ts#writePiModelsConfig）。
+```
+
+**这次核验证明了什么、没证明什么**：证明了 `--mode rpc` 的帧结构、`models.json`+`PI_CODING_AGENT_DIR` 机制、以及本驱动修完 bug 之后的完成判定逻辑，在真实 0.85.1 二进制上确实按预期工作。**没有**证明：内网真实模型端到端可用（mock 服务器不是真实模型）、原生扩展在真实 pi 里执行工具（本次只跑了 `--no-tools`）、Windows 上对真实 pi 进程的 Job Object 生命周期（本次是手工前台进程，不经过 `LocalProcessHost`）。这些仍然是"未验证"，见上文。这次核验是手工命令行操作，未固化为仓库里自动跑真实二进制的 CI 测试（自动化测试仍然只用 fixture 进程，因为 CI 环境不保证有 `npm install -g` 权限/网络）。
+
 ## 验收（B07）
 
-已执行（本仓库、Windows 10、Node v22.22.0）：
+已执行（本仓库、Windows 10、Node v24.19.0，`npm run foundation:check` 全绿：typecheck + 全部单测/合同测试 + 边界检查 + 清单校验）：
 
 - `code/tests/adapters/pi/protocol.test.ts`：帧解析、未知事件降级、损坏帧报错。
 - `code/tests/adapters/pi/client.test.ts`：请求关联、乱序响应、损坏帧隔离不中断通道、进程退出拒绝所有挂起请求。
-- `code/tests/adapters/pi/channel.test.ts`：ACK 早回不等于完成、取消 ACK 不等于停止证据（需真正 `agent_settled`/进程退出才结算）、工具终态收敛、原生恢复（同目录复用 `nativeId`）、Secret 不进入任何日志/异常文本、子进程异常退出转为可诊断错误而不是伪造成功。
-- `code/tests/adapters/pi/engine-contract.test.ts`：接入公共 `tests/kit/engine-contract.ts`，通过真实 `LocalProcessHost`（Windows 走真实 PowerShell Job Object helper）+ `fake-pi-cli.mjs` fixture 跑通 open→run→再次 run→delete 全流程。
+- `code/tests/adapters/pi/channel.test.ts`：ACK 早回不等于完成、取消 ACK 不等于停止证据（需真正 `agent_settled`/进程退出才结算）、工具终态收敛、原生恢复（同目录复用 `nativeId`）、Secret 不进入任何日志/异常文本、子进程异常退出转为可诊断错误而不是伪造成功；`agent_end`/`message_start`/`message_end`/`turn_end` 的断言已按 B08 实测结果更新为真实字段结构。
+- `code/tests/adapters/pi/launch.test.ts`（新增）：`writePiModelsConfig` 的协议→`api` 映射、无凭据时的占位符、`custom`/`test` 协议不写条目、多次模型切换合并而不是覆盖已有 provider。
+- `code/tests/adapters/pi/engine-contract.test.ts`：接入公共 `tests/kit/engine-contract.ts`，通过真实 `LocalProcessHost`（Windows 走真实 PowerShell Job Object helper）+ `fake-pi-cli.mjs` fixture 跑通 open→run→再次 run→delete 全流程；fixture 的 `agent_end` 已同步改为真实字段结构。
 
 未执行（诚实标记，不得据此认定“已完成”）：真实 `pi` 二进制安装与联网模型调用、内网集成、真实原生扩展的端到端执行证据、`get_state`/`set_model`/`extension_ui_response` 等命令在具体锁定版本下的真实响应结构核验。`npm run test:contract`、`npm run check:boundaries`、`npm run typecheck`、`npm run release:check` 需要联网安装依赖（`fastify`/`typebox`/`@agentclientprotocol/sdk`）；本次开发环境无 npm registry 访问，未执行，与 `verification/coverage.md` 记录的公共基线限制一致。

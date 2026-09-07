@@ -30,7 +30,9 @@ rl.on("line", (line) => {
     const message = typeof command.message === "string" ? command.message : "";
     setTimeout(() => {
       send({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: `Fixture turn ${promptCount}: ${message}` } });
-      send({ type: "agent_end", willRetry: false, stopReason: "end_turn" });
+      // Shape verified against a real installed pi 0.85.1 process (docs/engines/pi.md): the
+      // stop reason lives on the last entry of `messages`, not on a top-level `stopReason`.
+      send({ type: "agent_end", willRetry: false, messages: [{ role: "assistant", stopReason: "stop" }] });
       send({ type: "agent_settled" });
     }, 5);
     return;

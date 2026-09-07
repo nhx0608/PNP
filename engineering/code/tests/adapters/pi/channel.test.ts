@@ -1,13 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { PiSessionChannel } from "../../../src/drivers/pi-rpc/channel.ts";
-import type { PiSessionPaths } from "../../../src/drivers/pi-rpc/launch.ts";
+import { resolveSessionPaths } from "../../../src/drivers/pi-rpc/launch.ts";
 import { createFakeHostedProcess } from "./fixtures/fake-process.ts";
 import type { DriverEvent, DriverServices, IntegrationContext, InteractionRequest, InteractionResponse, PromptRequest, ToolBinding } from "../../../src/contracts/index.ts";
 
-const paths: PiSessionPaths = { sessionDir: "/tmp/pnp-pi-test", sessionFile: "/tmp/pnp-pi-test/session.jsonl",
-  toolsFile: "/tmp/pnp-pi-test/pnp-tools.json", extensionFile: "/tmp/pnp-pi-test/pnp-tool-bridge.mjs" };
+// A real (temp) directory: `run()` writes this session's pi `models.json` under it on every
+// model switch (`writePiModelsConfig`), so a placeholder non-existent path would fail those runs.
+const sessionRoot = await mkdtemp(path.join(tmpdir(), "pnp-pi-channel-"));
+const paths = resolveSessionPaths(sessionRoot);
 const request: PromptRequest = { parts: [{ type: "text", text: "hello" }], model: { providerID: "test", modelID: "test" } };
 function integration(overrides: Partial<IntegrationContext> = {}): IntegrationContext {
   return { model: { selection: request.model, protocol: "test", headers: {} }, tools: [], assets: [],
@@ -28,6 +33,15 @@ function ackLast(process: ReturnType<typeof createFakeHostedProcess>, command: s
   const { id } = lastCommand(process);
   process.push(JSON.stringify({ type: "response", id, command, success: true, data: {} }));
 }
+/** `run()` now awaits real fs I/O (`writePiModelsConfig`) before sending `set_model`, so a
+ * fixed sleep before asserting on the next write is racy under load; poll instead. */
+async function waitForWriteCount(process: ReturnType<typeof createFakeHostedProcess>, count: number, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (process.writes.length < count) {
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${count} write(s); saw ${process.writes.length}.`);
+    await sleep(2);
+  }
+}
 
 test("a prompt ACK is not treated as run completion", async () => {
   const process = createFakeHostedProcess();
@@ -40,7 +54,7 @@ test("a prompt ACK is not treated as run completion", async () => {
   void outcome.then(() => { settled = true; });
   await sleep(20);
   assert.equal(settled, false, "run() resolved on the prompt ACK instead of waiting for agent_settled");
-  process.push(JSON.stringify({ type: "agent_end", willRetry: false, stopReason: "end_turn" }));
+  process.push(JSON.stringify({ type: "agent_end", willRetry: false, messages: [{ role: "assistant", stopReason: "end_turn" }] }));
   process.push(JSON.stringify({ type: "agent_settled" }));
   const result = await outcome;
   assert.equal(result.state, "completed");
@@ -62,7 +76,7 @@ test("an abort ACK is not stop evidence; run() waits for the real settle event",
   void outcome.then(() => { settled = true; });
   await sleep(20);
   assert.equal(settled, false, "run() resolved on the abort ACK instead of waiting for the real stop");
-  process.push(JSON.stringify({ type: "agent_end", willRetry: false, stopReason: "cancelled" }));
+  process.push(JSON.stringify({ type: "agent_end", willRetry: false, messages: [{ role: "assistant", stopReason: "cancelled" }] }));
   process.push(JSON.stringify({ type: "agent_settled" }));
   const result = await outcome;
   assert.equal(result.state, "cancelled");
@@ -80,7 +94,7 @@ test("tool calls collapse to a stable terminal state keyed by callId", async () 
   process.push(JSON.stringify({ type: "tool_execution_start", toolCallId: "c1", toolName: "bash", args: { command: "ls" } }));
   process.push(JSON.stringify({ type: "tool_execution_update", toolCallId: "c1", title: "Running" }));
   process.push(JSON.stringify({ type: "tool_execution_end", toolCallId: "c1", toolName: "bash", result: { code: 0 }, isError: false }));
-  process.push(JSON.stringify({ type: "agent_end", willRetry: false, stopReason: "end_turn" }));
+  process.push(JSON.stringify({ type: "agent_end", willRetry: false, messages: [{ role: "assistant", stopReason: "end_turn" }] }));
   process.push(JSON.stringify({ type: "agent_settled" }));
   await outcome;
   const kinds = events.map((e) => e.type);
@@ -137,14 +151,14 @@ test("model credentials never appear in an emitted native event or a thrown erro
   const { services: svc, events } = services();
   const secretIntegration = integration({ model: { selection: { providerID: "test", modelID: "secret-model" }, protocol: "anthropic-messages", headers: { authorization: "Bearer sk-live-DO-NOT-LEAK" } } });
   const outcome = channel.run({ runId: "r1", request, integration: secretIntegration, services: svc, signal: new AbortController().signal });
-  await sleep(10);
+  await waitForWriteCount(process, 1);
   const setModel = lastCommand(process);
   assert.equal(setModel.type, "set_model");
   ackLast(process, "set_model");
   await sleep(5);
   ackLast(process, "prompt");
   process.push(JSON.stringify({ type: "extension_error", extensionPath: "x.ts", event: "tool_call", error: "boom" }));
-  process.push(JSON.stringify({ type: "agent_end", willRetry: false, stopReason: "end_turn" }));
+  process.push(JSON.stringify({ type: "agent_end", willRetry: false, messages: [{ role: "assistant", stopReason: "end_turn" }] }));
   process.push(JSON.stringify({ type: "agent_settled" }));
   await outcome;
   const serialized = JSON.stringify(events) + process.writes.join("\n");
