@@ -1,7 +1,5 @@
-import type { EngineOpenInput, EnginePack, EngineSessionChannel } from "../../contracts/index.ts";
+import type { EngineOpenInput, EnginePack, EngineSessionChannel, PermissionPolicy } from "../../contracts/index.ts";
 import { CONTRACT_VERSION } from "../../contracts/index.ts";
-import { loadPnpSettings } from "../../config/settings.ts";
-import type { PermissionPolicy } from "../../config/settings.ts";
 import { openAcpChannel } from "../../drivers/acp/channel.ts";
 import type { AcpEngineDefinition, AcpLaunchRequest } from "../../drivers/acp/channel.ts";
 import { instructionAssetTargetPath, projectOpenCodeAssets } from "./assets.ts";
@@ -19,10 +17,12 @@ export class OpenCodePack implements EnginePack {
   };
 
   async open(input: EngineOpenInput): Promise<EngineSessionChannel> {
-    const [config, settings] = await Promise.all([
-      loadOpenCodeEngineConfig(),
-      loadPnpSettings({ engineId: "opencode", settingsPath: process.env.PNP_SETTINGS }),
-    ]);
+    const config = await loadOpenCodeEngineConfig();
+    // The effective policy arrives on the IntegrationContext, overrides already applied. The Pack reads no
+    // settings file and no process environment for it: one structure decides and is projected (AGENTS.md
+    // "Adapter 只能通过公共契约"; docs/engineering-review-3.md section 12, A). A provider that publishes none
+    // has no static policy to project, and OpenCode keeps its own default.
+    const permissions: PermissionPolicy = input.integration.permissions ?? { default: "allow", operations: {} };
     const selection = input.integration.model.selection;
     const modelID = `${selection.providerID}/${selection.modelID}`;
     const definition: AcpEngineDefinition = {
@@ -32,7 +32,7 @@ export class OpenCodePack implements EnginePack {
       client: CLIENT_INFO,
       model: config.model.policy === "session-config" ? { kind: "session-config" } : { kind: "launch", modelID },
       timeouts: config.timeouts,
-      launch: (openInput) => buildLaunchRequest(config, settings.permissions, openInput),
+      launch: (openInput) => buildLaunchRequest(config, permissions, openInput),
       projectAssets: (args) => projectOpenCodeAssets(config, args),
     };
     return openAcpChannel(definition, input);

@@ -249,11 +249,10 @@ try {
   delete environment.PNP_MODE;
   // Whatever this machine happens to export, the integration posture of each leg is set here.
   for (const name of ["PNP_INTEGRATION", "PNP_CONFIGURED_PROFILE", "PNP_CONFIGURED_POLICY_OVERRIDES",
-    "PNP_MODEL_STRICT", AUTH_VARIABLE, ENDPOINT_VARIABLE]) delete environment[name];
+    "PNP_MODEL_STRICT", "PNP_OPENCODE_NATIVE_PERMISSIONS", AUTH_VARIABLE, ENDPOINT_VARIABLE]) delete environment[name];
   if (engine === "mock") {
     environment.PNP_MODE = "development";
     environment.PNP_INTEGRATION = "mock";
-    delete environment.PNP_OPENCODE_NATIVE_PERMISSIONS;
   } else {
     // The launcher carries `--engine`; the specification's command line names no environment
     // variable, and an AGENT_ENGINE left here would hide a launcher that dropped the flag.
@@ -269,9 +268,11 @@ try {
     // the leg still runs the shipped profile rather than a private copy of it. The mock engine raises no
     // permission at all, so its leg sets no override rather than waiting for something that never comes.
     environment.PNP_CONFIGURED_POLICY_OVERRIDES = JSON.stringify({ write: "ask" });
-    // OpenCode allows every operation unless its private config asks; without this the engine never
-    // raises ACP session/request_permission and the approval loop below would have nothing to drive.
-    environment.PNP_OPENCODE_NATIVE_PERMISSIONS = "ask";
+    // That override is the whole permission configuration this leg supplies. OpenCode allows every operation
+    // unless its private config asks, so the run only reaches an approval loop if the override travelled the
+    // official route: settings -> effective policy -> IntegrationContext.permissions -> the private
+    // opencode.json the Pack writes. PNP_OPENCODE_NATIVE_PERMISSIONS is deleted above with the rest of the
+    // machine's integration posture precisely so it cannot stand in for that route.
     const executable = resolveOpenCodeExecutable();
     summary.opencode_executable = executable;
     log(`opencode executable: ${executable.path ?? "unresolved"} (${executable.source}, exists=${executable.exists})`);

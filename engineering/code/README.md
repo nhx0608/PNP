@@ -95,7 +95,9 @@ npm install -g opencode-ai@1.18.29 --loglevel=error
 
 OpenCode Pack 会把有效 permission settings 投影到会话私有 `opencode.json`。PNP 中 `ask` 和 `deny` 都要求
 内核先发出 ACP permission request，随后由 Gateway 的统一 policy 决定是否直接拒绝或进入人工审批。
-现有 E2E 为兼容历史夹具仍可使用 `PNP_OPENCODE_NATIVE_PERMISSIONS=ask` 强制 edit/bash 进入审批环路；它不再是正式配置入口。
+E2E 的 opencode 腿只设 `PNP_CONFIGURED_POLICY_OVERRIDES={"write":"ask"}`，投影经 IntegrationContext 抵达私有
+`opencode.json`，以此证明正式路线本身可用。`PNP_OPENCODE_NATIVE_PERMISSIONS=ask` 只是强制 edit/bash 进入审批环路的
+历史兼容开关，冒烟不再设置它，它也不是正式配置入口。
 
 三个脚本各自独立可用：
 

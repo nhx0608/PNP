@@ -1,7 +1,6 @@
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
-import type { Json, ResolvedModel } from "../../contracts/index.ts";
-import type { PermissionEffect, PermissionPolicy } from "../../config/settings.ts";
+import type { Json, PermissionEffect, PermissionPolicy, ResolvedModel } from "../../contracts/index.ts";
 import { PnpError } from "../../core/errors.ts";
 import type { OpenCodeEngineConfig, OpenCodeNativePermissions } from "./config.ts";
 

@@ -165,6 +165,44 @@ test("open() launches the resolved executable with just the ACP subcommand and r
   }
 });
 
+test("open() projects the context's permission policy into the private config, and nothing else does", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pnp-opencode-pack-"));
+  const executable = await fakeExecutable(root);
+  try {
+    // Neither the unified settings file nor the compatibility switch is visible here: whatever the private
+    // config ends up asking OpenCode for came from the IntegrationContext alone.
+    await withEnvironment({
+      PNP_OPENCODE_EXECUTABLE_KIND: undefined, PNP_OPENCODE_EXE_PATH: executable,
+      PNP_SETTINGS: undefined, PNP_OPENCODE_NATIVE_PERMISSIONS: undefined,
+    }, async () => {
+      const permissionOf = async (integration: IntegrationContext, directory: string): Promise<unknown> => {
+        const host = new FakeProcessHost();
+        const input: EngineOpenInput = {
+          host, session: fakeSession(path.join(root, "workspace")), nativeDataDirectory: directory,
+          integration, resources: new FakeResourceScope(), signal: new AbortController().signal,
+        };
+        const channel = await new OpenCodePack().open(input);
+        try {
+          const pointer = host.launched[0]!.spec.env["OPENCODE_CONFIG"]!;
+          return (JSON.parse(await readFile(pointer, "utf8")) as Record<string, unknown>)["permission"];
+        } finally { await channel.close(); }
+      };
+
+      // A gateway policy of "ask" on write must become a native prompt: without it OpenCode allows the edit on
+      // its own and the gateway is never asked to hold it.
+      assert.deepEqual(
+        await permissionOf(fakeIntegration({ permissions: { default: "allow", operations: { write: "ask" } } }),
+          path.join(root, "native-ask")),
+        { edit: "ask" },
+      );
+      // A provider that publishes no policy has nothing to project; the block stays out of the file entirely.
+      assert.equal(await permissionOf(fakeIntegration(), path.join(root, "native-none")), undefined);
+    });
+  } finally {
+    await removeTree(root);
+  }
+});
+
 test("open() fails with a clear executable-resolution error and never starts a process", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "pnp-opencode-pack-"));
   try {

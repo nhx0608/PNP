@@ -1,9 +1,11 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AuthorizationDecision, IntegrationProvider, ModelSelection, ToolBinding } from "../contracts/index.ts";
+import type {
+  AuthorizationDecision, IntegrationProvider, ModelSelection, PermissionEffect, PermissionPolicy, ToolBinding,
+} from "../contracts/index.ts";
 import { loadPnpSettings, parseSettingsModel, parseSettingsSelection } from "../config/settings.ts";
-import type { PermissionEffect, PermissionPolicy, SettingsModelDefinition } from "../config/settings.ts";
+import type { EffectiveSettings, SettingsModelDefinition } from "../config/settings.ts";
 import { PnpError } from "../core/errors.ts";
 import { ConfiguredIntegration, type ConfiguredModel } from "./configured/provider.ts";
 import { InternalIntegration } from "./internal/provider.ts";
@@ -184,43 +186,56 @@ export async function loadIntegration(input: {
   const rawTools = profile.tools ?? [];
   if (!Array.isArray(rawTools)) throw new PnpError("INTEGRATION_CONFIG_INVALID", "tools must be an array.", 400);
 
-  const unified = await loadPnpSettings({ engineId: input.engineId ?? "", settingsPath: input.settingsPath });
-  let models = configuredModels(unified.model.models);
-  let defaultSelection = unified.model.default;
-  let permissionPolicy = unified.permissions;
-
   // Existing explicit configured profiles remain a compatibility surface. Once PNP_SETTINGS is explicitly
   // supplied, the unified file is authoritative for model/permission settings and the profile contributes tools
   // only. The shipped default profile contains legacy fields for package compatibility, but normal operation
   // ignores them because the default profile is not an explicit override.
-  if (explicitProfile && !explicitSettings) {
-    if (profile.models !== undefined) {
-      models = parseLegacyModels(profile.models);
-      defaultSelection = models[0]!.selection;
-    }
-    if (profile.policy !== undefined) permissionPolicy = parsePolicy(profile.policy, "profile.policy");
-  }
-
+  const legacyOnly = explicitProfile && !explicitSettings;
+  const legacyModels = legacyOnly && profile.models !== undefined ? parseLegacyModels(profile.models) : undefined;
+  const legacyPolicy = legacyOnly && profile.policy !== undefined ? parsePolicy(profile.policy, "profile.policy") : undefined;
   // Backward compatibility for the model-only file introduced before unified settings. It is model-only and
   // intentionally cannot override permissions; new deployments should use PNP_SETTINGS instead.
-  if (input.modelSettings !== undefined && input.modelSettings.trim() !== "") {
-    ({ models, defaultSelection } = await loadLegacyModelSettings(input.modelSettings));
+  const legacyModelSettings = input.modelSettings !== undefined && input.modelSettings.trim() !== ""
+    ? await loadLegacyModelSettings(input.modelSettings) : undefined;
+
+  // The unified settings file is read only when something above has not already supplied that part. A
+  // deployment that names its own legacy profile with inline models and policy depends on nothing else, so a
+  // missing default settings.json must not fail it (docs/engineering-review-3.md section 12, 记录).
+  let unified: EffectiveSettings | undefined;
+  const settings = async (): Promise<EffectiveSettings> => {
+    unified ??= await loadPnpSettings({ engineId: input.engineId ?? "", settingsPath: input.settingsPath });
+    return unified;
+  };
+  let models: ConfiguredModel[];
+  let defaultSelection: ModelSelection;
+  if (legacyModelSettings !== undefined) ({ models, defaultSelection } = legacyModelSettings);
+  else if (legacyModels !== undefined) { models = legacyModels; defaultSelection = legacyModels[0]!.selection; }
+  else {
+    const effective = await settings();
+    models = configuredModels(effective.model.models);
+    defaultSelection = effective.model.default;
   }
+  const configuredPolicy = legacyPolicy ?? (await settings()).permissions;
 
   const tools = rawTools.map((value) => tool(value, environment));
   if (new Set(tools.map((entry) => entry.id)).size !== tools.length) {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "Tool identifiers must be unique.", 400);
   }
+  // One structure for both consumers: `authorize()` answers from it, and the same object is published on the
+  // IntegrationContext for an Engine Pack to project into its native permission block. Deriving the decision
+  // from anything else is what let a deployment override reach the gateway but not the engine.
   const operationOverrides = overrides(environment.PNP_CONFIGURED_POLICY_OVERRIDES);
+  const permissionPolicy: PermissionPolicy = {
+    default: configuredPolicy.default,
+    operations: { ...configuredPolicy.operations, ...operationOverrides },
+  };
   const decide = (operation: string): AuthorizationDecision => {
-    const overridden = operationOverrides[operation];
-    if (overridden !== undefined) return { effect: overridden, reasonCode: "CONFIGURED_OVERRIDE" };
-    const configured = permissionPolicy.operations[operation];
-    if (configured !== undefined) return { effect: configured, reasonCode: "SETTINGS_OPERATION" };
-    return { effect: permissionPolicy.default, reasonCode: "SETTINGS_DEFAULT" };
+    const effect = permissionPolicy.operations[operation];
+    if (effect === undefined) return { effect: permissionPolicy.default, reasonCode: "SETTINGS_DEFAULT" };
+    return { effect, reasonCode: Object.hasOwn(operationOverrides, operation) ? "CONFIGURED_OVERRIDE" : "SETTINGS_OPERATION" };
   };
   return new ConfiguredIntegration(
-    models, tools, decide, environment, environment.PNP_MODEL_STRICT === "1", defaultSelection,
+    models, tools, decide, environment, environment.PNP_MODEL_STRICT === "1", defaultSelection, permissionPolicy,
   );
 }
 

@@ -32,6 +32,14 @@ for (const file of walk(path.join(codeRoot, "src")).filter((f) => f.endsWith(".t
     if ((normalized.startsWith("src/core/") || normalized.startsWith("src/gateway/"))
       && /engines\/|drivers\/|@agentclientprotocol|pi-coding-agent/.test(target)) violations.push(`${file}: ${target}`);
     if (/^src\/(engines|drivers)\//.test(normalized) && /storage\/|gateway\/|child_process/.test(target)) violations.push(`${file}: ${target}`);
+    // An Engine Pack that reads the deployment's settings file resolves the same policy a second time, and
+    // whatever the IntegrationProvider added to it (a PNP_CONFIGURED_POLICY_OVERRIDES entry) is missing from
+    // that second copy -- exactly what the OpenCode Pack did before it projected
+    // `IntegrationContext.permissions` (docs/engineering-review-3.md section 12, A). Configuration reaches an
+    // adapter through the contract, never from src/config/.
+    if (/^src\/(engines|drivers)\//.test(normalized) && /(^|\/)config\//.test(target)) {
+      violations.push(`${file}: ${target} (adapters must take configuration from the IntegrationContext, not src/config/)`);
+    }
     if (normalized.startsWith("src/integration/") && /engines\/|drivers\/|gateway\/|storage\//.test(target)) violations.push(`${file}: ${target}`);
     if (ADAPTER_DIR.test(normalized)) {
       const hit = NEW_ADAPTER_FORBIDDEN.find((rule) => rule.pattern.test(target));

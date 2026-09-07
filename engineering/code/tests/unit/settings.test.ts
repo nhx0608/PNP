@@ -155,6 +155,32 @@ test("an explicit unified settings file overrides legacy profile model and polic
   } finally { await removeTree(dir); }
 });
 
+test("a deployment override reaches both the decision and the policy published on the context", async () => {
+  const provider = await loadIntegration({
+    kind: "configured",
+    development: false,
+    engineDevelopmentOnly: false,
+    engineId: "opencode",
+    environment: {
+      PNP_CONFIGURED_POLICY_OVERRIDES: JSON.stringify({ write: "ask" }),
+      PNP_MODEL_ENDPOINT: "http://127.0.0.1:9001/v1",
+      PNP_MODEL_AUTHORIZATION: "Bearer test-only",
+    },
+  });
+  const context = await provider.prepare({
+    session,
+    request: { parts: [{ type: "text", text: "test" }], model: { providerID: "", modelID: "" } },
+    signal: new AbortController().signal,
+  });
+  // The shipped settings allow everything, so this operation reaches an approval loop only if the override is
+  // part of the very structure an Engine Pack projects, not just of the gateway's own decision.
+  assert.equal(context.permissions?.default, "allow");
+  assert.equal(context.permissions?.operations.write, "ask");
+  const decision = await context.authorize({ kind: "permission", operation: "write", payload: {} });
+  assert.deepEqual(decision, { effect: "ask", reasonCode: "CONFIGURED_OVERRIDE" });
+  assert.equal((await context.authorize({ kind: "permission", operation: "read", payload: {} })).reasonCode, "SETTINGS_DEFAULT");
+});
+
 test("settings reject relative explicit paths and Core defaults missing from the effective catalog", async () => {
   await assert.rejects(loadPnpSettings({ engineId: "opencode", settingsPath: "relative/settings.json" }), { code: "SETTINGS_INVALID" });
   const dir = await mkdtemp(path.join(tmpdir(), "pnp-settings-invalid-"));

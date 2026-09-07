@@ -1,4 +1,4 @@
-import type { IntegrationContext, IntegrationProvider, ModelResolution, ModelSelection, ToolBinding, AuthorizationDecision } from "../../contracts/index.ts";
+import type { IntegrationContext, IntegrationProvider, ModelResolution, ModelSelection, PermissionPolicy, ToolBinding, AuthorizationDecision } from "../../contracts/index.ts";
 import { PnpError } from "../../core/errors.ts";
 export interface ConfiguredModel {
   selection: ModelSelection;
@@ -16,8 +16,10 @@ export class ConfiguredIntegration implements IntegrationProvider {
   private readonly environment: NodeJS.ProcessEnv;
   private readonly strictModel: boolean;
   private readonly defaultSelection?: ModelSelection;
-  constructor(models: readonly ConfiguredModel[], tools: readonly ToolBinding[] = [], policy: (operation: string) => AuthorizationDecision = () => ({ effect: "allow", reasonCode: "COMPETITION_DEFAULT_ALLOW" }), environment: NodeJS.ProcessEnv = process.env, strictModel = false, defaultSelection?: ModelSelection) {
-    this.models = models; this.tools = tools; this.policy = policy; this.environment = environment; this.strictModel = strictModel; this.defaultSelection = defaultSelection;
+  /** The structure `policy` decides from, published on every context so an Engine Pack projects the same one. */
+  private readonly permissions?: PermissionPolicy;
+  constructor(models: readonly ConfiguredModel[], tools: readonly ToolBinding[] = [], policy: (operation: string) => AuthorizationDecision = () => ({ effect: "allow", reasonCode: "COMPETITION_DEFAULT_ALLOW" }), environment: NodeJS.ProcessEnv = process.env, strictModel = false, defaultSelection?: ModelSelection, permissions?: PermissionPolicy) {
+    this.models = models; this.tools = tools; this.policy = policy; this.environment = environment; this.strictModel = strictModel; this.defaultSelection = defaultSelection; this.permissions = permissions;
   }
   private defaultModel(): ConfiguredModel {
     const configured = this.defaultSelection === undefined ? undefined : this.models.find((m) =>
@@ -65,6 +67,10 @@ export class ConfiguredIntegration implements IntegrationProvider {
       if (!value) throw new PnpError("MODEL_AUTH_MISSING", "Required credential environment variable is absent.", 503);
       headers[name] = value;
     }
-    return { model: { selection: model.selection, endpoint, protocol: model.protocol, headers, resolution }, tools: this.tools, assets: [], authorize: async (request) => this.policy(request.operation) };
+    return {
+      model: { selection: model.selection, endpoint, protocol: model.protocol, headers, resolution },
+      tools: this.tools, assets: [], authorize: async (request) => this.policy(request.operation),
+      ...(this.permissions === undefined ? {} : { permissions: this.permissions }),
+    };
   }
 }
