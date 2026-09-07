@@ -1,14 +1,11 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ModelSelection } from "../contracts/index.ts";
+import type { ModelSelection, PermissionEffect, PermissionPolicy } from "../contracts/index.ts";
 import { PnpError } from "../core/errors.ts";
 
-export type PermissionEffect = "allow" | "deny" | "ask";
-export interface PermissionPolicy {
-  default: PermissionEffect;
-  operations: Readonly<Record<string, PermissionEffect>>;
-}
+/** The policy shape is public contract; this module parses into it rather than defining its own copy. */
+export type { PermissionEffect, PermissionPolicy };
 export interface SettingsModelDefinition {
   selection: ModelSelection;
   endpoint?: string;

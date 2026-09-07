@@ -161,6 +161,11 @@ export interface AuthorizationDecision {
   effect: "allow" | "deny" | "ask";
   reasonCode: string;
 }
+export type PermissionEffect = AuthorizationDecision["effect"];
+export interface PermissionPolicy {
+  default: PermissionEffect;
+  operations: Readonly<Record<string, PermissionEffect>>;
+}
 export interface DriverServices {
   events: EventSink;
   interact(request: InteractionRequest): Promise<InteractionResponse>;
@@ -213,6 +218,12 @@ export interface IntegrationContext {
   assets: readonly AssetBinding[];
   /** Policy does not execute an Agent loop. Deny cannot be overridden by a user reply. */
   authorize(request: InteractionRequest): Promise<AuthorizationDecision>;
+  /**
+   * The effective operation policy this context authorizes with, deployment overrides already applied, so an
+   * Engine Pack can project it into native configuration without reading any settings source itself. Absent
+   * when the provider has no static policy.
+   */
+  permissions?: PermissionPolicy;
 }
 export interface IntegrationProvider {
   readonly id: string;

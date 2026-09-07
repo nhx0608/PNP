@@ -160,6 +160,8 @@ ToolBinding 的 executable、args、env 来自可信配置。工具凭据与模�
 
 组织授权返回 allow、deny、ask。deny 不进入可由用户覆盖的等待状态；ask 才发布可回复请求。question 回答为数组形式，权限 allow/deny 不当作 question 答案。重复答复、跨类型答复、已过期请求明确失败。
 
+`IntegrationContext.permissions` 是本轮授权实际使用的有效策略（`{default, operations}`，取值同 allow/deny/ask，已含部署侧覆盖），与 `authorize()` 出自同一结构；Adapter 只据此投影引擎原生权限，不自行读取任何设置来源。Provider 没有静态策略时该字段缺省。
+
 `GET /permission` 的条目与 `permission.asked` 事件是同一个权限对象：`{id, sessionID, permission, patterns, created_at}` 加驱动载荷（`title`、`name`、`kind`、`locations`、`rawInput`、`content`、`options` 等），网关标识排在最后，不被引擎载荷覆盖。`permission` 是策略可写的工具名（取名规则同第 4 节，与轨迹一致）。`patterns` 是本次请求涉及的路径数组，永远存在：驱动按 `locations[].path` → `rawInput` 的 `filepath`/`filePath`/`path` → 引擎把 title 当作路径使用时的 title 依次取值，保序去重；引擎没有指明任何路径时为空数组。`patterns` 只转述引擎请求里已有的事实，网关不推断、不补写目标，也不因缺少 `patterns` 拒绝或改写请求。question 的载荷形状不受本段约束。
 
 `InteractionResponse.source` 标明决定来源：`policy` 为组织策略直接裁决，`user` 为回复接口提交，`timeout` 为等待过期，`cancelled` 为 Run 取消或终止清理等待者。`reasonCode` 携带非敏感原因码。Adapter 据此区分组织拒绝与无人应答，把两者映射为各自引擎的原生拒绝原因；组织拒绝依然不可被用户回复覆盖。
