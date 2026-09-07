@@ -50,6 +50,25 @@ function modelKey(selection: ModelSelection): string {
 function configuredModels(values: readonly SettingsModelDefinition[]): ConfiguredModel[] {
   return values.map((entry) => ({ ...entry }));
 }
+/** Legacy profile/model-settings parsing keeps the old public error code even though it reuses the new parser. */
+function parseLegacyModel(value: unknown, label: string): SettingsModelDefinition {
+  try { return parseSettingsModel(value, label); }
+  catch (error) {
+    if (error instanceof PnpError && error.code === "SETTINGS_INVALID") {
+      throw new PnpError("INTEGRATION_CONFIG_INVALID", error.message, 400);
+    }
+    throw error;
+  }
+}
+function parseLegacySelection(value: unknown, label: string): ModelSelection {
+  try { return parseSettingsSelection(value, label); }
+  catch (error) {
+    if (error instanceof PnpError && error.code === "SETTINGS_INVALID") {
+      throw new PnpError("INTEGRATION_CONFIG_INVALID", error.message, 400);
+    }
+    throw error;
+  }
+}
 async function loadLegacyModelSettings(file: string): Promise<{ models: ConfiguredModel[]; defaultSelection: ModelSelection }> {
   if (!path.isAbsolute(file)) throw new PnpError("INTEGRATION_CONFIG_INVALID", "PNP_MODEL_SETTINGS must be an absolute path.", 400);
   const settings = object(await readJson(file, "Legacy model settings"), "legacy model settings");
@@ -57,8 +76,8 @@ async function loadLegacyModelSettings(file: string): Promise<{ models: Configur
   if (!Array.isArray(settings.models) || settings.models.length === 0) {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "Legacy model settings require at least one model.", 400);
   }
-  const models = configuredModels(settings.models.map((entry, index) => parseSettingsModel(entry, `models[${index}]`)));
-  const defaultSelection = parseSettingsSelection(settings.default, "default");
+  const models = configuredModels(settings.models.map((entry, index) => parseLegacyModel(entry, `models[${index}]`)));
+  const defaultSelection = parseLegacySelection(settings.default, "default");
   if (new Set(models.map((entry) => modelKey(entry.selection))).size !== models.length) {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "Model selections must be unique.", 400);
   }
@@ -71,7 +90,7 @@ function parseLegacyModels(value: unknown): ConfiguredModel[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "At least one legacy profile model is required.", 400);
   }
-  const models = configuredModels(value.map((entry, index) => parseSettingsModel(entry, `profile.models[${index}]`)));
+  const models = configuredModels(value.map((entry, index) => parseLegacyModel(entry, `profile.models[${index}]`)));
   if (new Set(models.map((entry) => modelKey(entry.selection))).size !== models.length) {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "Model selections must be unique.", 400);
   }
@@ -172,7 +191,8 @@ export async function loadIntegration(input: {
 
   // Existing explicit configured profiles remain a compatibility surface. Once PNP_SETTINGS is explicitly
   // supplied, the unified file is authoritative for model/permission settings and the profile contributes tools
-  // only. The shipped default profile contains only tools, so normal operation has one settings source.
+  // only. The shipped default profile contains legacy fields for package compatibility, but normal operation
+  // ignores them because the default profile is not an explicit override.
   if (explicitProfile && !explicitSettings) {
     if (profile.models !== undefined) {
       models = parseLegacyModels(profile.models);
