@@ -58,6 +58,13 @@ function headerEnvironment(value: unknown, label: string): Readonly<Record<strin
     nonEmptyString(variable, `${label}.${name}`),
   ]));
 }
+/**
+ * A model declares its endpoint either literally or, like its headers, by the NAME of an
+ * environment variable holding it. Exactly one form is allowed. A literal endpoint is checked
+ * against the transport rule here; a variable-backed one is checked against the same rule the
+ * moment it resolves (ConfiguredIntegration.endpointOf), because its value exists only in the
+ * process environment.
+ */
 export function parseSettingsModel(value: unknown, label = "model"): SettingsModelDefinition {
   const item = object(value, label);
   exactKeys(item, ["selection", "endpoint", "endpointEnvironment", "protocol", "headerEnvironment"], label);

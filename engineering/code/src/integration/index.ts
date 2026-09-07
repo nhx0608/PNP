@@ -15,7 +15,17 @@ type IntegrationKind = "internal" | "configured" | "mock";
 type JsonObject = Record<string, unknown>;
 type Effect = PermissionEffect;
 const EFFECTS: readonly Effect[] = ["allow", "deny", "ask"];
+/** `src/integration/` in the source tree and `dist/integration/` in a build both sit one level
+ *  below the package root, so the shipped profile is found the same way in either. */
 const codeRoot = fileURLToPath(new URL("../../", import.meta.url));
+/**
+ * The integration is shipped configuration, not a code delivery: an operator who follows
+ * INSTRUCTION.md gets this profile and the shipped settings without setting anything
+ * (docs/engineering-review-3.md section 7, R3). The profile carries tools; the settings name
+ * environment variables instead of carrying an endpoint or a credential, so the public repository
+ * holds no deployment address. Those values only ever exist in the process environment, and
+ * `probeIntegration` refuses to start when one of them is missing.
+ */
 export const DEFAULT_CONFIGURED_PROFILE = path.join(codeRoot, "config", "competition-profile.json");
 
 function object(value: unknown, label: string): JsonObject {
@@ -111,6 +121,12 @@ function parsePolicy(value: unknown, label: string): PermissionPolicy {
   }
   return { default: defaultEffect, operations: configuredOperations };
 }
+/**
+ * Deployment-side operation policy, supplied as JSON in `PNP_CONFIGURED_POLICY_OVERRIDES` so a
+ * deployment can put one operation on "ask" without editing the shipped settings. It is the same
+ * trust level as the settings file (both are set by whoever runs the gateway) and it is applied at
+ * load time, so it can never be reached by a caller, a prompt or a user reply.
+ */
 function overrides(raw: string | undefined): Record<string, Effect> {
   if (raw === undefined || raw.trim() === "") return {};
   let parsed: unknown;
@@ -164,6 +180,8 @@ export async function loadIntegration(input: {
   modelSettings?: string;
   environment?: NodeJS.ProcessEnv;
 }): Promise<IntegrationProvider> {
+  // A real engine defaults to the shipped configured profile. `internal` stays selectable, and it
+  // is the explicit choice — never a default — that fails while it has no implementation.
   const kind = input.kind ?? (input.engineDevelopmentOnly ? "mock" : "configured");
   if (!(["internal", "configured", "mock"] as const).includes(kind as IntegrationKind)) {
     throw new PnpError("INTEGRATION_NOT_FOUND", "Unknown integration profile.", 400);
@@ -176,6 +194,13 @@ export async function loadIntegration(input: {
     return new MockIntegration();
   }
 
+  // Unlike mock, configured carries no development-mode gate: it reads its files from absolute
+  // paths, references secrets only by environment variable name, and restricts model endpoints to
+  // https or loopback — the same trust model as the internal provider. A real (non-mock) engine
+  // must have a usable model path in a non-development deployment, and configured is currently the
+  // only one that is actually implemented.
+  // An unset PNP_CONFIGURED_PROFILE (or an empty one) means the shipped profile; an explicit
+  // absolute path still wins. PNP_SETTINGS works the same way for the unified settings file.
   const environment = input.environment ?? process.env;
   const explicitProfile = input.configuredProfile !== undefined && input.configuredProfile.trim() !== "";
   const explicitSettings = input.settingsPath !== undefined && input.settingsPath.trim() !== "";
@@ -234,12 +259,35 @@ export async function loadIntegration(input: {
     if (effect === undefined) return { effect: permissionPolicy.default, reasonCode: "SETTINGS_DEFAULT" };
     return { effect, reasonCode: Object.hasOwn(operationOverrides, operation) ? "CONFIGURED_OVERRIDE" : "SETTINGS_OPERATION" };
   };
+  // The evaluator supplies model identifiers this deployment does not control, so an unconfigured
+  // selection falls back to the effective default model (docs/engineering-review-3.md section 7,
+  // R2). A deployment that would rather answer 403 sets PNP_MODEL_STRICT=1.
+  const strictModel = environment.PNP_MODEL_STRICT === "1";
   return new ConfiguredIntegration(
-    models, tools, decide, environment, environment.PNP_MODEL_STRICT === "1", defaultSelection, permissionPolicy,
+    models, tools, decide, environment, strictModel, defaultSelection, permissionPolicy,
   );
 }
 
+/**
+ * A provider may optionally implement a startup reachability probe. `IntegrationProvider` itself
+ * is not extended with this method (that interface lives in ../contracts/index.ts, outside this
+ * package's edit boundary); callers that want to probe use this local, duck-typed extension.
+ */
 export interface ProbeableIntegration extends IntegrationProvider { probe?(): Promise<void> }
+/**
+ * Startup-time reachability check for the loaded integration provider. Call this once, after
+ * `loadIntegration()` and before the gateway starts listening, so an unusable provider fails fast
+ * at boot instead of on the first prompt (see docs/engineering-review-2.md §3 and §6.3).
+ *
+ * `InternalIntegration` has no real implementation yet — its `prepare()` unconditionally throws
+ * 503 — so it is always reported as unavailable here, regardless of whether a `probe` method is
+ * ever added to it. Other providers are probed via their optional `probe()` method, if present;
+ * providers without one (e.g. `MockIntegration`) are treated as available.
+ *
+ * Wiring note for main.ts: call `await probeIntegration(provider)` right after
+ * `await loadIntegration(...)` and before `app.listen(...)`; let a thrown PnpError abort startup
+ * the same way other boot-time failures already do.
+ */
 export async function probeIntegration(provider: IntegrationProvider): Promise<void> {
   if (provider instanceof InternalIntegration) {
     throw new PnpError("INTEGRATION_UNAVAILABLE", "Internal model, tool and policy integration is not implemented; refusing to start.", 503);
