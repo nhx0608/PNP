@@ -178,3 +178,22 @@
 - 其中与 `engineering/docs/spec/contracts.md` 现有文字冲突的三处，随实现一并修订规范文本，使规范与代码同步：（a）§3.1 队列——按规范落地，默认 8 不变，仅补 `PNP_RUN_QUEUE_LIMIT`；（b）"正常完成仍有非终态观察必须按协议错误处理"改为"由 Core 追加 `result_unknown` 观察，轮次终态由引擎 stopReason 决定"（D1）；（c）"只有真实 name + input 才建立 canonical tool call"改为"name 或宣告时 title（记录 `nameSource`）+ input"（D2）。
 - 实现分工：三个实现模型并行，分别负责 D1–D3、R2/R3/R5、R1/R4/R8；R7（权限 `patterns`）在三者合入后单独补做。顶层模型只复审设计一致性与测试床结果。
 - `engineering/docs/team/handoff-current.md` §2、§4 写于本确认之前，其"尚未获得用户确认"的表述以本节为准。
+- 2026-09-07：R1–R5、R7、R8、D1–D3 已全部合入 master；`33422fd` 的六个 CI 作业（两平台 shared-contract、四条冒烟含 windows/opencode 真机启动）全绿。
+
+---
+
+## 11. 增量审查：`d422938`（共享模型设置 `config/model-settings.json`）
+
+**结论：可以保留；三处要改；一处待用户定。**
+
+与第 7 节裁决的关系：R2（未配置的模型替换为默认模型并发布 `model.resolved`，`PNP_MODEL_STRICT=1` 恢复 403）语义保持，只是"默认"从"清单第一项"变为显式 `default` 选择器；R3（集成随包交付、只引用环境变量名、启动探测点名缺失变量）语义保持，默认路径仍只需 `PNP_MODEL_ENDPOINT`/`PNP_MODEL_AUTHORIZATION`。安全扫描：新文件与文档不含主机名、凭据，只有变量名。CI：该提交上 ubuntu shared-contract 与四条冒烟全绿；windows shared-contract 的失败在 `runtime.test.ts` 的 job host 测试，根因是 `process-host.ts` 里 supervisor 进程退出事件与其最后一帧的顺序竞态（Node 允许在 stdio 未读完前发出 `exit`），与本提交无关，已另行修复。
+
+**要改的三处：**
+
+1. **两处模型真相源。** 默认路径下 `competition-profile.json` 的 `models` 被完全忽略，但仍随包交付：改它不生效、也无提示。裁决：交付档删除 `models`（解析器对自带档的 inline models 保持兼容）；当设置文件与显式档同时定义 models 时，加载期打印一条 `console.warn`（事件 `model.settings.shadowed`）说明以设置文件为准。
+2. **注释与格式回退。** 本提交删除了 `integration/index.ts`、`configured/provider.ts`、`main.ts`、`.env.example` 中的解释性注释——包括 R2/R3 的依据引用、`localhost` 绑定的理由、"归属校验不是启动门禁"的理由，以及 `.env.example` 里每个变量的取值范围与语义——并把多条语句压进一行。AGENTS.md 禁止无关格式调整；操作者读 `.env.example` 时丢失了范围说明。裁决：恢复注释与原格式，新逻辑保留。为避免与 GPT 进行中的工作冲突，待 GPT 本系列提交告一段落后由实现模型统一恢复；GPT 自行恢复更好。
+3. **操作文档未同步。** `INSTRUCTION.md` 的环境变量表与"集成是配置"一段仍把 `competition-profile.json` 写成模型来源，未提及 `PNP_MODEL_SETTINGS`；`config/MODEL-SETTINGS.md` 只在 config 目录下。裁决：`INSTRUCTION.md` 增加 `PNP_MODEL_SETTINGS` 一行并改写该段；`.env.example` 补回被删的范围说明。
+
+**待用户定：** `his/GLM-V5.1-DX`、`his/Qwen-V3.6-27B-DX` 与 `PNP_HIS_*` 这些名字是否属于不应出现在公开仓库的内部标识（AGENTS.md 禁止内部域名、appid、凭据、内部材料）。它们不是域名也不是凭据；若判定为内部信息，交付文件改用示例名（如 `example/model-a`），真实清单放在 `PNP_MODEL_SETTINGS` 指向的私有文件里。
+
+**记录（不阻塞）：** 启动探测只覆盖默认模型点名的变量；选择 HIS 模型而 `PNP_HIS_*` 未设置时在 prompt 阶段以 503 `MODEL_ENDPOINT_MISSING` 失败，文档应写明。测试补三条：显式档 + 无设置文件走 inline models；显式档 + 设置文件以设置文件为准；相对路径的 `PNP_MODEL_SETTINGS` 被拒。设计上，档本身早已与引擎无关（IntegrationProvider 不按引擎分支），本文件新增的实质是 `default` 选择器与"模型清单由 C 线单独维护"的文件边界；若后者是有意的分工则成立，否则把 `default` 放进档里即可。
