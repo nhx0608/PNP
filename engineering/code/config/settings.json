@@ -45,6 +45,9 @@
     "permissions": {
       "default": "allow",
       "operations": {}
+    },
+    "mcp": {
+      "servers": {}
     }
   },
   "cores": {

@@ -13,12 +13,35 @@ export interface SettingsModelDefinition {
   protocol: "openai-chat" | "anthropic-messages";
   headerEnvironment: Readonly<Record<string, string>>;
 }
+export interface McpStdioServerSettings {
+  id: string;
+  transport: "stdio";
+  command: string;
+  args: readonly string[];
+  env: Readonly<Record<string, string>>;
+  enabled: boolean;
+  cwd?: string;
+  timeoutMs?: number;
+}
+export interface McpStreamableHttpServerSettings {
+  id: string;
+  transport: "streamable-http";
+  url?: string;
+  urlEnvironment?: string;
+  headerEnvironment: Readonly<Record<string, string>>;
+  enabled: boolean;
+  timeoutMs?: number;
+}
+export type McpServerSettings = McpStdioServerSettings | McpStreamableHttpServerSettings;
 export interface EffectiveSettings {
   model: {
     default: ModelSelection;
     models: readonly SettingsModelDefinition[];
   };
   permissions: PermissionPolicy;
+  mcp: {
+    servers: readonly McpServerSettings[];
+  };
 }
 
 type JsonObject = Record<string, unknown>;
@@ -42,6 +65,33 @@ function nonEmptyString(value: unknown, label: string): string {
     throw new PnpError("SETTINGS_INVALID", `${label} must be a non-empty string.`, 400);
   }
   return value;
+}
+function optionalStringMap(value: unknown, label: string): Readonly<Record<string, string>> {
+  if (value === undefined) return {};
+  const item = object(value, label);
+  return Object.fromEntries(Object.entries(item).map(([name, variable]) => [
+    name,
+    nonEmptyString(variable, `${label}.${name}`),
+  ]));
+}
+function optionalStringArray(value: unknown, label: string): readonly string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
+    throw new PnpError("SETTINGS_INVALID", `${label} must be an array of strings.`, 400);
+  }
+  return value;
+}
+function optionalBoolean(value: unknown, label: string, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  if (typeof value !== "boolean") throw new PnpError("SETTINGS_INVALID", `${label} must be a boolean.`, 400);
+  return value;
+}
+function optionalPositiveInteger(value: unknown, label: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isInteger(value) || (value as number) <= 0) {
+    throw new PnpError("SETTINGS_INVALID", `${label} must be a positive integer.`, 400);
+  }
+  return value as number;
 }
 export function parseSettingsSelection(value: unknown, label = "model selection"): ModelSelection {
   const item = object(value, label);
@@ -164,6 +214,95 @@ function mergeModels(common: readonly SettingsModelDefinition[], core: readonly 
   return [...merged.values()];
 }
 
+function mcpServerObjects(value: unknown, label: string): JsonObject {
+  if (value === undefined) return {};
+  const section = object(value, label);
+  exactKeys(section, ["servers"], label);
+  if (section.servers === undefined) return {};
+  return object(section.servers, `${label}.servers`);
+}
+function mergedServerObject(baseValue: unknown, overrideValue: unknown, label: string): JsonObject {
+  const base = baseValue === undefined ? {} : object(baseValue, `${label}.common`);
+  const override = overrideValue === undefined ? {} : object(overrideValue, `${label}.override`);
+  const merged: JsonObject = { ...base, ...override };
+  for (const key of ["env", "headerEnvironment"] as const) {
+    if (base[key] !== undefined || override[key] !== undefined) {
+      const baseMap = base[key] === undefined ? {} : object(base[key], `${label}.${key}.common`);
+      const overrideMap = override[key] === undefined ? {} : object(override[key], `${label}.${key}.override`);
+      merged[key] = { ...baseMap, ...overrideMap };
+    }
+  }
+  return merged;
+}
+function validateRemoteUrl(raw: string, label: string): string {
+  let url: URL;
+  try { url = new URL(raw); }
+  catch { throw new PnpError("SETTINGS_INVALID", `${label} must be a valid URL.`, 400); }
+  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  if (!(url.protocol === "https:" || (url.protocol === "http:" && loopback)) || url.username || url.password) {
+    throw new PnpError("SETTINGS_INVALID", `${label} is not an approved transport.`, 400);
+  }
+  return raw;
+}
+function parseMcpServer(id: string, value: unknown, label: string): McpServerSettings {
+  if (id.length === 0) throw new PnpError("SETTINGS_INVALID", `${label} server id must be non-empty.`, 400);
+  const item = object(value, label);
+  exactKeys(item, [
+    "transport", "command", "args", "cwd", "env", "url", "urlEnvironment", "headerEnvironment", "enabled", "timeoutMs",
+  ], label);
+  const transport = nonEmptyString(item.transport, `${label}.transport`);
+  const enabled = optionalBoolean(item.enabled, `${label}.enabled`, true);
+  const timeoutMs = optionalPositiveInteger(item.timeoutMs, `${label}.timeoutMs`);
+  if (transport === "stdio") {
+    if (item.url !== undefined || item.urlEnvironment !== undefined || item.headerEnvironment !== undefined) {
+      throw new PnpError("SETTINGS_INVALID", `${label} stdio server cannot define HTTP fields.`, 400);
+    }
+    const command = nonEmptyString(item.command, `${label}.command`);
+    const args = optionalStringArray(item.args, `${label}.args`);
+    const env = optionalStringMap(item.env, `${label}.env`);
+    const cwd = item.cwd === undefined ? undefined : nonEmptyString(item.cwd, `${label}.cwd`);
+    return {
+      id, transport, command, args, env, enabled,
+      ...(cwd === undefined ? {} : { cwd }),
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    };
+  }
+  if (transport === "streamable-http") {
+    if (item.command !== undefined || item.args !== undefined || item.cwd !== undefined || item.env !== undefined) {
+      throw new PnpError("SETTINGS_INVALID", `${label} streamable-http server cannot define stdio fields.`, 400);
+    }
+    const hasUrl = Object.hasOwn(item, "url");
+    const hasUrlEnvironment = Object.hasOwn(item, "urlEnvironment");
+    if (hasUrl === hasUrlEnvironment) {
+      throw new PnpError("SETTINGS_INVALID", `${label} needs exactly one of url and urlEnvironment.`, 400);
+    }
+    const headerEnv = optionalStringMap(item.headerEnvironment, `${label}.headerEnvironment`);
+    if (hasUrlEnvironment) {
+      return {
+        id, transport, urlEnvironment: nonEmptyString(item.urlEnvironment, `${label}.urlEnvironment`),
+        headerEnvironment: headerEnv, enabled,
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      };
+    }
+    return {
+      id, transport, url: validateRemoteUrl(nonEmptyString(item.url, `${label}.url`), `${label}.url`),
+      headerEnvironment: headerEnv, enabled,
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    };
+  }
+  throw new PnpError("SETTINGS_INVALID", `${label}.transport must be stdio or streamable-http.`, 400);
+}
+function resolveMcp(commonValue: unknown, coreValue: unknown, engineId: string): McpServerSettings[] {
+  const commonServers = mcpServerObjects(commonValue, "common.mcp");
+  const coreServers = mcpServerObjects(coreValue, `cores.${engineId}.mcp`);
+  const ids = [...new Set([...Object.keys(commonServers), ...Object.keys(coreServers)])];
+  return ids.map((id) => parseMcpServer(
+    id,
+    mergedServerObject(commonServers[id], coreServers[id], `mcp.servers.${id}`),
+    `effective.mcp.servers.${id}`,
+  ));
+}
+
 async function readSettingsFile(file: string): Promise<unknown> {
   try { return JSON.parse(await readFile(file, "utf8")); }
   catch { throw new PnpError("SETTINGS_INVALID", "PNP settings could not be loaded.", 400); }
@@ -177,9 +316,9 @@ function settingsPath(explicit: string | undefined): string {
 /**
  * Resolves one effective runtime settings view for an Engine Core. `common` is the baseline; the selected
  * `cores.<engineId>` section is an additive override. Model definitions with the same provider/model key replace
- * their common definition for that Core, while permission operations are merged by operation name. Nothing here
- * resolves credentials: model endpoints/headers still reference environment variable names and are resolved by
- * the IntegrationProvider per prompt.
+ * their common definition, permission operations merge by operation name, and MCP servers merge by server id.
+ * A Core can therefore disable or partially override a common MCP server without copying the whole definition.
+ * This layer preserves environment-variable NAMES; it never resolves model or MCP secrets.
  */
 export async function loadPnpSettings(input: { engineId: string; settingsPath?: string }): Promise<EffectiveSettings> {
   const file = settingsPath(input.settingsPath);
@@ -188,16 +327,17 @@ export async function loadPnpSettings(input: { engineId: string; settingsPath?: 
   if (root.version !== 1) throw new PnpError("SETTINGS_INVALID", "settings.version must be 1.", 400);
 
   const common = object(root.common, "common");
-  exactKeys(common, ["model", "permissions"], "common");
+  exactKeys(common, ["model", "permissions", "mcp"], "common");
   const commonModel = parseModelSection(common.model, "common.model", true);
   const commonPermissions = parseCommonPermissions(common.permissions);
 
   const cores = object(root.cores, "cores");
   for (const [engineId, value] of Object.entries(cores)) {
     const core = object(value, `cores.${engineId}`);
-    exactKeys(core, ["model", "permissions"], `cores.${engineId}`);
+    exactKeys(core, ["model", "permissions", "mcp"], `cores.${engineId}`);
     if (core.model !== undefined) parseModelSection(core.model, `cores.${engineId}.model`, false);
     parseCorePermissions(core.permissions, engineId);
+    resolveMcp(common.mcp, core.mcp, engineId);
   }
 
   const selected = cores[input.engineId] === undefined ? undefined : object(cores[input.engineId], `cores.${input.engineId}`);
@@ -215,5 +355,6 @@ export async function loadPnpSettings(input: { engineId: string; settingsPath?: 
       default: corePermissions.default ?? commonPermissions.default,
       operations: { ...commonPermissions.operations, ...corePermissions.operations },
     },
+    mcp: { servers: resolveMcp(common.mcp, selected?.mcp, input.engineId) },
   };
 }
