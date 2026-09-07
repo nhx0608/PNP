@@ -2,7 +2,7 @@
 param(
   [ValidateSet("start", "bootstrap", "help")]
   [string]$Mode = "start",
-  [string]$Engine = "opencode",
+  [string]$Engine = "",
   [int]$Port = 6217
 )
 
@@ -64,7 +64,7 @@ function Read-LocalEnvironment([string]$Path) {
   }
 
   if ($loaded.Count -gt 0) {
-    Write-Step "Loaded local environment variable names from $Path: $($loaded -join ', '). Values are not printed."
+    Write-Step "Loaded local environment variable names from ${Path}: $($loaded -join ', '). Values are not printed."
   }
 }
 
@@ -350,7 +350,7 @@ if ($Port -lt 1 -or $Port -gt 65535) {
   Fail "Port must be between 1 and 65535."
 }
 if ([string]::IsNullOrWhiteSpace($Engine)) {
-  $Engine = if ([string]::IsNullOrWhiteSpace($env:AGENT_ENGINE)) { "opencode" } else { $env:AGENT_ENGINE }
+  $Engine = if ([string]::IsNullOrWhiteSpace($env:AGENT_ENGINE)) { Fail "Specify the Agent Core at startup with --engine <id> (or AGENT_ENGINE for compatibility)." } else { $env:AGENT_ENGINE }
 }
 
 New-Item -ItemType Directory -Force -Path $RuntimeRoot | Out-Null
@@ -411,5 +411,5 @@ if (Test-Path -LiteralPath $localEnvFile -PathType Leaf) {
 }
 Write-Step "Model secrets are not printed. Press Ctrl+C to stop."
 
-& $nodeExe $gatewayEntry --port $Port --host localhost
+& $nodeExe $gatewayEntry --engine $Engine --port $Port --host localhost
 exit $LASTEXITCODE
