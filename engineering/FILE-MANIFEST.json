@@ -608,8 +608,8 @@
       "path": "code/src/runtime/process-host.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 39740,
-      "sha256": "17925bd8c179640f7e09c1cec0702c12f242b6db6ea15ccad8bedc498e347a55"
+      "bytes": 40991,
+      "sha256": "2bf533153a54a2b5aa96086b49d55cb7ddecb6be087232f53a57d2a4fb38a82e"
     },
     {
       "path": "code/src/runtime/recovery.ts",
@@ -839,8 +839,8 @@
       "path": "code/tests/unit/process-host.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 35801,
-      "sha256": "61fac1cb66b4ab524cb1c9e88f4c72bf4f22ea9d0d9d0d66e5848a4b107b7248"
+      "bytes": 40092,
+      "sha256": "14c20a159006efe54812ac77da775d389bfa606212d458a225187f38974a11e9"
     },
     {
       "path": "code/tests/unit/runtime.test.ts",
