@@ -30,7 +30,7 @@ jobs:
       - name: Exercise Windows one-command bootstrap
         if: runner.os == 'Windows'
         shell: cmd
-        run: pnp.cmd bootstrap mock
+        run: pnp.cmd bootstrap --engine mock
 
   # End-to-end smoke: real gateway process, real engine, real north-bound HTTP.
   # The model service is the only mocked component.
