@@ -1,3 +1,4 @@
+# Temporary self-cleaning helper; removed by its own job.
 name: Refresh engineering manifest
 on:
   push:
