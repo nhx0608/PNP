@@ -1,6 +1,6 @@
 {
   "contractVersion": "1.1.0",
-  "payloadFileCount": 167,
+  "payloadFileCount": 168,
   "files": [
     {
       "path": ".gitattributes",
@@ -111,15 +111,15 @@
       "path": "code/config/settings.json",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 1300,
-      "sha256": "6f187cff52f145222ad1749c0d8301165d6db9bff2335b51a123b521c2db2c7e"
+      "bytes": 1340,
+      "sha256": "e14a4e84b91f76b1b749daf90f1d92fbfd102227c90780f3e84049b8aa3a358b"
     },
     {
       "path": "code/config/SETTINGS.md",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 4965,
-      "sha256": "57f92be2e01f26824982f01ce90cd0e6398c6a7c0b35542a115b85bac35f2b52"
+      "bytes": 8120,
+      "sha256": "d79418b9110628a6fb4b1fe6463a506f47cffb34679d3abea097075f81690bbe"
     },
     {
       "path": "code/engines.lock.example.json",
@@ -321,8 +321,8 @@
       "path": "code/src/config/settings.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 10848,
-      "sha256": "e783674b5ee86195017d112d0c33178e04706e679b00f15715c25ae0d8121c6d"
+      "bytes": 17499,
+      "sha256": "b2110ab5583abfc81e26a5105a36a1ffb2be44eb6f47aa583a248231ffb35aea"
     },
     {
       "path": "code/src/contracts/AGENTS.md",
@@ -834,6 +834,13 @@
       "category": "测试代码",
       "bytes": 17109,
       "sha256": "e12482e063adc4e7df5ec8c3838ba2c307816d303704f685537f1da7955869c8"
+    },
+    {
+      "path": "code/tests/unit/mcp-settings.test.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 4204,
+      "sha256": "500da3ec84cbb43bc4a02bf40d22b36a6c8598de57d817edf5272f4572cdfe5f"
     },
     {
       "path": "code/tests/unit/process-host.test.ts",
