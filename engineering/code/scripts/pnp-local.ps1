@@ -3,7 +3,8 @@ param(
   [ValidateSet("start", "bootstrap", "help")]
   [string]$Mode = "start",
   [string]$Engine = "",
-  [int]$Port = 6217
+  [int]$Port = 6217,
+  [string]$BindHost = "localhost"
 )
 
 $ErrorActionPreference = "Stop"
@@ -276,7 +277,7 @@ function Ensure-EngineDependency([string]$SelectedEngine, [string]$NpmCmd) {
   }
 
   if ([string]$config.distribution.kind -ne "npm-global-native-binary") {
-    Fail "Engine '$SelectedEngine' has no automatic local installer yet (distribution kind: $($config.distribution.kind)). Set its executable environment variable or extend the Engine bootstrap metadata."
+    Fail "Engine '$SelectedEngine' has no automatic local installer yet (distribution kind: $($config.distribution.kind)). Set its executable environment variable or use gateway.cmd after the judge/operator installs the required dependency."
   }
 
   $packageCandidates = @($config.distribution.packageNameCandidates)
@@ -320,14 +321,17 @@ function Show-Help {
 PNP local bootstrap launcher
 
 Usage:
-  .\pnp.cmd start [engine] [port]       Bootstrap dependencies, build, then start the Gateway.
-  .\pnp.cmd bootstrap [engine]          Bootstrap dependencies and build, but do not start.
-  .\pnp.cmd [engine]                    Shorthand for 'start [engine]'.
+  .\pnp.cmd start --engine <id> [--port 6217] [--host localhost]
+  .\pnp.cmd bootstrap --engine <id>
+  .\pnp.cmd help
 
 Examples:
-  .\pnp.cmd start opencode
-  .\pnp.cmd opencode
-  .\pnp.cmd bootstrap opencode
+  .\pnp.cmd start --engine opencode --port 6217
+  .\pnp.cmd bootstrap --engine opencode
+
+The competition engine switch is the required --engine startup argument. The launcher does not
+choose a default engine. The lower-level gateway still understands AGENT_ENGINE for compatibility,
+but pnp.cmd always forwards the explicit engine as --engine.
 
 Local configuration:
   - runtime\local.env is loaded automatically when present.
@@ -350,13 +354,19 @@ if ($Port -lt 1 -or $Port -gt 65535) {
   Fail "Port must be between 1 and 65535."
 }
 if ([string]::IsNullOrWhiteSpace($Engine)) {
-  $Engine = if ([string]::IsNullOrWhiteSpace($env:AGENT_ENGINE)) { Fail "Specify the Agent Core at startup with --engine <id> (or AGENT_ENGINE for compatibility)." } else { $env:AGENT_ENGINE }
+  Fail "Missing required startup argument: --engine <engineId>."
+}
+if (@("127.0.0.1", "localhost", "::1") -notcontains $BindHost) {
+  Fail "Host must be a loopback address: localhost, 127.0.0.1, or ::1."
 }
 
 New-Item -ItemType Directory -Force -Path $RuntimeRoot | Out-Null
 $localEnvFile = if ([string]::IsNullOrWhiteSpace($env:PNP_LOCAL_ENV_FILE)) { Join-Path $RuntimeRoot "local.env" } else { Resolve-LocalPath $env:PNP_LOCAL_ENV_FILE }
 Read-LocalEnvironment $localEnvFile
 
+if (-not [string]::IsNullOrWhiteSpace($env:AGENT_ENGINE) -and $env:AGENT_ENGINE -ne $Engine) {
+  Fail "--engine and AGENT_ENGINE disagree. Clear AGENT_ENGINE or make it match the startup parameter."
+}
 if (-not [string]::IsNullOrWhiteSpace($env:PNP_SETTINGS)) {
   $env:PNP_SETTINGS = Resolve-LocalPath $env:PNP_SETTINGS
 }
@@ -367,7 +377,6 @@ if ([string]::IsNullOrWhiteSpace($env:PNP_DATA_DIR)) {
 }
 New-Item -ItemType Directory -Force -Path $env:PNP_DATA_DIR | Out-Null
 
-$env:AGENT_ENGINE = $Engine
 if ($Engine -eq "mock") {
   $env:PNP_MODE = "development"
   $env:PNP_INTEGRATION = "mock"
@@ -405,11 +414,11 @@ if (-not (Test-Path -LiteralPath $gatewayEntry -PathType Leaf)) {
   Fail "Gateway build output is missing at $gatewayEntry"
 }
 
-Write-Step "Starting Gateway: AGENT_ENGINE=$Engine, port=$Port, data=$($env:PNP_DATA_DIR)"
+Write-Step "Starting Gateway: engine=$Engine, port=$Port, host=$BindHost, data=$($env:PNP_DATA_DIR)"
 if (Test-Path -LiteralPath $localEnvFile -PathType Leaf) {
   Write-Step "Local env source: $localEnvFile"
 }
 Write-Step "Model secrets are not printed. Press Ctrl+C to stop."
 
-& $nodeExe $gatewayEntry --engine $Engine --port $Port --host localhost
+& $nodeExe $gatewayEntry --engine $Engine --port $Port --host $BindHost
 exit $LASTEXITCODE
