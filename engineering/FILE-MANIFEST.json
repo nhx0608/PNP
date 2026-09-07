@@ -41,8 +41,8 @@
       "path": "code/.env.example",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 2171,
-      "sha256": "5d25817a25b7078473943110445c56ebeee630bac5b0ad8aa5e75156a35e4835"
+      "bytes": 5749,
+      "sha256": "1671c52488910481e4eff2a60ff84154dd44ea5c5d7ba37086eebf5b95532dd8"
     },
     {
       "path": "code/.gitignore",
@@ -62,8 +62,8 @@
       "path": "code/config/competition-profile.json",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 345,
-      "sha256": "1ca4c57131df19d0aa39bdadb4576c1d312d04d7529614b26bcd820c421503a1"
+      "bytes": 18,
+      "sha256": "e392651dfa64976a1586a25fe709f37f2606914a0d3f043a5b0a2865834992f0"
     },
     {
       "path": "code/config/configured.example.json",
@@ -188,15 +188,15 @@
       "path": "code/README.md",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 4790,
-      "sha256": "905e4bc1803ef23eb2e385efa8b0d9627db317caec371b708d536dad20cc736b"
+      "bytes": 4975,
+      "sha256": "8970ff927a3208fa2cb8eb9afae68595e45bc2872d22c945884b879e1827a7d7"
     },
     {
       "path": "code/scripts/check-boundaries.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 2786,
-      "sha256": "df63da0ef133dae6b1ece044b471a00ae60499e2d4af36e2949a44501a9c0896"
+      "bytes": 3478,
+      "sha256": "58a2e932417a788ac2cb42744482a39470e1cc7cf7e1095659d47bfac0ceb853"
     },
     {
       "path": "code/scripts/doctor.mjs",
@@ -209,8 +209,8 @@
       "path": "code/scripts/e2e/ci-smoke.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 23219,
-      "sha256": "183ca2a50dce9dd3c1067e16f17403779679287e3c8d52c523c6b8e5a31b7ec7"
+      "bytes": 23452,
+      "sha256": "5e570ab88ce19d955b315fc24b51e5ee535465d71f866a1c41d007f55196c84d"
     },
     {
       "path": "code/scripts/e2e/mock-model-server.mjs",
@@ -321,8 +321,8 @@
       "path": "code/src/config/settings.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 10429,
-      "sha256": "4a42faa9d057ddeab1bcdf6ccd71172c5e6af06ff21286f89112dfe682054394"
+      "bytes": 10848,
+      "sha256": "e783674b5ee86195017d112d0c33178e04706e679b00f15715c25ae0d8121c6d"
     },
     {
       "path": "code/src/contracts/AGENTS.md",
@@ -342,8 +342,8 @@
       "path": "code/src/contracts/index.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 9938,
-      "sha256": "fd663e5a6c2b4ce0ed813e3a303cb2ad8b36262312e9068db6c1c95e91e6e13e"
+      "bytes": 10437,
+      "sha256": "fd2d77164dec18898735d754978bcfc69ce9e943b997641977f9045ac78f9222"
     },
     {
       "path": "code/src/core/AGENTS.md",
@@ -482,15 +482,15 @@
       "path": "code/src/engines/opencode/native-config.ts",
       "owner": "A",
       "category": "实现源码",
-      "bytes": 9167,
-      "sha256": "f4373837e02822ebabe9e38e065939817709bac389e24c6e9d545e9d874596fe"
+      "bytes": 13877,
+      "sha256": "12412809eda811efe11de97c59b341142326ee728ef67d238d75a4afe1bae34a"
     },
     {
       "path": "code/src/engines/opencode/pack.ts",
       "owner": "A",
       "category": "实现源码",
-      "bytes": 3048,
-      "sha256": "70e89a45b1e14a42ae8cd41919e99896eeafc5816c13daab86f813ac1457862d"
+      "bytes": 5142,
+      "sha256": "a34b44ccc6a3d6ac015e4a5c5ddd08fe2538dc9ff3858dd8f807fd53a8cea4bb"
     },
     {
       "path": "code/src/engines/pi/AGENTS.md",
@@ -531,15 +531,15 @@
       "path": "code/src/integration/configured/provider.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 5187,
-      "sha256": "5baeff2d205738356cc08c99a4ae6ee09558e748e36f124e5a3465dc7449882f"
+      "bytes": 7738,
+      "sha256": "9d795cef84614be51d3542934de1cc62bf4ac2f0b87281508e517280c828bf75"
     },
     {
       "path": "code/src/integration/index.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 13184,
-      "sha256": "4b5c327327a170bd0836371d0333c886e110119e1ea01164c64240b46c63fa10"
+      "bytes": 17845,
+      "sha256": "d05e5bcd46bbf095c3661f3ed0a2aad276c965afcb4be84e24266c8308e31e87"
     },
     {
       "path": "code/src/integration/internal/AGENTS.md",
@@ -566,8 +566,8 @@
       "path": "code/src/main.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 4315,
-      "sha256": "10cfa6fbfa2f9844357eb7481baac6c09cf0764d9b3b718eb2046ce6723ea1ad"
+      "bytes": 5755,
+      "sha256": "3095249abbb8a2db7609a397b0e60f6e9827f4e428482d1a8490cb7f8cc0b6ce"
     },
     {
       "path": "code/src/registry/index.ts",
@@ -769,8 +769,8 @@
       "path": "code/tests/adapters/opencode/pack.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 10514,
-      "sha256": "cf9d6cb8147a70fbb57686f5f2bc0e24c1d936d9d6b303c2daf9b06bea09167e"
+      "bytes": 12526,
+      "sha256": "3e6749fb6bccef0c4c18f49805f0f144b7a64b9a512a31c3ae969b2aa60819dd"
     },
     {
       "path": "code/tests/adapters/opencode/settings-permissions.test.ts",
@@ -818,8 +818,8 @@
       "path": "code/tests/unit/config-assets.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 18942,
-      "sha256": "2a2a55b643fd681773d0fb285944f43b60ea0d05ce3feb7621e219f00b957028"
+      "bytes": 19093,
+      "sha256": "4ccae67eb0fb054396249df0d9a483ae5b6758cb6267e47bec3fe0bdc6e76687"
     },
     {
       "path": "code/tests/unit/contracts.test.ts",
@@ -853,8 +853,8 @@
       "path": "code/tests/unit/settings.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 7852,
-      "sha256": "7712dd86c2a2c3945ed3123f1013ab9cc72a9d9b262e604a50fb3422a1d4c2e5"
+      "bytes": 9170,
+      "sha256": "2513d7da7accfca47919b4ed6556f5ce1aaca42a83f5c5a5ba19c6510c8cb969"
     },
     {
       "path": "code/tests/unit/workspace.test.ts",
@@ -937,8 +937,8 @@
       "path": "docs/spec/contracts.md",
       "owner": "共同",
       "category": "架构与契约",
-      "bytes": 23239,
-      "sha256": "2cd90b2a409dbd70ecfe0fe278280b611289f12dab05a0db5b4c0365a35ae4a8"
+      "bytes": 23566,
+      "sha256": "7a809729817def5a2557265360d0ef2fcd6374bc8176a23d65208ab84e2b3a4f"
     },
     {
       "path": "docs/spec/dfx-and-testing.md",
@@ -1028,8 +1028,8 @@
       "path": "INSTRUCTION.md",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 13427,
-      "sha256": "266df776c8162b7fbf56e6d87fc910ec5a2bd6475bda6b9b11da40acd4745e67"
+      "bytes": 15258,
+      "sha256": "1e019874c7dd538076d0bebfe8d1a718967f65d5533b3b6180bcb0f20002938d"
     },
     {
       "path": "prompts/00-baseline-check.md",
