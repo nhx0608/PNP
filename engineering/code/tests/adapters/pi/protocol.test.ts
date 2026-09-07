@@ -14,13 +14,31 @@ test("parsePiFrame decodes a response envelope", () => {
 });
 
 test("parsePiFrame decodes the documented agent lifecycle and tool events", () => {
-  assert.deepEqual(parsePiFrame(JSON.stringify({ type: "agent_end", willRetry: false, stopReason: "end_turn" })),
-    { type: "agent_end", willRetry: false, stopReason: "end_turn" });
+  // Shape verified against a real installed pi 0.85.1 process (docs/engines/pi.md): `agent_end`
+  // carries the full `messages` array, never a top-level `stopReason`.
+  assert.deepEqual(parsePiFrame(JSON.stringify({ type: "agent_end", willRetry: false, messages: [{ role: "assistant", stopReason: "end_turn" }] })),
+    { type: "agent_end", willRetry: false, messages: [{ role: "assistant", stopReason: "end_turn" }] });
   assert.deepEqual(parsePiFrame(JSON.stringify({ type: "agent_settled" })), { type: "agent_settled" });
   assert.deepEqual(parsePiFrame(JSON.stringify({ type: "tool_execution_start", toolCallId: "c1", toolName: "bash", args: { command: "ls" } })),
     { type: "tool_execution_start", toolCallId: "c1", toolName: "bash", args: { command: "ls" } });
   assert.deepEqual(parsePiFrame(JSON.stringify({ type: "tool_execution_end", toolCallId: "c1", toolName: "bash", result: { code: 0 }, isError: false })),
     { type: "tool_execution_end", toolCallId: "c1", toolName: "bash", result: { code: 0 }, isError: false });
+});
+
+test("parsePiFrame decodes message_start/message_end/turn_end's nested message object (real pi 0.85.1 shape)", () => {
+  assert.deepEqual(parsePiFrame(JSON.stringify({ type: "message_start", message: { role: "user", content: [] } })),
+    { type: "message_start", message: { role: "user" } });
+  assert.deepEqual(parsePiFrame(JSON.stringify({ type: "message_end", message: { role: "assistant", stopReason: "stop" } })),
+    { type: "message_end", message: { role: "assistant", stopReason: "stop" } });
+  assert.deepEqual(parsePiFrame(JSON.stringify({ type: "turn_end", message: { role: "assistant", stopReason: "error" }, toolResults: [] })),
+    { type: "turn_end", message: { role: "assistant", stopReason: "error" } });
+  // A missing/malformed `message` degrades to no `message` field instead of throwing.
+  assert.deepEqual(parsePiFrame(JSON.stringify({ type: "message_end" })), { type: "message_end" });
+});
+
+test("parsePiFrame drops an agent_end message entry that has no role instead of throwing", () => {
+  const event = parsePiFrame(JSON.stringify({ type: "agent_end", willRetry: false, messages: [{ role: "user" }, { stopReason: "stop" }, { role: "assistant", stopReason: "error" }] }));
+  assert.deepEqual(event, { type: "agent_end", willRetry: false, messages: [{ role: "user" }, { role: "assistant", stopReason: "error" }] });
 });
 
 test("parsePiFrame degrades an unrecognized type to unknown instead of throwing", () => {

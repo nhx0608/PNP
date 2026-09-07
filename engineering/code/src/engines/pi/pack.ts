@@ -22,5 +22,8 @@ export class PiPack implements EnginePack {
   async purge(input: { nativeDataDirectory: string }): Promise<void> {
     const paths = resolveSessionPaths(input.nativeDataDirectory);
     await rm(paths.toolsFile, { force: true });
+    // Holds this session's private models.json (provider baseUrl + credential); must not
+    // outlive the session it was written for.
+    await rm(paths.agentConfigDir, { force: true, recursive: true });
   }
 }
