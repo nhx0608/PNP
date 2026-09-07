@@ -1,24 +1,3 @@
 {
-  "models": [
-    {
-      "selection": { "providerID": "approved-test", "modelID": "approved-model" },
-      "endpointEnvironment": "PNP_MODEL_ENDPOINT",
-      "protocol": "openai-chat",
-      "headerEnvironment": { "Authorization": "PNP_TEST_MODEL_AUTHORIZATION" }
-    },
-    {
-      "selection": { "providerID": "approved-test", "modelID": "literal-endpoint" },
-      "endpoint": "https://model.example.invalid/v1",
-      "protocol": "openai-chat",
-      "headerEnvironment": { "Authorization": "PNP_TEST_MODEL_AUTHORIZATION" }
-    }
-  ],
-  "tools": [],
-  "policy": {
-    "default": "allow",
-    "operations": {
-      "file.deleteRecursive": "ask",
-      "message.sendExternal": "ask"
-    }
-  }
+  "tools": []
 }
