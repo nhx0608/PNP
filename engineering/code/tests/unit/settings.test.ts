@@ -120,7 +120,7 @@ test("configured integration uses the selected Core effective model and permissi
   } finally { await removeTree(dir); }
 });
 
-test("an explicit unified settings file overrides legacy profile model and policy while retaining its tools", async () => {
+test("an explicit unified settings file overrides legacy profile model and policy", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "pnp-settings-legacy-"));
   try {
     const settings = await writeSettings(dir, {

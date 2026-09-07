@@ -3,10 +3,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
   AuthorizationDecision, CommandToolBinding, IntegrationProvider, ModelSelection, PermissionEffect,
-  PermissionPolicy, ToolSideEffect,
+  PermissionPolicy, ToolBinding, ToolSideEffect,
 } from "../contracts/index.ts";
-import { loadPnpSettings, parseSettingsModel, parseSettingsSelection } from "../config/settings.ts";
-import type { EffectiveSettings, SettingsModelDefinition } from "../config/settings.ts";
+import { loadPnpSettings, parseSettingsModel, parseSettingsSelection, validateRemoteUrl } from "../config/settings.ts";
+import type {
+  EffectiveSettings, McpServerSettings, McpStreamableHttpServerSettings, SettingsModelDefinition,
+} from "../config/settings.ts";
 import { PnpError } from "../core/errors.ts";
 import { ConfiguredIntegration, type ConfiguredModel } from "./configured/provider.ts";
 import { InternalIntegration } from "./internal/provider.ts";
@@ -22,10 +24,11 @@ const codeRoot = fileURLToPath(new URL("../../", import.meta.url));
 /**
  * The integration is shipped configuration, not a code delivery: an operator who follows
  * INSTRUCTION.md gets this profile and the shipped settings without setting anything
- * (docs/engineering-review-3.md section 7, R3). The profile carries tools; the settings name
- * environment variables instead of carrying an endpoint or a credential, so the public repository
- * holds no deployment address. Those values only ever exist in the process environment, and
- * `probeIntegration` refuses to start when one of them is missing.
+ * (docs/engineering-review-3.md section 7, R3). Models, permissions and MCP servers all come from the
+ * settings file; this profile is the legacy tool surface, kept for a deployment that names one itself.
+ * The settings name environment variables instead of carrying an endpoint or a credential, so the
+ * public repository holds no deployment address. Those values only ever exist in the process
+ * environment, and `probeIntegration` refuses to start when one of them is missing.
  */
 export const DEFAULT_CONFIGURED_PROFILE = path.join(codeRoot, "config", "competition-profile.json");
 
@@ -154,12 +157,7 @@ function tool(value: unknown, environment: NodeJS.ProcessEnv): CommandToolBindin
   if (!Array.isArray(item.args) || !item.args.every((arg) => typeof arg === "string")) {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "Tool args must be strings.", 400);
   }
-  const resolvedEnvironment: Record<string, string> = {};
-  for (const [name, variable] of Object.entries(stringMap(item.env, "tool.env"))) {
-    const resolved = environment[variable];
-    if (!resolved) throw new PnpError("INTEGRATION_CONFIG_INVALID", "Required tool environment variable is absent.", 503);
-    resolvedEnvironment[name] = resolved;
-  }
+  const resolvedEnvironment = resolvedValues(stringMap(item.env, "tool.env"), environment);
   const timeoutMs = item.timeoutMs;
   if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || (timeoutMs as number) <= 0)) {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "Tool timeout must be a positive integer.", 400);
@@ -168,6 +166,68 @@ function tool(value: unknown, environment: NodeJS.ProcessEnv): CommandToolBindin
     id: string(item.id, "tool.id"), transport, command, args: item.args as string[], env: resolvedEnvironment, sideEffect,
     ...(timeoutMs === undefined ? {} : { timeoutMs: timeoutMs as number }),
   };
+}
+/**
+ * Environment-variable NAMES to the values they hold. Both tool sources resolve through this one function so
+ * a missing variable fails the same way for both: at load, with the same status, and with a message that
+ * carries neither the value nor the variable, because this failure is answered to a caller.
+ */
+function resolvedValues(names: Readonly<Record<string, string>>, environment: NodeJS.ProcessEnv): Record<string, string> {
+  const resolved: Record<string, string> = {};
+  for (const [name, variable] of Object.entries(names)) {
+    const value = environment[variable];
+    if (!value) throw new PnpError("INTEGRATION_CONFIG_INVALID", "Required tool environment variable is absent.", 503);
+    resolved[name] = value;
+  }
+  return resolved;
+}
+/**
+ * The address of a remote MCP server: the literal one, or whatever its variable holds. Either way the
+ * resolved value faces the transport rule that guards a model endpoint, because a settings file cannot
+ * check what a variable will contain. The failure names the setting, never the address.
+ */
+function mcpServerUrl(server: McpStreamableHttpServerSettings, environment: NodeJS.ProcessEnv): string {
+  const raw = server.urlEnvironment === undefined ? server.url : environment[server.urlEnvironment];
+  if (raw === undefined || raw === "") {
+    throw new PnpError("INTEGRATION_CONFIG_INVALID", "Required tool environment variable is absent.", 503);
+  }
+  try { return validateRemoteUrl(raw, `mcp.servers.${server.id}.url`); }
+  catch (error) {
+    if (error instanceof PnpError && error.code === "SETTINGS_INVALID") {
+      throw new PnpError("INTEGRATION_CONFIG_INVALID", error.message, 400);
+    }
+    throw error;
+  }
+}
+/**
+ * The effective settings' MCP servers as this run's tool bindings (docs/engineering-review-3.md section 13).
+ * Variable names become values here, at load, so a deployment that forgot one fails at startup instead of
+ * discovering it as a tool that quietly does nothing halfway through a case. A disabled server is simply
+ * absent: it was turned off on purpose, so there is nothing to report about it.
+ */
+function mcpToolBindings(servers: readonly McpServerSettings[], environment: NodeJS.ProcessEnv): ToolBinding[] {
+  const bindings: ToolBinding[] = [];
+  for (const server of servers) {
+    if (!server.enabled) continue;
+    const timeout = server.timeoutMs === undefined ? {} : { timeoutMs: server.timeoutMs };
+    if (server.transport === "stdio") {
+      // The legacy profile's rule, unchanged: an absolute path, never a PATH lookup, so a settings file
+      // cannot be turned into "whatever is first on PATH on this machine".
+      if (!path.isAbsolute(server.command)) {
+        throw new PnpError("INTEGRATION_CONFIG_INVALID", "Tool command must be absolute.", 400);
+      }
+      bindings.push({
+        id: server.id, transport: "mcp-stdio", command: server.command, args: [...server.args],
+        env: resolvedValues(server.env, environment), sideEffect: server.sideEffect, ...timeout,
+      });
+      continue;
+    }
+    bindings.push({
+      id: server.id, transport: "mcp-http", url: mcpServerUrl(server, environment),
+      headers: resolvedValues(server.headerEnvironment, environment), sideEffect: server.sideEffect, ...timeout,
+    });
+  }
+  return bindings;
 }
 
 export async function loadIntegration(input: {
@@ -212,10 +272,11 @@ export async function loadIntegration(input: {
   const rawTools = profile.tools ?? [];
   if (!Array.isArray(rawTools)) throw new PnpError("INTEGRATION_CONFIG_INVALID", "tools must be an array.", 400);
 
-  // Existing explicit configured profiles remain a compatibility surface. Once PNP_SETTINGS is explicitly
-  // supplied, the unified file is authoritative for model/permission settings and the profile contributes tools
-  // only, which is all the shipped default profile now carries: a `models` or `policy` block there would be
-  // ignored anyway, because the default profile is not an explicit override.
+  // Existing explicit configured profiles remain a compatibility surface, and one rule decides all three
+  // parts: a profile the deployment named itself, with no explicit PNP_SETTINGS, is read the old way for
+  // models, policy AND tools; anything else takes them from the unified settings file. Tools used to be the
+  // exception, which meant the shipped `{"tools": []}` silently outranked `common.mcp.servers`
+  // (docs/engineering-review-3.md section 13).
   const legacyOnly = explicitProfile && !explicitSettings;
   const legacyModels = legacyOnly && profile.models !== undefined ? parseLegacyModels(profile.models) : undefined;
   const legacyPolicy = legacyOnly && profile.policy !== undefined ? parsePolicy(profile.policy, "profile.policy") : undefined;
@@ -243,7 +304,9 @@ export async function loadIntegration(input: {
   }
   const configuredPolicy = legacyPolicy ?? (await settings()).permissions;
 
-  const tools = rawTools.map((value) => tool(value, environment));
+  const tools: ToolBinding[] = legacyOnly
+    ? rawTools.map((value) => tool(value, environment))
+    : mcpToolBindings((await settings()).mcp.servers, environment);
   if (new Set(tools.map((entry) => entry.id)).size !== tools.length) {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "Tool identifiers must be unique.", 400);
   }

@@ -1,11 +1,11 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ModelSelection, PermissionEffect, PermissionPolicy } from "../contracts/index.ts";
+import type { ModelSelection, PermissionEffect, PermissionPolicy, ToolSideEffect } from "../contracts/index.ts";
 import { PnpError } from "../core/errors.ts";
 
-/** The policy shape is public contract; this module parses into it rather than defining its own copy. */
-export type { PermissionEffect, PermissionPolicy };
+/** The policy and side-effect shapes are public contract; this module parses into them, never into a copy. */
+export type { PermissionEffect, PermissionPolicy, ToolSideEffect };
 export interface SettingsModelDefinition {
   selection: ModelSelection;
   endpoint?: string;
@@ -16,11 +16,13 @@ export interface SettingsModelDefinition {
 export interface McpStdioServerSettings {
   id: string;
   transport: "stdio";
+  /** Absolute path: the integration layer refuses a relative command instead of searching PATH. */
   command: string;
   args: readonly string[];
   env: Readonly<Record<string, string>>;
   enabled: boolean;
-  cwd?: string;
+  /** What the server's calls do, which is what the organizational policy judges. "external" unless declared. */
+  sideEffect: ToolSideEffect;
   timeoutMs?: number;
 }
 export interface McpStreamableHttpServerSettings {
@@ -30,6 +32,7 @@ export interface McpStreamableHttpServerSettings {
   urlEnvironment?: string;
   headerEnvironment: Readonly<Record<string, string>>;
   enabled: boolean;
+  sideEffect: ToolSideEffect;
   timeoutMs?: number;
 }
 export type McpServerSettings = McpStdioServerSettings | McpStreamableHttpServerSettings;
@@ -46,6 +49,7 @@ export interface EffectiveSettings {
 
 type JsonObject = Record<string, unknown>;
 const EFFECTS: readonly PermissionEffect[] = ["allow", "deny", "ask"];
+const SIDE_EFFECTS: readonly ToolSideEffect[] = ["read", "write", "external"];
 const codeRoot = fileURLToPath(new URL("../../", import.meta.url));
 export const DEFAULT_SETTINGS = path.join(codeRoot, "config", "settings.json");
 
@@ -85,6 +89,19 @@ function optionalBoolean(value: unknown, label: string, fallback: boolean): bool
   if (value === undefined) return fallback;
   if (typeof value !== "boolean") throw new PnpError("SETTINGS_INVALID", `${label} must be a boolean.`, 400);
   return value;
+}
+/**
+ * An MCP server that does not say what its calls do is treated as reaching outside the machine, which is the
+ * strongest of the three and therefore the only safe default: a policy that asks for "external" must not be
+ * bypassed by a server that simply omitted the field.
+ */
+function optionalSideEffect(value: unknown, label: string): ToolSideEffect {
+  if (value === undefined) return "external";
+  const parsed = nonEmptyString(value, label) as ToolSideEffect;
+  if (!SIDE_EFFECTS.includes(parsed)) {
+    throw new PnpError("SETTINGS_INVALID", `${label} must be read, write, or external.`, 400);
+  }
+  return parsed;
 }
 function optionalPositiveInteger(value: unknown, label: string): number | undefined {
   if (value === undefined) return undefined;
@@ -234,7 +251,12 @@ function mergedServerObject(baseValue: unknown, overrideValue: unknown, label: s
   }
   return merged;
 }
-function validateRemoteUrl(raw: string, label: string): string {
+/**
+ * The transport rule for a remote address, shared by a literal `url` here and by a variable-backed one
+ * the integration layer resolves at load. `label` names the setting, never the value: a deployment
+ * address must not reach an error message.
+ */
+export function validateRemoteUrl(raw: string, label: string): string {
   let url: URL;
   try { url = new URL(raw); }
   catch { throw new PnpError("SETTINGS_INVALID", `${label} must be a valid URL.`, 400); }
@@ -248,10 +270,12 @@ function parseMcpServer(id: string, value: unknown, label: string): McpServerSet
   if (id.length === 0) throw new PnpError("SETTINGS_INVALID", `${label} server id must be non-empty.`, 400);
   const item = object(value, label);
   exactKeys(item, [
-    "transport", "command", "args", "cwd", "env", "url", "urlEnvironment", "headerEnvironment", "enabled", "timeoutMs",
+    "transport", "command", "args", "env", "url", "urlEnvironment", "headerEnvironment", "enabled", "sideEffect",
+    "timeoutMs",
   ], label);
   const transport = nonEmptyString(item.transport, `${label}.transport`);
   const enabled = optionalBoolean(item.enabled, `${label}.enabled`, true);
+  const sideEffect = optionalSideEffect(item.sideEffect, `${label}.sideEffect`);
   const timeoutMs = optionalPositiveInteger(item.timeoutMs, `${label}.timeoutMs`);
   if (transport === "stdio") {
     if (item.url !== undefined || item.urlEnvironment !== undefined || item.headerEnvironment !== undefined) {
@@ -260,15 +284,13 @@ function parseMcpServer(id: string, value: unknown, label: string): McpServerSet
     const command = nonEmptyString(item.command, `${label}.command`);
     const args = optionalStringArray(item.args, `${label}.args`);
     const env = optionalStringMap(item.env, `${label}.env`);
-    const cwd = item.cwd === undefined ? undefined : nonEmptyString(item.cwd, `${label}.cwd`);
     return {
-      id, transport, command, args, env, enabled,
-      ...(cwd === undefined ? {} : { cwd }),
+      id, transport, command, args, env, enabled, sideEffect,
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
     };
   }
   if (transport === "streamable-http") {
-    if (item.command !== undefined || item.args !== undefined || item.cwd !== undefined || item.env !== undefined) {
+    if (item.command !== undefined || item.args !== undefined || item.env !== undefined) {
       throw new PnpError("SETTINGS_INVALID", `${label} streamable-http server cannot define stdio fields.`, 400);
     }
     const hasUrl = Object.hasOwn(item, "url");
@@ -280,13 +302,13 @@ function parseMcpServer(id: string, value: unknown, label: string): McpServerSet
     if (hasUrlEnvironment) {
       return {
         id, transport, urlEnvironment: nonEmptyString(item.urlEnvironment, `${label}.urlEnvironment`),
-        headerEnvironment: headerEnv, enabled,
+        headerEnvironment: headerEnv, enabled, sideEffect,
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
       };
     }
     return {
       id, transport, url: validateRemoteUrl(nonEmptyString(item.url, `${label}.url`), `${label}.url`),
-      headerEnvironment: headerEnv, enabled,
+      headerEnvironment: headerEnv, enabled, sideEffect,
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
     };
   }
