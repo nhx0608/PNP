@@ -33,7 +33,9 @@ const provider = await loadIntegration({
   kind: process.env.PNP_INTEGRATION,
   development,
   engineDevelopmentOnly: engine.descriptor.developmentOnly,
+  engineId,
   configuredProfile: process.env.PNP_CONFIGURED_PROFILE,
+  settingsPath: process.env.PNP_SETTINGS,
   modelSettings: process.env.PNP_MODEL_SETTINGS,
 });
 await probeIntegration(provider);
