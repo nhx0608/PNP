@@ -237,3 +237,16 @@
 
 **记录（与本提交无关的 Windows 失败）：** (a) `process-host.test.ts` "a missing Windows session id degrades the verdict"——`reconcile()` 里 `helper.on("exit")` 立刻判 `quiescent:false`，与 `start()` 已修的同一顺序竞态（假 supervisor 发出 inspection 帧后立即 `process.exit`），改为在 `close`（进程退出且流已结束）上判否，外层 `bounded` 仍作上限；三个 reconcile 测试的假主机超时从 400 ms 放宽。(b) `core.test.ts` 两个排队测试在慢 Windows 机上撞到夹具 1000 ms 的 run 期限（`EXECUTION_TIMEOUT`，随后 `close()` 拒绝未完成写入）；排队测试不依赖期限，改用 10 s。
 - 2026-09-07：第 13 节裁决 1–5 已落地（`ToolBinding` 联合类型含 `mcp-http`、设置的 MCP 服务器在 `loadIntegration` 转成工具绑定、`sideEffect` 默认 `external`、`cwd` 删除、ACP 驱动按 `mcpCapabilities.http` 投影并记录 OpenCode 1.18.29 声明了 `{http: true, sse: true}`、文档同步）；同一批还修了 `reconcile()` 的 exit 顺序竞态与排队测试的期限。真实 OpenCode 冒烟 17/18 通过。E 项仍待用户定。
+
+---
+
+## 14. 增量审查：`215b1aa`（PR #5 `PNP-MCP/1` 内网工具接入规范，纯文档）
+
+**结论：接受。** 它把 C 线的交付边界收敛为"标准 MCP 之上的互操作 Profile"，与第 13 节已落地的实现一致：`stdio`/`streamable-http` 两种传输、`command` 绝对路径、`env`/`headerEnvironment` 只写变量名、server 级 `sideEffect` 缺省 `external`、混合风险取最强或拆 Server、annotations 不是授权依据、`deny` 不可被覆盖、未知提交不重放、取消不等于撤销。M01–M12 验收用例与 `internal-integration.md` §6 夹具表对应清楚。CI 六作业绿。
+
+**两处要 GPT 自行修正的准确性问题（不阻塞）：**
+
+1. **`timeoutMs` 的实际语义。** 规范 §7 写"`timeoutMs` 是 PNP 对 MCP 启动/调用等待的上限配置"。目前 ACP 的 `McpServer` 没有超时字段，驱动投影 stdio/http 服务器时**不携带** `timeoutMs`，实际生效的是引擎自身 MCP 客户端的超时；`ToolBinding.timeoutMs` 在 ACP 路径上只是记录。规范应如实写明"按 Core 而定：ACP 引擎不投影该值"，或者等某个 Core 真能消费它再写成保证。
+2. **上游版本陈述需要出处。** §2 断言"截至 2026-09-07，MCP 当前规范版本为 `2026-07-28`，Streamable HTTP 为无会话核心"。本仓库其余事实均附来源或真机证据；这一条请附规范链接与查阅日期，否则降为"以 C 实测协商结果为准"。
+
+**记录：** 该 PR 同时把 C02 的交付物改为"实现 PNP-MCP/1 Server"（`work-packages.md`、`prompts/03-C-internal.md`），属于团队分工决定，由用户确认即可；实现侧不需要动作。
