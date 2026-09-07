@@ -197,3 +197,23 @@
 **待用户定：** `his/GLM-V5.1-DX`、`his/Qwen-V3.6-27B-DX` 与 `PNP_HIS_*` 这些名字是否属于不应出现在公开仓库的内部标识（AGENTS.md 禁止内部域名、appid、凭据、内部材料）。它们不是域名也不是凭据；若判定为内部信息，交付文件改用示例名（如 `example/model-a`），真实清单放在 `PNP_MODEL_SETTINGS` 指向的私有文件里。
 
 **记录（不阻塞）：** 启动探测只覆盖默认模型点名的变量；选择 HIS 模型而 `PNP_HIS_*` 未设置时在 prompt 阶段以 503 `MODEL_ENDPOINT_MISSING` 失败，文档应写明。测试补三条：显式档 + 无设置文件走 inline models；显式档 + 设置文件以设置文件为准；相对路径的 `PNP_MODEL_SETTINGS` 被拒。设计上，档本身早已与引擎无关（IntegrationProvider 不按引擎分支），本文件新增的实质是 `default` 选择器与"模型清单由 C 线单独维护"的文件边界；若后者是有意的分工则成立，否则把 `default` 放进档里即可。
+
+---
+
+## 12. 增量审查：`c177d55`（PR #3 统一设置 `config/settings.json`）
+
+**结论：方向正确，保留；一处架构边界必须改；第 11 节的三处裁决仍然成立。**
+
+认可：`common + cores.<engineId>` 的继承规则清楚，有效默认模型必须存在于有效清单；`deny` 投影为原生 `ask`、由网关做最终拒绝，符合"组织 deny 不能被用户回复覆盖"；`PNP_MODEL_SETTINGS` 降为废弃兼容；`integration/index.ts` 恢复了多行格式；测试覆盖继承、显式档兼容、相对路径拒绝、投影别名。该合并的 CI 六作业全绿。
+
+**A（必须改）：OpenCode Pack 自行读取全局设置。** `engines/opencode/pack.ts` 直接调用 `loadPnpSettings({ settingsPath: process.env.PNP_SETTINGS })`，适配器越过 IntegrationContext 去读全局配置文件与进程环境。后果有二：(1) 同一份策略被解析两次——IntegrationProvider 的 `decide()` 与 Pack 的投影——而 `PNP_CONFIGURED_POLICY_OVERRIDES` 只进入前者。INSTRUCTION.md 写明的 `{"write":"ask"}` 路线在没有 `PNP_OPENCODE_NATIVE_PERMISSIONS=ask` 时投影不出 `edit: ask`，OpenCode 原生放行，网关的 ask 永远不会被触发；CI 冒烟之所以通过，只因为它同时设了旧开关。(2) 违反 AGENTS.md "适配器只能通过公共契约"与"每轮使用新 IntegrationContext"的分层。裁决：公共契约 `IntegrationContext` 增加可选字段 `permissions?: PermissionPolicy`（`{ default, operations }`，效果取值同 `AuthorizationDecision.effect`），类型定义在 `contracts/` 一处，`config/settings.ts` 引用它而不是复制；ConfiguredIntegration 在 `prepare()` 里填入**已含覆盖**的有效策略，`authorize()` 与该字段出自同一结构，不能漂移；Pack 只从 `input.integration.permissions` 投影，删除对 `loadPnpSettings` 与 `process.env` 的引用；`check-boundaries` 增加规则：`src/engines/**`、`src/drivers/**` 不得导入 `src/config/`。契约变更单独提交。冒烟的 opencode 腿改为只设 `PNP_CONFIGURED_POLICY_OVERRIDES={"write":"ask"}`、不设旧开关，写文件仍须进入审批环路，这才证明正式路线。
+
+**B（第 11 节第 1 条仍成立）：** 交付档 `competition-profile.json` 仍带 `models` 与 `policy`，代码注释自认"正常运行忽略它们"。裁决不变：删掉这两个字段，与已是 tool-only 的 `configured.example.json` 一致；自带显式档的 inline 形式继续兼容。
+
+**C（第 11 节第 2 条扩大）：** 本合并又删除了 `engines/opencode/native-config.ts` 与 `pack.ts` 的注释，其中记录的是真机测得的事实：`Bearer Bearer` 双前缀、`OPENCODE_CONFIG` 发现顺序、`share` 禁用理由、重定向变量与密钥的合并次序。这些是证据，不是装饰。裁决：全部恢复；`integration/index.ts`、`configured/provider.ts`、`main.ts` 的依据注释与 `.env.example` 的取值范围说明一并补回。
+
+**D（第 11 节第 3 条仍成立）：** `INSTRUCTION.md` 未更新：环境变量表无 `PNP_SETTINGS`，仍称交付档为模型来源；`PNP_CONFIGURED_POLICY_OVERRIDES` 一段应说明它经由 IntegrationContext 投影进 OpenCode 原生权限；`PNP_OPENCODE_NATIVE_PERMISSIONS` 降为兼容开关。
+
+**E（待用户定，同第 11 节）：** HIS 标识是否可入公开仓库。
+
+**记录：** `loadIntegration` 在显式旧档且无显式设置时仍先加载默认 `settings.json`，默认文件缺失会让本不依赖它的部署失败，A 落地时改为按需加载；`probe()` 仍只探测默认模型点名的变量。
