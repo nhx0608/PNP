@@ -25,12 +25,12 @@ jobs:
         with:
           node-version: '24.19.0'
       - run: npm ci
-      - run: npm run foundation:check
-      - run: npm run build
-      - name: Exercise Windows one-command bootstrap
+      - name: Exercise Windows one-command bootstrap with explicit engine selection
         if: runner.os == 'Windows'
         shell: cmd
         run: pnp.cmd bootstrap --engine mock
+      - run: npm run foundation:check
+      - run: npm run build
 
   # End-to-end smoke: real gateway process, real engine, real north-bound HTTP.
   # The model service is the only mocked component.
