@@ -118,8 +118,8 @@
       "path": "code/config/SETTINGS.md",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 8120,
-      "sha256": "d79418b9110628a6fb4b1fe6463a506f47cffb34679d3abea097075f81690bbe"
+      "bytes": 10000,
+      "sha256": "5e4adad047e09d1ad53daed66c1b8e6996c4775ee53c76c2eda03e95fc283d87"
     },
     {
       "path": "code/engines.lock.example.json",
@@ -321,8 +321,8 @@
       "path": "code/src/config/settings.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 17499,
-      "sha256": "b2110ab5583abfc81e26a5105a36a1ffb2be44eb6f47aa583a248231ffb35aea"
+      "bytes": 18725,
+      "sha256": "7c891485e80c85bb0f5b6ee35dbf4851e0fba102799de5aa74acec0995bcfa64"
     },
     {
       "path": "code/src/contracts/AGENTS.md",
@@ -342,8 +342,8 @@
       "path": "code/src/contracts/index.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 10437,
-      "sha256": "fd2d77164dec18898735d754978bcfc69ce9e943b997641977f9045ac78f9222"
+      "bytes": 11372,
+      "sha256": "90645118ec7b8fa36102f7d6f71e980762cba75d61e6f557ab73186838d09e06"
     },
     {
       "path": "code/src/core/AGENTS.md",
@@ -363,8 +363,8 @@
       "path": "code/src/core/gateway-core.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 49704,
-      "sha256": "f8c8ff6caedc3c707e1758b13a2cf06b53cbba0f5a302c59bc5642c15ba6fc4b"
+      "bytes": 49957,
+      "sha256": "3931ba81b58310045185783df5b5ef7bee426198e0526387068cd029219523c3"
     },
     {
       "path": "code/src/core/interactions.ts",
@@ -398,8 +398,8 @@
       "path": "code/src/drivers/acp/channel.ts",
       "owner": "A",
       "category": "实现源码",
-      "bytes": 36047,
-      "sha256": "462e1de7853413adb634faab294dd15689f833a97ffabf8197b9a68ca68d10d7"
+      "bytes": 38308,
+      "sha256": "2730f57291fe8df38355f01219983c24c353887eeda2ba09f089571e5d834242"
     },
     {
       "path": "code/src/drivers/acp/json.ts",
@@ -538,8 +538,8 @@
       "path": "code/src/integration/index.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 17845,
-      "sha256": "d05e5bcd46bbf095c3661f3ed0a2aad276c965afcb4be84e24266c8308e31e87"
+      "bytes": 21269,
+      "sha256": "fb67fc6cef368badc0890ba15b440f8906b0ddbfa8b9b740d3453295f36e5f05"
     },
     {
       "path": "code/src/integration/internal/AGENTS.md",
@@ -692,8 +692,8 @@
       "path": "code/tests/adapters/acp/harness.ts",
       "owner": "A",
       "category": "测试代码",
-      "bytes": 7648,
-      "sha256": "8407bfbee090db46ad3e58b262370f7b33298c48548b29af7d21ba5fb6e1a8ca"
+      "bytes": 8076,
+      "sha256": "e9c086db11ec235336a906712cde6ec3f5831310d7bd5b083cfd990f03ed9d15"
     },
     {
       "path": "code/tests/adapters/acp/json.test.ts",
@@ -720,8 +720,8 @@
       "path": "code/tests/adapters/acp/projection.test.ts",
       "owner": "A",
       "category": "测试代码",
-      "bytes": 17223,
-      "sha256": "746e310786df1ff1b0350bc12e58e411c4a8d0056f494260705da907db352a4d"
+      "bytes": 20790,
+      "sha256": "95725ef530e1e8edb24ed90f7727d226b77f91d748b7c9259b6e51fb42efe43b"
     },
     {
       "path": "code/tests/adapters/acp/script.ts",
@@ -839,8 +839,8 @@
       "path": "code/tests/unit/mcp-settings.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 4204,
-      "sha256": "500da3ec84cbb43bc4a02bf40d22b36a6c8598de57d817edf5272f4572cdfe5f"
+      "bytes": 11435,
+      "sha256": "e2520ce89b33583efcb15bab70134a9310c6b6ab5f8fcce833989d6c822e11f1"
     },
     {
       "path": "code/tests/unit/process-host.test.ts",
@@ -860,8 +860,8 @@
       "path": "code/tests/unit/settings.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 9170,
-      "sha256": "2513d7da7accfca47919b4ed6556f5ce1aaca42a83f5c5a5ba19c6510c8cb969"
+      "bytes": 9144,
+      "sha256": "e4c3acf94e8a665f4b8d8668e44814e7aaa1ea37edf4b2c60b469971cd453579"
     },
     {
       "path": "code/tests/unit/workspace.test.ts",
@@ -895,8 +895,8 @@
       "path": "docs/engines/opencode.md",
       "owner": "A",
       "category": "入口与配置",
-      "bytes": 36535,
-      "sha256": "af5d5e7e935ea4ba4c4d1df92ff7eca3f7ac53e2f02d5f99721430af00be9160"
+      "bytes": 38009,
+      "sha256": "a22bcbfc9b8f652d2956432abacc666820ef51d13b04f0fa0edbb10764aa0eeb"
     },
     {
       "path": "docs/engines/pi.md",
@@ -944,8 +944,8 @@
       "path": "docs/spec/contracts.md",
       "owner": "共同",
       "category": "架构与契约",
-      "bytes": 23566,
-      "sha256": "7a809729817def5a2557265360d0ef2fcd6374bc8176a23d65208ab84e2b3a4f"
+      "bytes": 24089,
+      "sha256": "f68871b20cd37f99c2cc04d3e678b14c97b8f778da39d5b975882d7ba380d5d8"
     },
     {
       "path": "docs/spec/dfx-and-testing.md",
@@ -1035,8 +1035,8 @@
       "path": "INSTRUCTION.md",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 15258,
-      "sha256": "1e019874c7dd538076d0bebfe8d1a718967f65d5533b3b6180bcb0f20002938d"
+      "bytes": 15717,
+      "sha256": "65dafc6d365b7e2e989109fc6362f7b198fede6f726a1b6f790330efe902cad0"
     },
     {
       "path": "prompts/00-baseline-check.md",
