@@ -1,0 +1,47 @@
+name: Fix local bootstrap script
+on:
+  push:
+    branches: [feature/one-command-local-start]
+permissions:
+  contents: write
+jobs:
+  fix:
+    if: contains(github.event.head_commit.message, '[fix-bootstrap]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/one-command-local-start
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+      - name: Patch bootstrap script and refresh manifest
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const p = 'engineering/code/scripts/pnp-local.ps1';
+          let s = fs.readFileSync(p, 'utf8');
+          const replacements = [
+            ['Loaded local environment variable names from $Path: $($loaded -join \', \'). Values are not printed.', 'Loaded local environment variable names from ${Path}: $($loaded -join \', \'). Values are not printed.'],
+            ['[string]$Engine = "opencode",', '[string]$Engine = "",'],
+            ['$Engine = if ([string]::IsNullOrWhiteSpace($env:AGENT_ENGINE)) { "opencode" } else { $env:AGENT_ENGINE }', '$Engine = if ([string]::IsNullOrWhiteSpace($env:AGENT_ENGINE)) { Fail "Specify the Agent Core at startup with --engine <id> (or AGENT_ENGINE for compatibility)." } else { $env:AGENT_ENGINE }'],
+            ['& $nodeExe $gatewayEntry --port $Port --host localhost', '& $nodeExe $gatewayEntry --engine $Engine --port $Port --host localhost']
+          ];
+          for (const [from, to] of replacements) {
+            if (!s.includes(from)) throw new Error(`expected bootstrap source text not found: ${from}`);
+            s = s.replace(from, to);
+          }
+          fs.writeFileSync(p, s, 'utf8');
+          NODE
+          rm .github/workflows/fix-local-bootstrap-script.yml
+          cd engineering/code
+          node scripts/refresh-manifest.mjs
+      - name: Commit fix
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: make Windows bootstrap parse and forward --engine'
+          git push origin HEAD:feature/one-command-local-start
