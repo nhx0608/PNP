@@ -15,17 +15,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24.19.0'
-      - name: Refresh delivery manifest
-        working-directory: engineering/code
-        run: node scripts/refresh-manifest.mjs
-      - name: Commit refreshed manifest
+      - name: Refresh delivery manifest without shipping this helper
         shell: bash
         run: |
-          if git diff --quiet -- engineering/FILE-MANIFEST.json engineering/SHA256SUMS.txt engineering/REVIEW-INDEX.md; then
-            exit 0
-          fi
+          rm .github/workflows/refresh-engineering-manifest.yml
+          cd engineering/code
+          node scripts/refresh-manifest.mjs
+      - name: Commit refreshed manifest and helper removal
+        shell: bash
+        run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add engineering/FILE-MANIFEST.json engineering/SHA256SUMS.txt engineering/REVIEW-INDEX.md
+          git add -A .github/workflows/refresh-engineering-manifest.yml engineering/FILE-MANIFEST.json engineering/SHA256SUMS.txt engineering/REVIEW-INDEX.md
           git commit -m 'chore: refresh engineering manifest'
           git push origin HEAD:feature/model-settings
