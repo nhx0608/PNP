@@ -207,6 +207,11 @@ $env:PNP_MODEL_STRICT='1'
 Core-specific additions or partial overrides. PNP uses protocol-neutral names rather than copying one Core's native
 settings format.
 
+This document defines only **how a compliant MCP Server is configured**. The normative wire/behavior contract that C
+must implement is [`PNP-MCP/1`](../../docs/spec/mcp-integration-profile.md): standard MCP, required Tools surface,
+version compatibility, tool naming/schema, error semantics, cancellation, permissions, idempotency and acceptance
+cases. A valid settings entry does not by itself prove that the Server conforms to PNP-MCP/1.
+
 Every enabled server becomes one tool binding on each run's IntegrationContext, which is what an Engine Pack or
 driver projects. A server with `"enabled": false` is simply absent from that list.
 

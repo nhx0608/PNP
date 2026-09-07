@@ -1,6 +1,6 @@
 {
   "contractVersion": "1.1.0",
-  "payloadFileCount": 168,
+  "payloadFileCount": 169,
   "files": [
     {
       "path": ".gitattributes",
@@ -118,8 +118,8 @@
       "path": "code/config/SETTINGS.md",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 10000,
-      "sha256": "5e4adad047e09d1ad53daed66c1b8e6996c4775ee53c76c2eda03e95fc283d87"
+      "bytes": 10441,
+      "sha256": "06fbd17337622f639451ef34c862b75c226173de481b91de66b76512598921ff"
     },
     {
       "path": "code/engines.lock.example.json",
@@ -958,8 +958,15 @@
       "path": "docs/spec/internal-integration.md",
       "owner": "共同",
       "category": "架构与契约",
-      "bytes": 5494,
-      "sha256": "a3b49844bcf550b1f930f3cd826a5dcfc8718c22748fd7172f8c41b1008b64c7"
+      "bytes": 7840,
+      "sha256": "b068cf59309783be7aa4b8591448285977e7eda1f83e714dba77d2222efcb717"
+    },
+    {
+      "path": "docs/spec/mcp-integration-profile.md",
+      "owner": "共同",
+      "category": "架构与契约",
+      "bytes": 13345,
+      "sha256": "78e6d74ade5c5c96992a8b955ff2a4a37dd3248e81e6b49ecb28dce799c7e26c"
     },
     {
       "path": "docs/spec/requirements.md",
@@ -1028,8 +1035,8 @@
       "path": "docs/team/work-packages.md",
       "owner": "共同",
       "category": "分工与协作",
-      "bytes": 6595,
-      "sha256": "3effb93416515e7b489240ed9d1f5a28587beaaff88305d7dcad29bbe236831d"
+      "bytes": 8204,
+      "sha256": "c9ca8af949b3da01aa2e84d7aba469c4f480d5cefd81284d17920b81f235b611"
     },
     {
       "path": "INSTRUCTION.md",
@@ -1063,8 +1070,8 @@
       "path": "prompts/03-C-internal.md",
       "owner": "共同",
       "category": "Prompt",
-      "bytes": 1596,
-      "sha256": "15fe66f377d008055c05f96825c736d82fed4ce070cec6f9c0842bd5281c2ffb"
+      "bytes": 2722,
+      "sha256": "68a2acf04067ded4697a9d1b185e431eac0c2497fe381b29e2cb1d6543d951eb"
     },
     {
       "path": "prompts/04-integration.md",
