@@ -538,8 +538,8 @@
       "path": "code/src/integration/index.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 12332,
-      "sha256": "1139f6f84bd7aceb40b4b7d5784d2bdbce8a843bbd96936c1202e829eaf6e8f8"
+      "bytes": 13184,
+      "sha256": "4b5c327327a170bd0836371d0333c886e110119e1ea01164c64240b46c63fa10"
     },
     {
       "path": "code/src/integration/internal/AGENTS.md",
