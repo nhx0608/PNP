@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "common": {
+    "model": {
+      "default": {
+        "providerID": "his",
+        "modelID": "GLM-V5.1-DX"
+      },
+      "models": [
+        {
+          "selection": {
+            "providerID": "his",
+            "modelID": "GLM-V5.1-DX"
+          },
+          "endpointEnvironment": "PNP_HIS_MODEL_ENDPOINT",
+          "protocol": "openai-chat",
+          "headerEnvironment": {
+            "Authorization": "PNP_HIS_AUTHORIZATION"
+          }
+        },
+        {
+          "selection": {
+            "providerID": "his",
+            "modelID": "Qwen-V3.6-27B-DX"
+          },
+          "endpointEnvironment": "PNP_HIS_MODEL_ENDPOINT",
+          "protocol": "openai-chat",
+          "headerEnvironment": {
+            "Authorization": "PNP_HIS_AUTHORIZATION"
+          }
+        }
+      ]
+    },
+    "permissions": {
+      "default": "allow",
+      "operations": {}
+    },
+    "mcp": {
+      "servers": {}
+    }
+  },
+  "cores": {
+    "opencode": {},
+    "pi": {},
+    "hermes": {}
+  }
+}
