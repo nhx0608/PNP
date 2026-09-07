@@ -17,6 +17,33 @@ npm ci
 npm run foundation:check
 ```
 
+## 统一 Settings
+
+模型和权限统一配置在：
+
+```text
+config/settings.json
+```
+
+结构为 `common + cores.<engineId>`：Core 未声明的配置继承 `common`，只声明某一项时只覆盖该项。
+模型定义、默认模型、权限默认值和 operation 覆盖都由这个文件解析，然后由 Engine Pack 转成各内核原生配置。
+详细格式见 [config/SETTINGS.md](config/SETTINGS.md)。
+
+若配置需要放在仓库外：
+
+```powershell
+$env:PNP_SETTINGS='D:\pnp-private\settings.json'
+```
+
+真实 endpoint/API Key 不写入 settings；文件只引用环境变量名。例如 HIS OpenAI-compatible 模型：
+
+```powershell
+$env:PNP_HIS_MODEL_ENDPOINT='https://<approved-channel-domain>/v1'
+$env:PNP_HIS_AUTHORIZATION='Bearer <API-KEY>'
+```
+
+`config/engines/*.json` 仍是 Engine Pack 的安装/协议/可执行文件等适配器元数据，不是业务侧模型和权限配置。
+
 ## 公共框架运行
 
 ```powershell
@@ -66,10 +93,9 @@ npm install -g opencode-ai@1.18.29 --loglevel=error
 编排器用 `npm root -g` 推导 `<npm root -g>/opencode-ai/bin/opencode.exe`（非 Windows 为
 `opencode`），并通过 `PNP_OPENCODE_EXE_PATH` 传给 Pack；若该环境变量已设置则原样透传。
 
-`--engine opencode` 这条腿还会把评测方的审批回路真的跑一遍：编排器给网关设 `PNP_OPENCODE_NATIVE_PERMISSIONS=ask`
-（引擎侧才会发 ACP 权限请求），集成档写成 `policy: { default: "allow", operations: { write: "ask" } }`（网关侧只对 `write`
-停下来问）。客户端于是不等 `prompt_async` 返回，而是轮询 `GET /permission`、`POST /permission/{id}/reply` 回
-`once`（`case2`）与 `reject`（`case2b`），再等 `prompt_async` 落 204。Mock 引擎不发权限请求，这两例照旧跳过。
+OpenCode Pack 会把有效 permission settings 投影到会话私有 `opencode.json`。PNP 中 `ask` 和 `deny` 都要求
+内核先发出 ACP permission request，随后由 Gateway 的统一 policy 决定是否直接拒绝或进入人工审批。
+现有 E2E 为兼容历史夹具仍可使用 `PNP_OPENCODE_NATIVE_PERMISSIONS=ask` 强制 edit/bash 进入审批环路；它不再是正式配置入口。
 
 三个脚本各自独立可用：
 

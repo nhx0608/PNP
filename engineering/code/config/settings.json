@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "common": {
+    "model": {
+      "default": {
+        "providerID": "competition",
+        "modelID": "default"
+      },
+      "models": [
+        {
+          "selection": {
+            "providerID": "competition",
+            "modelID": "default"
+          },
+          "endpointEnvironment": "PNP_MODEL_ENDPOINT",
+          "protocol": "openai-chat",
+          "headerEnvironment": {
+            "Authorization": "PNP_MODEL_AUTHORIZATION"
+          }
+        },
+        {
+          "selection": {
+            "providerID": "his",
+            "modelID": "GLM-V5.1-DX"
+          },
+          "endpointEnvironment": "PNP_HIS_MODEL_ENDPOINT",
+          "protocol": "openai-chat",
+          "headerEnvironment": {
+            "Authorization": "PNP_HIS_AUTHORIZATION"
+          }
+        },
+        {
+          "selection": {
+            "providerID": "his",
+            "modelID": "Qwen-V3.6-27B-DX"
+          },
+          "endpointEnvironment": "PNP_HIS_MODEL_ENDPOINT",
+          "protocol": "openai-chat",
+          "headerEnvironment": {
+            "Authorization": "PNP_HIS_AUTHORIZATION"
+          }
+        }
+      ]
+    },
+    "permissions": {
+      "default": "allow",
+      "operations": {}
+    }
+  },
+  "cores": {
+    "opencode": {},
+    "pi": {},
+    "hermes": {}
+  }
+}
