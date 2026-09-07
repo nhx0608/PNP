@@ -41,6 +41,14 @@ async function fixture(options: MockOptions = {}, timeout = 1000, overrides: Par
     },
   };
 }
+/**
+ * A budget no loaded machine can spend. The tests that use it hold the execution slot with a mock
+ * delay so admission, queueing, cancellation and shutdown can be observed while a turn is running.
+ * The deadline is not their subject: a turn that trips it there fails the run for a reason the test
+ * never asked about and leaves late writes for a store the fixture is already closing. The tests
+ * that do exercise the deadline still pass their own short budget.
+ */
+const generousDeadline = 10_000;
 /** Records the session order in which runs actually took the execution slot. */
 function busyOrderOf(core: GatewayCore): string[] {
   const order: string[] = [];
@@ -76,7 +84,7 @@ test("normal execution commits final message before idle is visible", async () =
   } finally { await f.close(); }
 });
 test("a second prompt on the same session is refused rather than queued", async () => {
-  const f = await fixture({ delayMs: 100 });
+  const f = await fixture({ delayMs: 100 }, generousDeadline);
   try {
     const first = f.core.run(f.session.id, prompt);
     await waitBusy(f);
@@ -86,7 +94,7 @@ test("a second prompt on the same session is refused rather than queued", async 
   } finally { await f.close(); }
 });
 test("another session waits for the execution slot and runs after the active turn", async () => {
-  const f = await fixture({ delayMs: 80 });
+  const f = await fixture({ delayMs: 80 }, generousDeadline);
   try {
     const second = await f.core.createSession(f.workspace);
     const busyOrder = busyOrderOf(f.core);
@@ -108,7 +116,7 @@ test("another session waits for the execution slot and runs after the active tur
   } finally { await f.close(); }
 });
 test("a prompt for a session that does not exist is refused now, not after the queue", async () => {
-  const f = await fixture({ delayMs: 200 });
+  const f = await fixture({ delayMs: 200 }, generousDeadline);
   try {
     const first = f.core.run(f.session.id, prompt);
     await waitBusy(f);
@@ -129,7 +137,7 @@ test("a prompt for a session that does not exist is refused now, not after the q
   } finally { await f.close(); }
 });
 test("the queue is bounded and a full queue is the only remaining GATEWAY_BUSY", async () => {
-  const f = await fixture({ delayMs: 80 }, 1000, { runQueueLimit: 1 });
+  const f = await fixture({ delayMs: 80 }, generousDeadline, { runQueueLimit: 1 });
   try {
     const second = await f.core.createSession(f.workspace);
     const third = await f.core.createSession(f.workspace);
@@ -145,7 +153,7 @@ test("the queue is bounded and a full queue is the only remaining GATEWAY_BUSY",
   } finally { await f.close(); }
 });
 test("aborting a queued request cancels it without creating a run", async () => {
-  const f = await fixture({ delayMs: 80 });
+  const f = await fixture({ delayMs: 80 }, generousDeadline);
   try {
     const second = await f.core.createSession(f.workspace);
     const first = f.core.run(f.session.id, prompt);
@@ -163,7 +171,7 @@ test("aborting a queued request cancels it without creating a run", async () => 
   } finally { await f.close(); }
 });
 test("shutdown answers a queued request instead of stranding it", async () => {
-  const f = await fixture({ delayMs: 80 });
+  const f = await fixture({ delayMs: 80 }, generousDeadline);
   try {
     const second = await f.core.createSession(f.workspace);
     const first = f.core.run(f.session.id, prompt).catch((error: unknown) => error);
@@ -186,7 +194,7 @@ test("idempotency reuses completed result but rejects a different payload", asyn
   } finally { await f.close(); }
 });
 test("abort never produces a normal stop marker", async () => {
-  const f = await fixture({ delayMs: 500 });
+  const f = await fixture({ delayMs: 500 }, generousDeadline);
   try {
     const run = f.core.run(f.session.id, prompt).catch((e: unknown) => e);
     await waitBusy(f);
