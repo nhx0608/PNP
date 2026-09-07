@@ -197,7 +197,7 @@ ACP 的 `session/prompt` 请求没有模型字段；驱动的 `AcpModelPolicy` �
 
 ## 6. 工具与资产投影
 
-工具（MCP stdio server）由 ACP 驱动统一映射（`mcpServersFor`，见 `src/drivers/acp/channel.ts`），Pack 不重复处理。
+工具由 ACP 驱动统一映射（`mcpServersFor`，见 `src/drivers/acp/channel.ts`），Pack 不重复处理：`mcp-stdio` 绑定投影为 ACP 的 stdio MCP server；`mcp-http` 绑定（设置文件里的 `streamable-http`）只有在引擎 `initialize` 声明了 `agentCapabilities.mcpCapabilities.http` 时才投影为 `{ type: "http", name, url, headers }`，否则走原有的丢弃并上报路径，`tools.unsupported-transport` 的 `reason` 直接点名缺的是哪一项能力，不改投别的 transport。OpenCode 1.18.29 声明了该能力，实跑摘录见 §7。
 
 `definition.projectAssets` 只处理两种资产：
 
@@ -215,6 +215,7 @@ ACP 的 `session/prompt` 请求没有模型字段；驱动的 `AcpModelPolicy` �
 | `opencode acp` 存在，stdio JSON-RPC，无额外参数 | probed（真实二进制，Linux/Windows） | opencode.ai/docs/acp/ + 实跑 1.18.29 | Windows 契约1.1端到端14/14 |
 | ACP 协议版本 1 握手 | probed（真实二进制，Linux） | 实跑 initialize 成功 | 驱动固定校验 `protocolVersion === 1..PROTOCOL_VERSION` |
 | `initialize` 返回 `agentCapabilities.loadSession: true`、`sessionCapabilities: { close, fork, list, resume }` | probed（真实二进制，Linux/Windows） | 实跑 initialize 返回值及Windows端到端握手 | |
+| `initialize` 返回 `agentCapabilities.mcpCapabilities: { http: true, sse: true }` | probed（真实二进制，Linux） | 实跑 1.18.29 initialize 返回值，原文摘录见表下 | 驱动据此投影 `mcp-http` 绑定（§6）；`sse` 已声明但网关没有对应的绑定形状，不使用 |
 | npm 包 `opencode-ai` 的 bin 是占位符，postinstall 从平台包解析出真实 exe，无 JS 入口 | declared（直接读包内容与 postinstall 脚本） | npm registry `opencode-ai@1.18.29` | 未在 Windows 上真正 `npm i -g` 过 |
 | Windows 原生运行可行性 | probed（真实二进制） | 官方文档、Windows x64 1.18.29、契约1.1端到端14/14 | 真实内网模型仍未验证 |
 | `%APPDATA%\npm\node_modules\opencode-ai\bin\opencode.exe` 是安装后的实际落点 | declared（npm 全局布局 + postinstall 目标） | 同上 | 未在 Windows 上核对过实际落点 |
@@ -233,6 +234,24 @@ ACP 的 `session/prompt` 请求没有模型字段；驱动的 `AcpModelPolicy` �
 | 可执行文件解析顺序、平台感知校验与错误码 | probed（本仓库代码，假文件系统） | `tests/adapters/opencode/executable.test.ts`（14 例） | 纯逻辑测试，不涉及真实二进制 |
 | 私有配置不落盘凭据、不写用户目录 | probed（本仓库代码，真实临时目录） | `native-config.test.ts`（17 例）、`assets.test.ts`（4 例） | 断言序列化文本不含明文密钥、不含 `$VAR` |
 | Pack → 驱动接缝（launch 请求、私有配置、握手） | probed（假 ACP 对端） | `pack.test.ts`（3 例） | 假引擎，不是真实 OpenCode 进程 |
+
+`mcpCapabilities` 那一行的原文摘录（2026-09-07，Linux x64，`/tmp/ocl/package/bin/opencode`（`opencode-ai@1.18.29` 的平台包），`opencode acp` 后发一条 `initialize`，全过程不涉及任何凭据）：
+
+```json
+{
+  "protocolVersion": 1,
+  "agentCapabilities": {
+    "loadSession": true,
+    "mcpCapabilities": { "http": true, "sse": true },
+    "promptCapabilities": { "embeddedContext": true, "image": true },
+    "sessionCapabilities": { "close": {}, "fork": {}, "list": {}, "resume": {} }
+  },
+  "authMethods": [
+    { "description": "Run `opencode auth login` in the terminal", "name": "Login with opencode", "id": "opencode-login" }
+  ],
+  "agentInfo": { "name": "OpenCode", "version": "1.18.29" }
+}
+```
 
 `config/engines/opencode.json#capabilityEvidence` 因此从 `"unverified"` 改为 `"probed"`：确实有真实二进制的观察结果了，但**没有一条是 Windows 上的**，所以不是 `"verified"`。
 

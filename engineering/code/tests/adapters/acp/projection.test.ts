@@ -6,29 +6,52 @@ import type { Json } from "../../../src/contracts/index.ts";
 import { mcpServersFor, openAcpChannel } from "../../../src/drivers/acp/channel.ts";
 import { RpcFault } from "../../kit/fake-host.ts";
 import {
-  asset, definition, harness, makeIntegration, mcpTool, MODEL, nativePayload, promptRequest, RecordingServices,
-  runTurn,
+  asset, definition, harness, httpTool, makeIntegration, mcpTool, MODEL, nativePayload, promptRequest,
+  RecordingServices, runTurn,
 } from "./harness.ts";
-import { baseScript, modelOption, NATIVE_SESSION, promptResponse } from "./script.ts";
+import { baseScript, initializeResponse, modelOption, NATIVE_SESSION, promptResponse } from "./script.ts";
 
 test("stdio tool bindings project onto the session's MCP servers", () => {
-  const servers = mcpServersFor([
+  const projection = mcpServersFor([
     mcpTool({ id: "search", command: "mcp-search", args: ["--stdio", "--quiet"], env: { A: "1", B: "2" } }),
     mcpTool({ id: "docs", command: "mcp-docs", args: [], env: {} }),
   ]);
-  assert.deepEqual(servers, [
+  assert.deepEqual(projection.servers, [
     { name: "search", command: "mcp-search", args: ["--stdio", "--quiet"], env: [{ name: "A", value: "1" }, { name: "B", value: "2" }] },
     { name: "docs", command: "mcp-docs", args: [], env: [] },
   ]);
+  assert.deepEqual(projection.dropped, []);
 });
 
 test("a transport ACP cannot carry is dropped from the projection, never smuggled through", () => {
-  const servers = mcpServersFor([
+  const projection = mcpServersFor([
     mcpTool({ id: "search" }),
     mcpTool({ id: "legacy", transport: "cli", command: "legacy.exe" }),
     mcpTool({ id: "builtin", transport: "native", command: "builtin" }),
   ]);
-  assert.deepEqual(servers.map((server) => server.name), ["search"]);
+  assert.deepEqual(projection.servers.map((server) => "name" in server ? server.name : ""), ["search"]);
+  assert.deepEqual(projection.dropped.map((entry) => entry.id), ["legacy", "builtin"]);
+});
+
+test("an HTTP MCP server is projected as an ACP http server when the engine declares the capability", () => {
+  const projection = mcpServersFor([
+    mcpTool({ id: "search" }),
+    httpTool({ id: "knowledge", url: "https://knowledge.example/mcp", headers: { Authorization: "Bearer test-only" } }),
+  ], { http: true });
+  assert.deepEqual(projection.servers[1], {
+    type: "http", name: "knowledge", url: "https://knowledge.example/mcp",
+    headers: [{ name: "Authorization", value: "Bearer test-only" }],
+  });
+  assert.deepEqual(projection.dropped, []);
+});
+
+test("an HTTP MCP server the engine never declared is dropped with the missing capability named", () => {
+  const projection = mcpServersFor([httpTool({ id: "knowledge" })]);
+  // Sending it anyway would leave the caller believing in a tool the engine quietly ignores.
+  assert.deepEqual(projection.servers, []);
+  assert.deepEqual(projection.dropped, [{
+    id: "knowledge", transport: "mcp-http", reason: "agentCapabilities.mcpCapabilities.http was not declared",
+  }]);
 });
 
 test("the session is created with the projected servers and the drop is reported to the reader", async () => {
@@ -45,7 +68,54 @@ test("the session is created with the projected servers and the drop is reported
     assert.deepEqual(request.mcpServers?.map((server) => "name" in server ? server.name : ""), ["search"]);
     await runTurn(channel, { services, integration: fixture.integration });
     const dropped = services.native("tools.unsupported-transport")[0];
-    assert.deepEqual(dropped?.payload, [{ id: "legacy", transport: "cli" }]);
+    assert.deepEqual(dropped?.payload, [{
+      id: "legacy", transport: "cli", reason: "acp session/new carries mcp servers only",
+    }]);
+  } finally {
+    await channel.close();
+  }
+});
+
+test("an engine that declares mcpCapabilities.http receives the HTTP server on session/new", async () => {
+  const fixture = harness({
+    integration: makeIntegration({
+      tools: [httpTool({ id: "knowledge", url: "https://knowledge.example/mcp", headers: { Authorization: "Bearer test-only" } })],
+    }),
+    handlers: baseScript({ initialize: initializeResponse({ agentCapabilities: { mcpCapabilities: { http: true } } }) }),
+  });
+  const channel = await openAcpChannel(definition(), fixture.input);
+  const services = new RecordingServices();
+  try {
+    const request = fixture.agent.paramsOf(AGENT_METHODS.session_new) as NewSessionRequest;
+    assert.deepEqual(request.mcpServers, [{
+      type: "http", name: "knowledge", url: "https://knowledge.example/mcp",
+      headers: [{ name: "Authorization", value: "Bearer test-only" }],
+    }]);
+    await runTurn(channel, { services, integration: fixture.integration });
+    assert.equal(services.native("tools.unsupported-transport").length, 0);
+    const capability = channel.capabilities.extensions.find((entry) => entry.id === "acp.mcp.http");
+    assert.equal(capability?.available, true);
+  } finally {
+    await channel.close();
+  }
+});
+
+test("an engine that declares no HTTP MCP capability gets no HTTP server and the reason is reported", async () => {
+  const fixture = harness({
+    integration: makeIntegration({ tools: [mcpTool({ id: "search" }), httpTool({ id: "knowledge" })] }),
+    handlers: baseScript(),
+  });
+  const channel = await openAcpChannel(definition(), fixture.input);
+  const services = new RecordingServices();
+  try {
+    const request = fixture.agent.paramsOf(AGENT_METHODS.session_new) as NewSessionRequest;
+    // The session must not carry a server the engine never said it could reach.
+    assert.deepEqual(request.mcpServers?.map((server) => "name" in server ? server.name : ""), ["search"]);
+    await runTurn(channel, { services, integration: fixture.integration });
+    const dropped = services.native("tools.unsupported-transport")[0];
+    assert.deepEqual(dropped?.payload, [{
+      id: "knowledge", transport: "mcp-http", reason: "agentCapabilities.mcpCapabilities.http was not declared",
+    }]);
   } finally {
     await channel.close();
   }

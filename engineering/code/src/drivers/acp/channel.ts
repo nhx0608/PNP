@@ -5,9 +5,9 @@ import type {
   RequestPermissionResponse, SessionConfigOption, SessionNotification,
 } from "@agentclientprotocol/sdk";
 import type {
-  AssetBinding, CommandToolBinding, DriverEvent, EngineCapabilities, EngineOpenInput, EngineResult,
-  EngineSessionChannel, IntegrationContext, InteractionResponse, Json, ModelSelection, NativeSessionRef, Session,
-  StopEvidence, StopReason, ToolBinding,
+  AssetBinding, DriverEvent, EngineCapabilities, EngineOpenInput, EngineResult, EngineSessionChannel,
+  IntegrationContext, InteractionResponse, Json, ModelSelection, NativeSessionRef, Session, StopEvidence,
+  StopReason, ToolBinding,
 } from "../../contracts/index.ts";
 import type { HostedProcess, LaunchSpec } from "../../contracts/host.ts";
 import { PnpError } from "../../core/errors.ts";
@@ -147,18 +147,61 @@ function permissionPatterns(call: RequestPermissionRequest["toolCall"]): string[
   if (named.length === 0 && typeof call.title === "string" && PATH_SHAPED_TITLE.test(call.title)) named.push(call.title);
   return [...new Set(named)];
 }
-export function mcpServersFor(tools: readonly ToolBinding[]): McpServer[] {
-  return tools.filter((tool): tool is CommandToolBinding => tool.transport === "mcp-stdio").map((tool) => ({
-    name: tool.id, command: tool.command, args: [...tool.args],
-    env: Object.entries(tool.env).map(([name, value]) => ({ name, value })),
-  }));
+/** What the engine said it can accept. Only `initialize` establishes this; nothing else may assume it. */
+export interface McpTransportSupport {
+  /** `agentCapabilities.mcpCapabilities.http` in the initialize response. */
+  http: boolean;
+}
+export interface DroppedToolBinding {
+  id: string;
+  transport: ToolBinding["transport"];
+  /** Why this binding is not on the wire, in the engine's own vocabulary where a capability is missing. */
+  reason: string;
+}
+export interface McpProjection {
+  servers: McpServer[];
+  dropped: DroppedToolBinding[];
+}
+const ACP_CANNOT_CARRY = "acp session/new carries mcp servers only";
+const HTTP_NOT_DECLARED = "agentCapabilities.mcpCapabilities.http was not declared";
+/**
+ * The bindings this session's ACP peer can actually be given, and what was left out. Both come out of one
+ * pass so a binding can never be counted as projected and reported as dropped, or silently be neither.
+ *
+ * An `mcp-http` binding is projected only when the engine declared `mcpCapabilities.http`: ACP defines the
+ * `http` server shape, but sending one to an engine that never claimed it would be a tool the caller believes
+ * exists and the engine ignores. A binding no transport can carry is dropped with its reason instead.
+ */
+export function mcpServersFor(tools: readonly ToolBinding[], support: McpTransportSupport = { http: false }): McpProjection {
+  const servers: McpServer[] = [];
+  const dropped: DroppedToolBinding[] = [];
+  for (const tool of tools) {
+    if (tool.transport === "mcp-stdio") {
+      servers.push({
+        name: tool.id, command: tool.command, args: [...tool.args],
+        env: Object.entries(tool.env).map(([name, value]) => ({ name, value })),
+      });
+    } else if (tool.transport === "mcp-http") {
+      if (support.http) {
+        servers.push({
+          type: "http", name: tool.id, url: tool.url,
+          headers: Object.entries(tool.headers).map(([name, value]) => ({ name, value })),
+        });
+      } else dropped.push({ id: tool.id, transport: tool.transport, reason: HTTP_NOT_DECLARED });
+    } else dropped.push({ id: tool.id, transport: tool.transport, reason: ACP_CANNOT_CARRY });
+  }
+  return { servers, dropped };
 }
 function fingerprint(value: unknown): string {
   return JSON.stringify(toJson(value));
 }
+/**
+ * Every MCP binding, whatever this engine can carry: a changed binding is a changed binding whether or not
+ * this session was able to project it, and the comparison must not move with the engine's capabilities.
+ */
 function integrationFingerprint(integration: IntegrationContext): string {
   return fingerprint({
-    tools: mcpServersFor(integration.tools),
+    tools: mcpServersFor(integration.tools, { http: true }).servers,
     assets: integration.assets.map((asset) => ({ id: asset.id, kind: asset.kind, sha256: asset.sha256, required: asset.required })),
   });
 }
@@ -614,10 +657,6 @@ export async function openAcpChannel(definition: AcpEngineDefinition, input: Eng
     });
     notices.push({ eventName: "assets.projected", payload: projection });
   }
-  const unsupportedTools = input.integration.tools.filter((tool) => tool.transport !== "mcp-stdio");
-  if (unsupportedTools.length > 0) {
-    notices.push({ eventName: "tools.unsupported-transport", payload: toJson(unsupportedTools.map((tool) => ({ id: tool.id, transport: tool.transport }))) });
-  }
   const request = await definition.launch(input);
   const spec: LaunchSpec = {
     executable: request.executable, args: [...request.args], cwd: request.cwd, env: { ...request.env },
@@ -663,8 +702,14 @@ export async function openAcpChannel(definition: AcpEngineDefinition, input: Eng
         `The engine negotiated ACP protocol version ${String(initialize.protocolVersion)}, which this driver does not implement.`, 502);
     }
     const ledger = new AcpCapabilityLedger(initialize);
-    const mcpServers = mcpServersFor(input.integration.tools);
-    const session = await establishSession(connection, ledger, input, initialize, mcpServers, timeouts.requestMs, notices);
+    // Which MCP transports are available is known only once the engine has answered initialize, so the
+    // projection and the report of what it could not carry both belong here rather than before launch.
+    const projection = mcpServersFor(input.integration.tools, { http: ledger.get("acp.mcp.http")?.available === true });
+    if (projection.dropped.length > 0) {
+      notices.push({ eventName: "tools.unsupported-transport", payload: toJson(projection.dropped) });
+    }
+    const session = await establishSession(
+      connection, ledger, input, initialize, projection.servers, timeouts.requestMs, notices);
     const channel = new AcpSessionChannel({
       definition, hosted, stream, connection, ledger, native: {
         nativeId: session.sessionId,

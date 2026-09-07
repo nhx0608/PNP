@@ -1,7 +1,7 @@
 import type {
-  AssetBinding, AuthorizationDecision, DriverEvent, DriverServices, EngineOpenInput, EngineSessionChannel,
-  IntegrationContext, InteractionRequest, InteractionResponse, Json, ModelSelection, PromptRequest, Session,
-  ToolBinding,
+  AssetBinding, AuthorizationDecision, CommandToolBinding, DriverEvent, DriverServices, EngineOpenInput,
+  EngineSessionChannel, HttpToolBinding, IntegrationContext, InteractionRequest, InteractionResponse, Json,
+  ModelSelection, PromptRequest, Session, ToolBinding,
 } from "../../../src/contracts/index.ts";
 import type { AcpEngineDefinition, AcpLaunchRequest } from "../../../src/drivers/acp/channel.ts";
 import { OwnedResourceScope } from "../../../src/runtime/resource-scope.ts";
@@ -42,13 +42,25 @@ export function makeIntegration(overrides: {
   };
 }
 
-export function mcpTool(overrides: Partial<ToolBinding> = {}): ToolBinding {
+export function mcpTool(overrides: Partial<CommandToolBinding> = {}): CommandToolBinding {
   return {
     id: "search",
     transport: "mcp-stdio",
     command: "mcp-search",
     args: ["--stdio"],
     env: { MCP_MODE: "stdio" },
+    sideEffect: "read",
+    ...overrides,
+  };
+}
+
+/** A remote MCP server binding: a URL and headers the integration already resolved. */
+export function httpTool(overrides: Partial<HttpToolBinding> = {}): HttpToolBinding {
+  return {
+    id: "knowledge",
+    transport: "mcp-http",
+    url: "https://knowledge.example/mcp",
+    headers: { Authorization: "Bearer test-only" },
     sideEffect: "read",
     ...overrides,
   };
