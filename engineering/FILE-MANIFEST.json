@@ -293,8 +293,8 @@
       "path": "code/scripts/pnp-local.ps1",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 16009,
-      "sha256": "51c87fb072bf2900eafd35e287c92aced930b06c8c9a4fdbe12fb2c60e1995dc"
+      "bytes": 16507,
+      "sha256": "64851703887f9a06bdf6ea37cbd9216ef5af55e86358422b7867cace53558a5b"
     },
     {
       "path": "code/scripts/recover.mjs",
