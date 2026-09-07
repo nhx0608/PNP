@@ -193,17 +193,38 @@ export interface ResolvedModel {
   /** Absent means the provider does not report a resolution; callers treat that as `exact`. */
   resolution?: ModelResolution;
 }
-export interface ToolBinding {
+export type ToolSideEffect = "read" | "write" | "external";
+/** What every tool binding carries, whichever transport reaches the tool. */
+export interface ToolBindingCommon {
   id: string;
+  sideEffect: ToolSideEffect;
+  inputSchema?: Json;
+  timeoutMs?: number;
+}
+/** A tool the gateway starts as a local process. */
+export interface CommandToolBinding extends ToolBindingCommon {
   transport: "mcp-stdio" | "cli" | "native";
   /** Executable and arguments come from trusted configuration, never a user prompt. */
   command: string;
   args: readonly string[];
   env: Readonly<Record<string, string>>;
-  sideEffect: "read" | "write" | "external";
-  inputSchema?: Json;
-  timeoutMs?: number;
 }
+/**
+ * An MCP server reached over Streamable HTTP. `url` and `headers` are resolved values, not variable
+ * names: the binding is per-run credential material, so it is never persisted, logged or put into an
+ * error message.
+ */
+export interface HttpToolBinding extends ToolBindingCommon {
+  transport: "mcp-http";
+  url: string;
+  headers: Readonly<Record<string, string>>;
+}
+/**
+ * The transport decides which fields exist, so a driver that projects one cannot read a field the
+ * other kind never had. A binding the native channel cannot carry is dropped and reported, never
+ * projected onto a different transport.
+ */
+export type ToolBinding = CommandToolBinding | HttpToolBinding;
 export interface AssetBinding {
   id: string;
   kind: "instruction" | "skill" | "native-extension";

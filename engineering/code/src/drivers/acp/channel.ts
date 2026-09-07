@@ -5,9 +5,9 @@ import type {
   RequestPermissionResponse, SessionConfigOption, SessionNotification,
 } from "@agentclientprotocol/sdk";
 import type {
-  AssetBinding, DriverEvent, EngineCapabilities, EngineOpenInput, EngineResult, EngineSessionChannel,
-  IntegrationContext, InteractionResponse, Json, ModelSelection, NativeSessionRef, Session, StopEvidence,
-  StopReason, ToolBinding,
+  AssetBinding, CommandToolBinding, DriverEvent, EngineCapabilities, EngineOpenInput, EngineResult,
+  EngineSessionChannel, IntegrationContext, InteractionResponse, Json, ModelSelection, NativeSessionRef, Session,
+  StopEvidence, StopReason, ToolBinding,
 } from "../../contracts/index.ts";
 import type { HostedProcess, LaunchSpec } from "../../contracts/host.ts";
 import { PnpError } from "../../core/errors.ts";
@@ -148,7 +148,7 @@ function permissionPatterns(call: RequestPermissionRequest["toolCall"]): string[
   return [...new Set(named)];
 }
 export function mcpServersFor(tools: readonly ToolBinding[]): McpServer[] {
-  return tools.filter((tool) => tool.transport === "mcp-stdio").map((tool) => ({
+  return tools.filter((tool): tool is CommandToolBinding => tool.transport === "mcp-stdio").map((tool) => ({
     name: tool.id, command: tool.command, args: [...tool.args],
     env: Object.entries(tool.env).map(([name, value]) => ({ name, value })),
   }));

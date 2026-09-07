@@ -2,7 +2,8 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
-  AuthorizationDecision, IntegrationProvider, ModelSelection, PermissionEffect, PermissionPolicy, ToolBinding,
+  AuthorizationDecision, CommandToolBinding, IntegrationProvider, ModelSelection, PermissionEffect,
+  PermissionPolicy, ToolSideEffect,
 } from "../contracts/index.ts";
 import { loadPnpSettings, parseSettingsModel, parseSettingsSelection } from "../config/settings.ts";
 import type { EffectiveSettings, SettingsModelDefinition } from "../config/settings.ts";
@@ -141,11 +142,11 @@ function overrides(raw: string | undefined): Record<string, Effect> {
   }
   return result;
 }
-function tool(value: unknown, environment: NodeJS.ProcessEnv): ToolBinding {
+function tool(value: unknown, environment: NodeJS.ProcessEnv): CommandToolBinding {
   const item = object(value, "tool");
   exactKeys(item, ["id", "transport", "command", "args", "env", "sideEffect", "timeoutMs"], "tool");
-  const transport = string(item.transport, "tool.transport") as ToolBinding["transport"];
-  const sideEffect = string(item.sideEffect, "tool.sideEffect") as ToolBinding["sideEffect"];
+  const transport = string(item.transport, "tool.transport") as CommandToolBinding["transport"];
+  const sideEffect = string(item.sideEffect, "tool.sideEffect") as ToolSideEffect;
   const command = string(item.command, "tool.command");
   if (!path.isAbsolute(command)) throw new PnpError("INTEGRATION_CONFIG_INVALID", "Tool command must be absolute.", 400);
   if (!["mcp-stdio", "cli", "native"].includes(transport)) throw new PnpError("INTEGRATION_CONFIG_INVALID", "Unsupported tool transport.", 400);

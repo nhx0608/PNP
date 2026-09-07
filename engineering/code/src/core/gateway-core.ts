@@ -389,7 +389,10 @@ export class GatewayCore {
         }, () => undefined);
         throw error;
       }
-      const secrets = [...Object.values(integration.model.headers), ...integration.tools.flatMap((t) => Object.values(t.env))];
+      // Whatever a binding resolved to is credential material whichever transport carries it: a stdio
+      // server's environment values and an HTTP server's header values are the same kind of secret.
+      const secrets = [...Object.values(integration.model.headers), ...integration.tools.flatMap((t) =>
+        Object.values(t.transport === "mcp-http" ? t.headers : t.env))];
       redactor = new Redactor(secrets);
       // What the caller asked for and what actually ran, recorded before anything executes. The
       // specification makes `model` required and the caller's identifiers are outside this

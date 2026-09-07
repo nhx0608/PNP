@@ -156,6 +156,8 @@ Core 调用 `cancel()` 后，Driver 必须在宽限期内让进行中的 `run()`
 
 ToolBinding 的 executable、args、env 来自可信配置。工具凭据与模型请求头一样按轮解析，不在启动时常驻。用户输入只能作为结构化工具参数，不得拼接成 shell 命令字符串。CLI 参数是否幂等和是否有外部副作用由 C 声明；未知提交结果不重试。
 
+ToolBinding 按 transport 分两形：`mcp-stdio`/`cli`/`native` 由网关本地拉起，带 `command`、`args`、`env`；`mcp-http` 是 Streamable HTTP 的远端 MCP 服务器，带 `url` 与 `headers`，两者都是**已解析的取值**而不是变量名，与模型请求头同级，不落盘、不入日志、不进错误消息。字段随 transport 存在，Adapter 不能把一种 transport 的绑定投影成另一种；原生通道声明不支持时按第 8 节记为不可用并明示丢弃，不静默改道。
+
 ## 7. 交互规则
 
 组织授权返回 allow、deny、ask。deny 不进入可由用户覆盖的等待状态；ask 才发布可回复请求。question 回答为数组形式，权限 allow/deny 不当作 question 答案。重复答复、跨类型答复、已过期请求明确失败。
