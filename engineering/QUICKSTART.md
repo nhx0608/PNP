@@ -42,8 +42,6 @@ PNP_MODEL_STRICT=1
 4. 根据 Engine 元数据自动准备对应 Harness；OpenCode 当前固定安装 `opencode-ai@1.18.29` 到 `runtime/bootstrap/`；
 5. 启动同一个赛题 Gateway，监听默认端口 `6217`。
 
-OpenCode 官方支持 Windows 上通过 npm 安装，Node 官方也提供 Windows x64 ZIP，因此这两部分可以由启动器自动准备。citeturn240958search0turn240958search3
-
 以后再次启动会复用已经准备好的依赖，不会每次重新下载。
 
 只准备依赖、不启动：
