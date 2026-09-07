@@ -217,3 +217,4 @@
 **E（待用户定，同第 11 节）：** HIS 标识是否可入公开仓库。
 
 **记录：** `loadIntegration` 在显式旧档且无显式设置时仍先加载默认 `settings.json`，默认文件缺失会让本不依赖它的部署失败，A 落地时改为按需加载；`probe()` 仍只探测默认模型点名的变量。
+- 2026-09-07：第 12 节 A–D 已落地（契约 `IntegrationContext.permissions`、Pack 只从上下文投影并由边界脚本禁止导入 `src/config/`、交付档 tool-only、INSTRUCTION.md 与 `.env.example` 同步、被删注释恢复）。真实 OpenCode 1.18.29 冒烟在只设 `PNP_CONFIGURED_POLICY_OVERRIDES={"write":"ask"}`、不设旧开关的条件下通过 17/18（case2 写文件审批 once、case2b reject 均执行）。E 项仍待用户定。
