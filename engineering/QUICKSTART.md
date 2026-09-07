@@ -23,17 +23,22 @@ PNP_HIS_AUTHORIZATION=Bearer <API-KEY>
 
 `runtime/` 已被 Git 忽略，真实 API Key 不进入仓库。示例默认使用 `config/settings.his.example.json`，其中默认模型为 `GLM-V5.1-DX`，并同时注册 `Qwen-V3.6-27B-DX`。
 
-### 一条命令启动 OpenCode
+### 一条命令启动并指定 Engine
+
+赛题的正式切换方式是**启动命令参数**。例如启动 OpenCode：
 
 ```powershell
-.\pnp.cmd start opencode
+.\pnp.cmd start --engine opencode --port 6217
 ```
 
-也可以直接写：
+切换到其他已经实现的 Core，只改 `--engine`：
 
 ```powershell
-.\pnp.cmd opencode
+.\pnp.cmd start --engine pi --port 6217
+.\pnp.cmd start --engine hermes --port 6217
 ```
+
+`AGENT_ENGINE` 只保留兼容能力；正式调测和评测文档优先使用 `--engine`。如果命令行 `--engine` 与已有 `AGENT_ENGINE` 同时存在但不一致，启动会明确失败，不会静默选择其中一个。
 
 启动器会自动：
 
@@ -41,13 +46,13 @@ PNP_HIS_AUTHORIZATION=Bearer <API-KEY>
 2. 根据 `package-lock.json` 执行必要的 `npm ci`；未变化时复用 `node_modules`；
 3. 编译 Gateway；
 4. 根据当前 Engine 配置下载固定版本依赖；OpenCode 当前锁定为 `opencode-ai@1.18.29`，安装到 `runtime/bootstrap/`，不要求全局 npm 安装；
-5. 设置 `AGENT_ENGINE=opencode`、私有 Engine executable 路径和默认 `PNP_DATA_DIR`；
+5. 准备所选 Engine 的可执行文件和默认 `PNP_DATA_DIR`；
 6. 启动 `http://localhost:6217`。
 
 只下载/构建、不启动：
 
 ```powershell
-.\pnp.cmd bootstrap opencode
+.\pnp.cmd bootstrap --engine opencode
 ```
 
 帮助：
@@ -105,17 +110,26 @@ Invoke-RestMethod "$base/session/$($session.id)/message" | ConvertTo-Json -Depth
 
 `prompt_async` 正常完成返回 HTTP 204；完整轨迹从 `/session/{id}/message` 获取。
 
-## 4. 切换 Engine
+## 4. 多 Engine 切换调测
 
-本地启动器最终仍通过赛题要求的 `AGENT_ENGINE` 选择 Engine，而不是改 Gateway API。
+停止当前 Gateway 后，用相同端口和相同测试用例重新启动另一个 Engine：
 
 ```powershell
-.\pnp.cmd start opencode
-.\pnp.cmd start pi
-.\pnp.cmd start hermes
+.\pnp.cmd start --engine opencode --port 6217
+# 停止后
+.\pnp.cmd start --engine pi --port 6217
 ```
 
-只有已经实现且具备安装/可执行文件配置的 Engine 才会成功；未实现 Engine 必须明确失败，不能自动退回 Mock。
+这样评测脚本只需要替换启动参数，不需要修改 Gateway API、Session API 或测试用例。只有已经实现且具备安装/可执行文件配置的 Engine 才会成功；未实现 Engine 必须明确失败，不能自动退回 Mock。
+
+底层正式 Gateway 入口本身也支持相同参数：
+
+```powershell
+.\gateway.cmd --engine opencode --port 6217
+.\gateway.cmd --engine pi --port 6217
+```
+
+`pnp.cmd` 与 `gateway.cmd` 的区别只是：前者会先自动准备依赖和构建，后者假设依赖已经准备完成。
 
 ## 5. MCP / 员工助手
 
@@ -125,11 +139,16 @@ C 完成员工助手适配后，只需在同一份 settings 的 `common.mcp.serv
 
 ## 6. 与正式评测启动的关系
 
-`pnp.cmd` 是开发/内网联调的一键自举入口；**正式北向协议不变**。评测方仍可以按赛题要求使用：
+`pnp.cmd` 是开发/内网联调的一键自举入口；**正式北向 Gateway 协议不变**。评测时推荐直接使用带 Engine 参数的启动命令：
 
 ```powershell
-$env:AGENT_ENGINE='opencode'
-.\code\gateway.cmd --port 6217
+.\code\gateway.cmd --engine opencode --port 6217
 ```
 
-或等价的 `gateway --engine ...` 形式。Gateway 的 Session、SSE、Prompt、Permission、Abort 和 Message API 均不因本地自举入口而改变。
+如果评测环境希望自动完成依赖准备，则使用：
+
+```powershell
+.\code\pnp.cmd start --engine opencode --port 6217
+```
+
+两种方式最终启动的是同一个 Gateway 主程序。Session、SSE、Prompt、Permission、Abort 和 Message API 均完全一致。
