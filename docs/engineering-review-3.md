@@ -260,3 +260,4 @@
 **一处补齐（已由顶层直接落地，4 行 CI）：** CI 只跑了 `pnp.cmd bootstrap --engine mock`，而 mock 跳过引擎依赖安装；`opencode` 路径（`npm install --prefix` 进运行时缓存 → 解析包的 `bin/opencode.exe` → `--version` 核对）没有任何 CI 证据，而它正是 FAQ 部署故事里"裁判不预装、启动器自装"的那条路。windows/opencode 冒烟作业增加 `pnp.cmd bootstrap --engine opencode` 一步。
 
 **记录（不阻塞）：** 每次 `start` 都执行 `npm run build`，冷启动多花数秒，可在 `dist/main.js` 新于源码时跳过；引擎包安装用 `--package-lock=false`，完整性依赖 npm registry 与 `npm_config_registry` 镜像，未做哈希固定，作为便利路径可接受，`gateway.cmd` 手工安装路径不受影响。`settings.his.example.json` 再次带出 E 项（HIS 标识是否可入公开仓库），仍待用户定。
+- 补记：新增的 CI 步骤第一次运行就暴露了启动器的一个真 bug——版本核对把活进程直接管道进 `Select-Object -First 1`，管道提前停止关闭了可执行文件的 stdout，Windows 上得到"Expected 1.18.29, got '1.18.29'"却退出码非零。改为先收齐输出再取首行（`aefbcdf` 之后的修复提交）。这正是该步骤存在的理由。
