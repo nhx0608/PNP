@@ -608,8 +608,8 @@
       "path": "code/src/runtime/process-host.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 40991,
-      "sha256": "2bf533153a54a2b5aa96086b49d55cb7ddecb6be087232f53a57d2a4fb38a82e"
+      "bytes": 41460,
+      "sha256": "05b9c00f692300e52c23da14aab16c60b3a8dbc7dbffe0cb2af3314d5c2afd73"
     },
     {
       "path": "code/src/runtime/recovery.ts",
@@ -832,8 +832,8 @@
       "path": "code/tests/unit/core.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 17109,
-      "sha256": "e12482e063adc4e7df5ec8c3838ba2c307816d303704f685537f1da7955869c8"
+      "bytes": 17736,
+      "sha256": "4638ef7a95bd523974d8767f92cf8d367491d99144d97ba36cc9ed77ed90706c"
     },
     {
       "path": "code/tests/unit/mcp-settings.test.ts",
@@ -846,8 +846,8 @@
       "path": "code/tests/unit/process-host.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 40092,
-      "sha256": "14c20a159006efe54812ac77da775d389bfa606212d458a225187f38974a11e9"
+      "bytes": 43890,
+      "sha256": "25b7e1b06cdecd1965737056805e4237018f751d2e9c0dff4798ff090e37f8ea"
     },
     {
       "path": "code/tests/unit/runtime.test.ts",
