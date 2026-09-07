@@ -4,5 +4,6 @@
   "owner": "B",
   "implementationEntry": "src/engines/pi/pack.ts",
   "engineVersion": null,
-  "capabilityEvidence": "unverified"
+  "capabilityEvidence": "declared",
+  "notes": "Driver code (code/src/drivers/pi-rpc/**) is implemented against docs/research/T02-pi-harness.md's documented `--mode rpc` wire format (declared, not first-party). engineVersion stays null until a real `pi` release is installed and locked by SHA/version; see docs/engines/pi.md for required PNP_PI_* environment variables and the exact test evidence gathered so far (protocol/client/channel unit tests plus a fixture-process integration test, no real pi binary and no Windows-target run)."
 }

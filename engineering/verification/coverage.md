@@ -12,7 +12,7 @@
 | 取消、迟到资源、全局执行槽 | 已实现 | 故障注入与Mock测试 | 真工具停止证据 |
 | Question/Permission Broker | 已实现 | 等待、回复、组织deny测试 | HTTP+内网权限验证 |
 | 共享ProcessHost注入/ResourceScope | 已实现 | Windows真实子进程、清理及作用域测试 | 真引擎取消证据 |
-| Windows Job Object C#/PowerShell | 已实现 | Windows编译、ProcessHost生命周期与进程树测试 | 真引擎取消证据 |
+| Windows Job Object C#/PowerShell | 已实现 | Windows编译、ProcessHost生命周期与进程树测试；B 在 2026-09-05 用 `code/tests/adapters/pi/engine-contract.test.ts`（Pi 的 fixture 进程，`fake-pi-cli.mjs`）独立走通同一条 win32 路径时，发现并修复了 `baseEnvironment()` 允许名单缺少 `PSExecutionPolicyPreference` 的共享缺陷（仅靠会话级该变量放开脚本执行策略的机器上，旧代码会让 PowerShell 宿主以 `UnauthorizedAccess` 启动失败，导致任何引擎的 Windows 真实进程路径都失败并残留孤儿进程）；修复已合入，Pi 侧公共 36 项 unit 测试 + 新增 21 项 Pi 适配器测试合计 57 项全部通过，无回归 | 真引擎取消证据 |
 | Fastify/Schema/SSE/API | 已实现 | 完整类型检查、构建、inject与SSE契约测试 | 真客户端联调 |
 | 资产/配置/基础脱敏 | 已实现 | 类型和单元测试 | 真模型/日志安全回归 |
 | 部署/恢复/发布脚本 | 已提供 | 边界脚本通过、发布门禁阻断 | Windows安装/恢复实测 |
@@ -22,7 +22,7 @@
 | 模块 | 实现入口 | 责任 |
 |---|---|---|
 | ACP Driver / OpenCode / Hermes | ACP v1 Driver和OpenCode Pack已实现；Hermes为可选项且尚未实现 | A |
-| Pi RPC / Pi工具与扩展 | 独立目录、类型边界、注册项已提供；真实协议实现未提供 | B |
+| Pi RPC / Pi工具与扩展 | Pi RPC Driver（protocol/client/launch/tool-bridge/channel）和 Pi EnginePack 已实现，`capabilityEvidence: "declared"`；对照的是二手调研文档而非真实 `pi` 二进制，`engineVersion` 保持 `null`，未对真实 pi 安装/真实模型验证 | B |
 | 内部模型 / 员工助手CLI / 组织策略 | IntegrationProvider入口与公共数据结构已提供；真实内部协议实现未提供 | C |
 
 这些角色模块不是公共基础框架的隐藏依赖。A/B 分别使用 Mock Integration 和公共契约测试开发，不等待另一条协议线。真实引擎入口的 `implementationProvided=false` 会使正式启动明确失败，不伪装已接入。
