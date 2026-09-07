@@ -236,3 +236,4 @@
 5. **文档。** `config/SETTINGS.md` 的 `command` 示例改为绝对路径并说明 `env` 的解析时机与缺失行为；`INSTRUCTION.md` 环境变量表补一句"MCP 服务器来自设置文件的 `mcp.servers`"。
 
 **记录（与本提交无关的 Windows 失败）：** (a) `process-host.test.ts` "a missing Windows session id degrades the verdict"——`reconcile()` 里 `helper.on("exit")` 立刻判 `quiescent:false`，与 `start()` 已修的同一顺序竞态（假 supervisor 发出 inspection 帧后立即 `process.exit`），改为在 `close`（进程退出且流已结束）上判否，外层 `bounded` 仍作上限；三个 reconcile 测试的假主机超时从 400 ms 放宽。(b) `core.test.ts` 两个排队测试在慢 Windows 机上撞到夹具 1000 ms 的 run 期限（`EXECUTION_TIMEOUT`，随后 `close()` 拒绝未完成写入）；排队测试不依赖期限，改用 10 s。
+- 2026-09-07：第 13 节裁决 1–5 已落地（`ToolBinding` 联合类型含 `mcp-http`、设置的 MCP 服务器在 `loadIntegration` 转成工具绑定、`sideEffect` 默认 `external`、`cwd` 删除、ACP 驱动按 `mcpCapabilities.http` 投影并记录 OpenCode 1.18.29 声明了 `{http: true, sse: true}`、文档同步）；同一批还修了 `reconcile()` 的 exit 顺序竞态与排队测试的期限。真实 OpenCode 冒烟 17/18 通过。E 项仍待用户定。
