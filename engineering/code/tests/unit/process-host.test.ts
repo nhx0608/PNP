@@ -47,6 +47,21 @@ function handle(frame) {
     if (config.stderr) emit({ type: "stderr", data: Buffer.from(config.stderr).toString("base64") });
     if (mode === "stall") return;
     emit({ type: "ready", pid: config.enginePid ?? 4242, jobName: frame.jobName, windowsSessionId: config.sessionId ?? 1 });
+    if (mode === "exit-at-once") {
+      // An engine that was already gone when the supervisor reported it ready: the exit frame and the
+      // supervisor's own exit leave in the same tick, so nothing makes the parent read the frame first.
+      emit({ type: "exit", code: config.exitCode ?? 7, quiescent: true, drained: true });
+      process.exit(0);
+    }
+    if (mode === "die-holding-stdout") {
+      // A supervisor that ends without an exit frame while a detached grandchild keeps the standard
+      // output pipe open, so the stream ends long after the process that owned it did.
+      const held = require("node:child_process").spawn(process.execPath,
+        ["-e", "setTimeout(() => {}, " + (config.holdMs ?? 400) + ")"],
+        { detached: true, windowsHide: true, stdio: ["ignore", "inherit", "ignore"] });
+      held.unref();
+      process.exit(0);
+    }
     return;
   }
   if (frame.type === "write") { emit({ type: "stdout", data: frame.data }); return; }
@@ -79,6 +94,7 @@ interface FakeOptions {
   exitCode?: number;
   quiescent?: boolean;
   drained?: boolean;
+  holdMs?: number;
   stderr?: string;
   partialTail?: string;
   inspectQuiescent?: boolean;
@@ -364,6 +380,54 @@ test("process exit is decided by the exit event, not by a pipe a grandchild stil
     ]);
     assert.equal(exit.code, 9, "a grandchild holding the pipe must not hide the engine exit");
   } finally { await scope.stop(2000); await removeTree(directory); }
+});
+
+test("the supervisor's last frame decides the exit even when its own exit is observed first", async () => {
+  // Node emits a child's exit while its pipes may still hold unread bytes, so the supervisor's exit
+  // frame and its process exit can be observed in either order. The engine's code must win either way.
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const { directory, script, nodeExe } = await workspace("at-once");
+    const host = new FakeWindowsHost(directory, script, { mode: "exit-at-once", exitCode: 7,
+      tool: () => ({ code: 0, stdout: noTasks }) });
+    const scope = new OwnedResourceScope();
+    try {
+      const hosted = await host.start(spec(directory, nodeExe, []), new AbortController().signal, scope);
+      const exit = await new Promise<{ code: number | null; signal: string | null }>((resolve) => hosted.onExit(resolve));
+      assert.deepEqual(exit, { code: 7, signal: null }, `attempt ${attempt} lost the reported engine exit`);
+    } finally { await scope.stop(1000); for (const reap of host.reap) reap(); await removeTree(directory); }
+  }
+});
+
+test("a supervisor that dies holding its output is a host failure only once the stream ends", async () => {
+  const holdMs = 400;
+  const patient = await workspace("holding");
+  // The supervisor reports ready and then dies with no exit frame, while a grandchild holds its
+  // standard output for holdMs. The fallback must wait for that stream instead of firing at the exit.
+  const waiting = new FakeWindowsHost(patient.directory, patient.script,
+    { mode: "die-holding-stdout", holdMs, tool: () => ({ code: 0, stdout: noTasks }) }, 2000, 120);
+  const first = new OwnedResourceScope();
+  try {
+    const hosted = await waiting.start(spec(patient.directory, patient.nodeExe, []), new AbortController().signal, first);
+    const started = Date.now();
+    const exit = await new Promise<{ code: number | null; signal: string | null }>((resolve) => hosted.onExit(resolve));
+    const waited = Date.now() - started;
+    assert.deepEqual(exit, { code: null, signal: "HOST_FAILURE" });
+    assert.ok(waited >= 300, `the fallback must wait for the stream to end, but reported after ${waited}ms`);
+  } finally { await first.stop(2000); for (const reap of waiting.reap) reap(); await removeTree(patient.directory); }
+  const impatient = await workspace("holding-bounded");
+  // The same supervisor against a 150 ms bound: a held pipe cannot hide the exit for the whole hold.
+  // The grace budget is generous so only the fallback bound, not the handshake, decides the timing.
+  const capped = new FakeWindowsHost(impatient.directory, impatient.script,
+    { mode: "die-holding-stdout", holdMs, tool: () => ({ code: 0, stdout: noTasks }) }, 150, 600);
+  const second = new OwnedResourceScope();
+  try {
+    const hosted = await capped.start(spec(impatient.directory, impatient.nodeExe, []), new AbortController().signal, second);
+    const started = Date.now();
+    const exit = await new Promise<{ code: number | null; signal: string | null }>((resolve) => hosted.onExit(resolve));
+    const waited = Date.now() - started;
+    assert.deepEqual(exit, { code: null, signal: "HOST_FAILURE" });
+    assert.ok(waited < 350, `the bounded wait must cap the fallback, but it took ${waited}ms`);
+  } finally { await second.stop(2000); for (const reap of capped.reap) reap(); await removeTree(impatient.directory); }
 });
 
 for (const shape of [

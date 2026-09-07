@@ -198,6 +198,7 @@ export class LocalProcessHost implements ProcessHost {
     /** A degraded relaunch must never let the abandoned supervisor's events rewrite live state. */
     let epoch = 0;
     let exited = deferred<{ code: number | null; signal: string | null }>();
+    let stdoutEnded = deferred<void>();
     let ready = deferred<void>();
     void ready.promise.catch(() => undefined); // Startup failures can arrive before the awaited handshake.
     let engineDecoder = new JsonlDecoder();
@@ -330,6 +331,9 @@ export class LocalProcessHost implements ProcessHost {
           }
         }
       }
+      // The supervisor's last frame, which states the job's condition, may still be in the pipe when
+      // its exit is observed.
+      if (wiring === "helper") await bounded(stdoutEnded.promise, this.timeoutMs).catch(() => undefined);
       if (platform !== "win32") {
         if (record.mode === "job") {
           try { if (pid !== undefined) process.kill(-pid, 0); evidence = false; }
@@ -386,8 +390,18 @@ export class LocalProcessHost implements ProcessHost {
         exitValue = { code, signal: sig };
         exited.resolve(exitValue);
         ready.reject(new PnpError("HOST_EXITED", `Process exited during startup.${diagnostics()}`, 502));
-        if (wiring === "helper") reportExit({ code: null, signal: decoderFailure?.code ?? "HOST_FAILURE" });
-        else reportExit(decoderFailure === undefined ? exitValue : { code: null, signal: decoderFailure.code });
+        // Node emits this event while the child's pipes may still hold bytes nobody has read, and
+        // under the supervisor the engine's exit code only ever arrives as its last frame. Reporting
+        // a host failure here would discard that frame whenever the process exit is seen first, so
+        // the fallback waits for the stream instead: reportExit keeps the first report, so a frame
+        // parsed while the pipe drains is what listeners see, and the fallback lands only when the
+        // stream ended without one. The supervisor clears inheritance on its own standard handles
+        // before CreateProcess, so the engine never holds that pipe and the end follows promptly;
+        // the bound is the safety net for a pipe that is held anyway.
+        if (wiring === "helper") {
+          void bounded(stdoutEnded.promise, this.timeoutMs).catch(() => undefined)
+            .then(() => { if (live()) reportExit({ code: null, signal: decoderFailure?.code ?? "HOST_FAILURE" }); });
+        } else reportExit(decoderFailure === undefined ? exitValue : { code: null, signal: decoderFailure.code });
       });
       owned.stdout.on("data", (chunk: Buffer) => {
         if (!live()) return;
@@ -449,7 +463,7 @@ export class LocalProcessHost implements ProcessHost {
         } catch {
           decoderFailure = new PnpError("ENGINE_PROTOCOL_ERROR", "Invalid process framing.", 502);
           ready.reject(decoderFailure);
-        }
+        } finally { stdoutEnded.resolve(); }
       });
       owned.stderr.on("data", (chunk: Buffer) => { if (live()) note(chunk.toString("utf8")); });
       if (wiring !== "helper") owned.once("spawn", () => { if (!live()) return; launching = false; ready.resolve(); });
@@ -457,6 +471,7 @@ export class LocalProcessHost implements ProcessHost {
     const resetAttempt = (): void => {
       epoch++;
       exited = deferred<{ code: number | null; signal: string | null }>();
+      stdoutEnded = deferred<void>();
       ready = deferred<void>();
       void ready.promise.catch(() => undefined);
       engineDecoder = new JsonlDecoder();
