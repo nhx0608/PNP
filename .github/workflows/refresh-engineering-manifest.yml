@@ -1,0 +1,31 @@
+name: Refresh engineering manifest
+on:
+  push:
+    branches: [feature/model-settings]
+permissions:
+  contents: write
+jobs:
+  refresh:
+    if: contains(github.event.head_commit.message, '[refresh-manifest]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/model-settings
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+      - name: Refresh delivery manifest
+        working-directory: engineering/code
+        run: node scripts/refresh-manifest.mjs
+      - name: Commit refreshed manifest
+        shell: bash
+        run: |
+          if git diff --quiet -- engineering/FILE-MANIFEST.json engineering/SHA256SUMS.txt engineering/REVIEW-INDEX.md; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add engineering/FILE-MANIFEST.json engineering/SHA256SUMS.txt engineering/REVIEW-INDEX.md
+          git commit -m 'chore: refresh engineering manifest'
+          git push origin HEAD:feature/model-settings
