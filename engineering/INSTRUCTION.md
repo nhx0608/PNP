@@ -42,7 +42,7 @@ $env:AGENT_ENGINE='opencode'; npm start -- --port 6217 --host localhost
 
 `gateway.cmd`/`gateway.ps1`/`gateway` 都在 `code/` 下，内部执行 `node dist/main.js`，因此先按第 2 节 `npm run build`。引擎既可用 `--engine` 指定，也可用环境变量 `AGENT_ENGINE`；两者都给出时必须一致，冲突以 `ENGINE_CONFIGURATION_CONFLICT` 启动失败，都不给出以 `ENGINE_NOT_FOUND` 失败。`--port` 默认 6217；`--host` 默认 `localhost`，会同时绑定 `127.0.0.1` 与 `::1`，允许的绑定地址仍只有回环（`127.0.0.1`/`localhost`/`::1`）。修改环境变量后重启。正式运行不设置 `PNP_MODE=development`。
 
-集成是交付包内的**配置**，不是启动门禁：非 mock 引擎默认按 `PNP_INTEGRATION=configured` 读取随包交付的 `code/config/competition-profile.json`。该档只写环境变量的**名字**（`PNP_MODEL_ENDPOINT`、`PNP_MODEL_AUTHORIZATION`），端点地址与凭据只存在于启动进程的环境变量里，不落盘、不入仓库。档里点名的变量缺失时在监听端口之前以 `MODEL_ENVIRONMENT_MISSING` 失败，并列出缺少哪几个变量名（不打印取值）。需要自带模型/工具/策略档时用 `PNP_CONFIGURED_PROFILE` 指向绝对路径；只需在交付档之上改某个操作的策略时用 `PNP_CONFIGURED_POLICY_OVERRIDES`（JSON，例如 `{"write":"ask"}`）。
+集成是交付包内的**配置**，不是启动门禁：非 mock 引擎默认按 `PNP_INTEGRATION=configured` 运行。模型与权限来自随包交付的统一设置文件 `code/config/settings.json`（`common` 为基线，`cores.<engineId>` 只覆盖自己声明的项），交付档 `code/config/competition-profile.json` 只提供工具（当前为 `{"tools": []}`）。设置文件只写环境变量的**名字**（`PNP_MODEL_ENDPOINT`、`PNP_MODEL_AUTHORIZATION`），端点地址与凭据只存在于启动进程的环境变量里，不落盘、不入仓库。有效默认模型点名的变量缺失时在监听端口之前以 `MODEL_ENVIRONMENT_MISSING` 失败，并列出缺少哪几个变量名（不打印取值）。设置要放在仓库外时用 `PNP_SETTINGS` 指向绝对路径；需要自带工具档时用 `PNP_CONFIGURED_PROFILE` 指向绝对路径（自带 `models`/`policy` 的历史档在未显式设置 `PNP_SETTINGS` 时仍按旧语义读取）；只需在设置之上改某个操作的策略时用 `PNP_CONFIGURED_POLICY_OVERRIDES`（JSON，例如 `{"write":"ask"}`），它在设置之后生效，并经 IntegrationContext 投影进内核的原生权限配置，因此只设这一项就足以让引擎发出授权请求。
 
 C 交付内部模型、工具和权限配置。`config/internal.example.json` 是结构示例，不表示内网 API 已验证；`PNP_INTEGRATION=internal` 目前只能显式选择，且显式选择时在启动阶段以 `INTEGRATION_UNAVAILABLE` 失败。
 
@@ -53,11 +53,13 @@ C 交付内部模型、工具和权限配置。`config/internal.example.json` �
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `PNP_INTEGRATION` | 未设置（非 mock 引擎回退 `configured`；mock 引擎回退 `mock`） | 模型/工具/权限的集成方式：`configured`（读取下方配置档，默认）、`internal`（内网，C 交付，显式选择且尚无实现时启动失败）、`mock`（仅限 mock 引擎）。与所选引擎不匹配会在启动阶段失败，见 3.2 |
-| `PNP_CONFIGURED_PROFILE` | 交付包内的 `code/config/competition-profile.json` | 模型/工具/策略档的**绝对路径**；不设置即使用交付档。结构见 `config/configured.example.json`，端点可用 `endpoint`（字面 URL）或 `endpointEnvironment`（存放 URL 的环境变量名）二选一 |
-| `PNP_MODEL_ENDPOINT` | 无（交付档点名此变量） | 模型服务地址，交付档以变量名引用。必须是 https；http 只允许回环地址 |
-| `PNP_MODEL_AUTHORIZATION` | 无（交付档点名此变量） | 模型服务的 `Authorization` 请求头取值。只从环境变量读取，不写入配置档、日志或数据库 |
-| `PNP_CONFIGURED_POLICY_OVERRIDES` | 无 | 部署侧策略覆盖（JSON 对象，如 `{"write":"ask"}`），在配置档的 `policy.operations` 之上生效，取值同为 `allow`/`deny`/`ask`。用于不改交付档就把某个操作改成需要审批；非法 JSON 或非法取值在启动阶段失败 |
-| `PNP_MODEL_STRICT` | 未设置（宽松映射） | 置为 `1` 时，`prompt_async` 传入的 `model` 不在配置档内即返回 403 `MODEL_NOT_ALLOWED`；不设置时映射到配置档的默认模型，见下方说明 |
+| `PNP_SETTINGS` | 交付包内的 `code/config/settings.json` | 统一运行设置的**绝对路径**：模型清单、有效默认模型、权限默认值与 operation 覆盖，按 `common` + `cores.<engineId>` 继承。凭据只按环境变量**名字**引用，文件内不出现取值。格式见 `config/SETTINGS.md`；文件缺失或不合规以 `SETTINGS_INVALID` 启动失败 |
+| `PNP_CONFIGURED_PROFILE` | 交付包内的 `code/config/competition-profile.json` | 工具档的**绝对路径**；不设置即使用交付档。结构见 `config/configured.example.json`。历史兼容：显式档自带 `models`/`policy` 且未显式设置 `PNP_SETTINGS` 时，该档仍是模型与策略来源，端点可用 `endpoint`（字面 URL）或 `endpointEnvironment`（存放 URL 的环境变量名）二选一 |
+| `PNP_MODEL_ENDPOINT` | 无（设置文件点名此变量） | 模型服务地址，设置文件以变量名引用。必须是 https；http 只允许回环地址 |
+| `PNP_MODEL_AUTHORIZATION` | 无（设置文件点名此变量） | 模型服务的 `Authorization` 请求头取值。只从环境变量读取，不写入设置文件、日志或数据库 |
+| `PNP_CONFIGURED_POLICY_OVERRIDES` | 无 | 部署侧策略覆盖（JSON 对象，如 `{"write":"ask"}`），在设置文件的 `permissions.operations` 之上生效，取值同为 `allow`/`deny`/`ask`。合并后的有效策略同时用于网关裁决和内核原生权限投影（经 IntegrationContext 交给 Engine Pack），因此不改设置文件就能把某个操作改成需要审批；非法 JSON 或非法取值在启动阶段失败 |
+| `PNP_MODEL_STRICT` | 未设置（宽松映射） | 置为 `1` 时，`prompt_async` 传入的 `model` 不在有效模型清单内即返回 403 `MODEL_NOT_ALLOWED`；不设置时映射到有效默认模型，见下方说明 |
+| `PNP_OPENCODE_NATIVE_PERMISSIONS` | 未设置（等同 `engine-default`） | 兼容开关，不是正式配置入口：有效权限已经由 IntegrationContext 投影进 OpenCode 的会话私有配置（PNP 的 `ask` 与 `deny` 都写成原生 `ask`，最终由网关裁决）。置为 `ask` 只是额外强制 `edit`/`bash` 进入审批环路，只能加提示、不能去掉设置要求的提示；其他取值以 `ENGINE_CONFIG_INVALID` 启动失败 |
 | `PNP_MAX_RESIDENT_SESSIONS` | `16`（范围 1–64） | 常驻原生通道上限；到达上限按最久未用淘汰非活跃会话的通道，不再直接拒绝第 17 个会话。评测一轮同时保有的会话数持续高于默认值时才需要调大 |
 | `PNP_RUN_TIMEOUT_MS` | `900000`（15 分钟，范围 1000–86400000） | 单次 Prompt 执行的总时限。任务涉及大文档转换、多步网页检索等确需更久时再调大 |
 | `PNP_OPEN_TIMEOUT_MS` | `60000`（范围 1000–600000） | 原生进程/引擎握手时限。评测机首次运行叠加杀软扫描或冷编译较慢时调大 |
@@ -65,7 +67,7 @@ C 交付内部模型、工具和权限配置。`config/internal.example.json` �
 | `PNP_INTERACTION_TIMEOUT_MS` | `45000`（范围 1000–600000） | 反问/授权等待回复的时限，超时按 `reason:"TIMEOUT"` 处理为拒绝 |
 | `PNP_RUN_QUEUE_LIMIT` | `8`（范围 1–128） | 等待唯一执行槽的跨会话请求上限。全局同时只有一个活跃 Run；其他会话的 `prompt_async` 按到达顺序排队等待，不立即拒绝，队列满才返回 409 `GATEWAY_BUSY`（带 `Retry-After: 5`）。同一会话的第二个 `prompt_async` 始终立即 409 `SESSION_BUSY`。评测同时开启的会话数超过默认值时才需要调大 |
 
-规范把 `model.providerID/modelID` 定为必填，取值由评测脚本决定，本网关不掌握。因此不在配置档内的选择**不返回 403**，而是落到配置档的第一个模型（默认模型）；调用方省略 `model` 时同样使用该默认模型。每轮在模型解析成功后立即发布事件 `model.resolved`，载荷为 `{sessionID, runID, requested, selected, resolution}`，`resolution` 取值 `exact`（档内命中）、`default`（未传 `model`）、`substituted`（传入的标识不在档内）；替换时另有一行 `console.warn` 的 JSON 日志。两者都只含模型标识，不含端点、请求头或凭据。配置档才是端点允许清单，替换只发生在"名字"这一层，不扩大任何访问面。需要严格拒绝时设置 `PNP_MODEL_STRICT=1`。
+规范把 `model.providerID/modelID` 定为必填，取值由评测脚本决定，本网关不掌握。因此不在有效模型清单内的选择**不返回 403**，而是落到设置文件声明的有效默认模型；调用方省略 `model` 时同样使用该默认模型。每轮在模型解析成功后立即发布事件 `model.resolved`，载荷为 `{sessionID, runID, requested, selected, resolution}`，`resolution` 取值 `exact`（清单内命中）、`default`（未传 `model`）、`substituted`（传入的标识不在清单内）；替换时另有一行 `console.warn` 的 JSON 日志。两者都只含模型标识，不含端点、请求头或凭据。设置文件才是端点允许清单，替换只发生在"名字"这一层，不扩大任何访问面。需要严格拒绝时设置 `PNP_MODEL_STRICT=1`。
 
 以上数值型变量留空（`VAR=`）等同于不设置，按默认值处理，不会被解析成 `0` 而拒绝启动。
 
@@ -82,7 +84,8 @@ C 交付内部模型、工具和权限配置。`config/internal.example.json` �
 | `ENGINE_UNAVAILABLE` | 所选 Engine Pack 尚无实现 |
 | `INTEGRATION_NOT_FOUND` / `INTEGRATION_CONFIG_INVALID` | `PNP_INTEGRATION` 取值非法，或 `configured` 模式下配置档缺失/路径非绝对/JSON 不合法/字段不合规（含 `PNP_CONFIGURED_POLICY_OVERRIDES` 不是合法 JSON 或取值非法） |
 | `INTEGRATION_UNAVAILABLE` | 显式选择 `PNP_INTEGRATION=internal`，而内网集成尚无实现 |
-| `MODEL_ENVIRONMENT_MISSING` | 配置档点名的环境变量（端点或凭据）未设置；错误信息列出缺少的变量名，不含取值 |
+| `SETTINGS_INVALID` | `PNP_SETTINGS` 路径非绝对，或设置文件缺失/JSON 不合法/字段不合规/有效默认模型不在有效清单内 |
+| `MODEL_ENVIRONMENT_MISSING` | 设置文件（显式历史档时为该档）点名的环境变量（端点或凭据）未设置；错误信息列出缺少的变量名，不含取值 |
 | `INSECURE_MODEL_ENDPOINT` / `UNSAFE_MODEL_ENDPOINT` / `MODEL_ENDPOINT_INVALID` | 解析出的端点不是 https（http 仅限回环）、URL 内含凭据，或不是合法 URL |
 | `INSTANCE_LOCKED` | `PNP_DATA_DIR` 已被另一个存活的网关进程占用 |
 | `INSTANCE_GUARD_FAILED` | Windows 独占句柄获取失败，且回退到文件锁也未成功 |

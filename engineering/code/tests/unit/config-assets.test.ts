@@ -7,6 +7,7 @@ import { resolveAsset } from "../../src/assets/resolver.ts";
 import { selectEngine, loadEngine } from "../../src/registry/index.ts";
 import { ConfiguredIntegration } from "../../src/integration/configured/provider.ts";
 import { DEFAULT_CONFIGURED_PROFILE, loadIntegration, probeIntegration } from "../../src/integration/index.ts";
+import { DEFAULT_SETTINGS, loadPnpSettings } from "../../src/config/settings.ts";
 import type { ModelSelection, Session } from "../../src/contracts/index.ts";
 import { removeTree } from "../kit/fs.ts";
 
@@ -162,25 +163,23 @@ test("PNP_MODEL_STRICT selects the strict provider where the configured integrat
   } finally { await removeTree(dir); }
 });
 
-test("a real engine defaults to the shipped profile, which names its endpoint and credential by variable", async () => {
-  // The shipped profile is what an operator who sets no integration variable actually runs, so it
-  // is asserted as delivered: no endpoint literal, no credential, only variable NAMES.
-  const shipped = JSON.parse(await readFile(DEFAULT_CONFIGURED_PROFILE, "utf8")) as {
-    models: { selection: { providerID: string; modelID: string }; endpoint?: string;
-      endpointEnvironment?: string; headerEnvironment: Record<string, string> }[];
-    tools: unknown[]; policy: { default: string; operations: Record<string, string> };
-  };
-  assert.equal(shipped.models.length, 1);
-  const [first] = shipped.models;
+test("a real engine defaults to the shipped settings, which name its endpoint and credential by variable", async () => {
+  // The shipped files are what an operator who sets no integration variable actually runs, so they are
+  // asserted as delivered. The profile carries tools and nothing else: models and permissions have one
+  // source, and a `models` block here would be silently ignored on this path.
+  assert.deepEqual(JSON.parse(await readFile(DEFAULT_CONFIGURED_PROFILE, "utf8")), { tools: [] });
+  // The settings hold the model, and hold it by variable NAME: no endpoint literal, no credential.
+  assert.match(DEFAULT_SETTINGS, /settings\.json$/);
+  const effective = await loadPnpSettings({ engineId: "opencode" });
+  assert.deepEqual(effective.model.default, { providerID: "competition", modelID: "default" });
+  const first = effective.model.models.find((entry) => entry.selection.modelID === "default");
   assert.equal(first?.endpoint, undefined);
   assert.equal(first?.endpointEnvironment, "PNP_MODEL_ENDPOINT");
   assert.deepEqual(first?.headerEnvironment, { Authorization: "PNP_MODEL_AUTHORIZATION" });
-  assert.deepEqual(first?.selection, { providerID: "competition", modelID: "default" });
-  assert.deepEqual(shipped.tools, []);
-  assert.deepEqual(shipped.policy, { default: "allow", operations: {} });
+  assert.deepEqual(effective.permissions, { default: "allow", operations: {} });
 
   // A non-mock engine with nothing configured: the integration loads, and only a variable the
-  // profile names — not an unimplemented provider — can stop the gateway from starting.
+  // settings name — not an unimplemented provider — can stop the gateway from starting.
   const provider = await loadIntegration({ kind: undefined, development: false, engineDevelopmentOnly: false,
     environment: {} });
   assert.equal(provider.id, "configured");

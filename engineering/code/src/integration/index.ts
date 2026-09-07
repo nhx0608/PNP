@@ -188,8 +188,8 @@ export async function loadIntegration(input: {
 
   // Existing explicit configured profiles remain a compatibility surface. Once PNP_SETTINGS is explicitly
   // supplied, the unified file is authoritative for model/permission settings and the profile contributes tools
-  // only. The shipped default profile contains legacy fields for package compatibility, but normal operation
-  // ignores them because the default profile is not an explicit override.
+  // only, which is all the shipped default profile now carries: a `models` or `policy` block there would be
+  // ignored anyway, because the default profile is not an explicit override.
   const legacyOnly = explicitProfile && !explicitSettings;
   const legacyModels = legacyOnly && profile.models !== undefined ? parseLegacyModels(profile.models) : undefined;
   const legacyPolicy = legacyOnly && profile.policy !== undefined ? parsePolicy(profile.policy, "profile.policy") : undefined;
