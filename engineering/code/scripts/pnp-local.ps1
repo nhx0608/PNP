@@ -242,7 +242,7 @@ function Ensure-PinnedNode {
 
   $version = Test-NodeVersion $nodeExe
   if ($null -eq $version) {
-    Fail "Pinned Node.js runtime did not bootstrap correctly at $nodeExe"
+    Fail "Pinned Node.js runtime did not bootstrap correctly at $nodeExe. Delete $BundledNodeHome and retry, or install Node.js 24.19+ yourself and set PNP_NODE_HOME to its directory."
   }
   return @{ Exe = $nodeExe; Version = $version; Source = "downloaded pinned runtime" }
 }
@@ -299,7 +299,7 @@ function Resolve-Npm([string]$NodeExe) {
 function Ensure-ProjectDependencies([string]$NodeVersion, [string]$NpmCmd) {
   $lockFile = Join-Path $CodeRoot "package-lock.json"
   if (-not (Test-Path -LiteralPath $lockFile -PathType Leaf)) {
-    Fail "package-lock.json is missing; deterministic bootstrap is not possible."
+    Fail "package-lock.json is missing at $lockFile; a deterministic install is not possible. Restore it from the delivered package, or use the delivered package, which ships node_modules already installed."
   }
 
   $lockHash = (Get-FileHash -LiteralPath $lockFile -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -552,11 +552,11 @@ function Ensure-EngineDependency([string]$SelectedEngine, [string]$NpmCmd, [stri
     Fail "Engine '$SelectedEngine' has no automatic local installer yet (distribution kind: $kindLabel). Install it manually and set $environmentVariable to its executable."
   }
   if ($packageCandidates.Count -eq 0) {
-    Fail "Engine '$SelectedEngine' declares no npm package candidate for bootstrap."
+    Fail "Engine '$SelectedEngine' declares no npm package candidate in $configPath. Install it yourself and set $environmentVariable to its executable."
   }
   $packageName = [string]$packageCandidates[0]
   if ([string]::IsNullOrWhiteSpace($packageName) -or [string]::IsNullOrWhiteSpace($version)) {
-    Fail "Engine '$SelectedEngine' is missing package or version bootstrap metadata."
+    Fail "Engine '$SelectedEngine' is missing package or version metadata in $configPath. Install it yourself and set $environmentVariable to its executable."
   }
 
   $engineHome = Join-Path $BootstrapRoot "engines\$SelectedEngine\$version"
@@ -584,7 +584,7 @@ function Ensure-EngineDependency([string]$SelectedEngine, [string]$NpmCmd, [stri
   $versionExit = $LASTEXITCODE
   $reportedVersion = (($versionOutput | ForEach-Object { [string]$_ }) -join "`n").Trim()
   if ($versionExit -ne 0 -or $reportedVersion -notmatch [regex]::Escape($version)) {
-    Fail "$SelectedEngine executable version check failed. Expected $version, got '$reportedVersion' (exit code $versionExit)."
+    Fail "$SelectedEngine executable version check failed. Expected $version, got '$reportedVersion' (exit code $versionExit). Delete $engineHome and retry, or set $environmentVariable to a verified install."
   }
 
   [Environment]::SetEnvironmentVariable($environmentVariable, $executable, "Process")
@@ -685,7 +685,7 @@ function Open-Follow([string]$Path) {
 function Start-Gateway([string]$NodeExe, [string]$SelectedEngine, [int]$SelectedPort, [string]$SelectedHost, [string]$LocalEnvFile) {
   $gatewayEntry = Join-Path $CodeRoot "dist\main.js"
   if (-not (Test-Path -LiteralPath $gatewayEntry -PathType Leaf)) {
-    Fail "Gateway build output is missing at $gatewayEntry"
+    Fail "Gateway build output is missing at $gatewayEntry. Run 'pnp.cmd bootstrap --engine $SelectedEngine' first."
   }
 
   if (Test-Path -LiteralPath $PidFile -PathType Leaf) {
