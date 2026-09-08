@@ -68,6 +68,12 @@ jobs:
       - name: Report OpenCode version
         if: matrix.engine == 'opencode'
         run: opencode --version
+      # The one-command launcher's engine install path (npm install into the runtime cache, then the
+      # executable's own --version) has no other CI evidence: the smoke installs opencode globally.
+      - name: Exercise the one-command bootstrap's engine install path
+        if: matrix.engine == 'opencode' && runner.os == 'Windows'
+        shell: cmd
+        run: pnp.cmd bootstrap --engine opencode
       - name: Run engine smoke
         run: node scripts/e2e/ci-smoke.mjs --engine ${{ matrix.engine }} --artifacts ${{ runner.temp }}/e2e-artifacts
       - name: Upload smoke artifacts

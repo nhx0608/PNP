@@ -365,14 +365,15 @@ function Ensure-EngineDependency([string]$SelectedEngine, [string]$NpmCmd, [stri
     Fail "The $packageName package did not expose a usable executable after installation."
   }
 
-  # Let wrapper scripts exit before selecting the first output line. Piping a .cmd directly
-  # through Select-Object -First 1 can close its pipe early and surface a false -1 exit code.
-  $versionOutput = & $executable --version 2>$null
-  $versionExitCode = $LASTEXITCODE
-  $reportedVersion = [string]($versionOutput | Select-Object -First 1)
-  $reportedVersion = $reportedVersion.Trim()
-  if ($versionExitCode -ne 0 -or $reportedVersion -notmatch [regex]::Escape($version)) {
-    Fail "$SelectedEngine executable version check failed. Expected $version, got '$reportedVersion'."
+  # The whole output is collected before the first line is read. Piping the live process into
+  # Select-Object -First 1 stops the pipeline as soon as one line arrives and closes the
+  # executable's standard output while it may still be writing; on windows-latest that turned a
+  # correct "1.18.29" into a non-zero exit code and failed the check against its own answer.
+  $versionOutput = @(& $executable --version 2>$null)
+  $versionExit = $LASTEXITCODE
+  $reportedVersion = if ($versionOutput.Count -gt 0) { ([string]$versionOutput[0]).Trim() } else { "" }
+  if ($versionExit -ne 0 -or $reportedVersion -notmatch [regex]::Escape($version)) {
+    Fail "$SelectedEngine executable version check failed. Expected $version, got '$reportedVersion' (exit code $versionExit)."
   }
 
   [Environment]::SetEnvironmentVariable($environmentVariable, $executable, "Process")

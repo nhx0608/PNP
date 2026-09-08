@@ -250,3 +250,14 @@
 2. **上游版本陈述需要出处。** §2 断言"截至 2026-09-07，MCP 当前规范版本为 `2026-07-28`，Streamable HTTP 为无会话核心"。本仓库其余事实均附来源或真机证据；这一条请附规范链接与查阅日期，否则降为"以 C 实测协商结果为准"。
 
 **记录：** 该 PR 同时把 C02 的交付物改为"实现 PNP-MCP/1 Server"（`work-packages.md`、`prompts/03-C-internal.md`），属于团队分工决定，由用户确认即可；实现侧不需要动作。
+
+---
+
+## 15. 增量审查：`d6592ee`（一键自举启动器 `pnp.cmd` 与内网快速启动）
+
+**结论：接受。** 33 个提交只新增 `pnp.cmd`、`scripts/pnp-local.ps1`、`config/settings.his.example.json`、`config/local.env.example`、`QUICKSTART.md`，并改写 `requirements.md` 的 R03 与新增 FAQ 条目 R10–R12；`src/` 未动，规范字面启动方式 `gateway.cmd --engine X --port 6217` 与 `AGENT_ENGINE` 兼容路径都保持（AGENTS.md 第 9 条仍成立，`pnp.cmd` 与脚本在 `AGENT_ENGINE` 冲突时同样明确失败）。安全扫描：新增行无主机名、无凭据；Node 24.19.0 下载固定 URL 并做 SHA-256 校验，`PNP_NODE_DOWNLOAD_URL` 只能换镜像、不能绕过校验；`runtime/` 在两级 `.gitignore` 里，`local.env` 只打印变量名。该头的 CI 六作业全绿。
+
+**一处补齐（已由顶层直接落地，4 行 CI）：** CI 只跑了 `pnp.cmd bootstrap --engine mock`，而 mock 跳过引擎依赖安装；`opencode` 路径（`npm install --prefix` 进运行时缓存 → 解析包的 `bin/opencode.exe` → `--version` 核对）没有任何 CI 证据，而它正是 FAQ 部署故事里"裁判不预装、启动器自装"的那条路。windows/opencode 冒烟作业增加 `pnp.cmd bootstrap --engine opencode` 一步。
+
+**记录（不阻塞）：** 每次 `start` 都执行 `npm run build`，冷启动多花数秒，可在 `dist/main.js` 新于源码时跳过；引擎包安装用 `--package-lock=false`，完整性依赖 npm registry 与 `npm_config_registry` 镜像，未做哈希固定，作为便利路径可接受，`gateway.cmd` 手工安装路径不受影响。`settings.his.example.json` 再次带出 E 项（HIS 标识是否可入公开仓库），仍待用户定。
+- 补记：新增的 CI 步骤第一次运行就暴露了启动器的一个真 bug——版本核对把活进程直接管道进 `Select-Object -First 1`，管道提前停止关闭了可执行文件的 stdout，Windows 上得到"Expected 1.18.29, got '1.18.29'"却退出码非零。改为先收齐输出再取首行（`aefbcdf` 之后的修复提交）。这正是该步骤存在的理由。
