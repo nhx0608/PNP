@@ -1,111 +1,109 @@
 import { writeFile } from "node:fs/promises";
-import type { CommandToolBinding, ToolBinding } from "../../contracts/index.ts";
+import type { ToolBinding, ToolSideEffect } from "../../contracts/index.ts";
 import type { PiSessionPaths } from "./launch.ts";
 
-/** Sanitized (no function values, no prototype pollution surface) shape written to disk. */
-interface ToolFixtureEntry {
+/** Variable-name prefixes for the values the bridge extension resolves from `process.env`. */
+export const TOOL_ENVIRONMENT_PREFIX = "PNP_PI_TOOLENV_";
+export const TOOL_HEADER_ENVIRONMENT_PREFIX = "PNP_PI_TOOLHDR_";
+const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
+
+/** One MCP server this session may reach, as written to the `pnp-tools.json` sidecar. Every
+ * credential-bearing field is a variable NAME; the values live only in `LaunchSpec.env`. */
+export interface PiStdioBridgeServer {
   readonly id: string;
+  readonly transport: "stdio";
   readonly command: string;
   readonly args: readonly string[];
-  readonly env: Readonly<Record<string, string>>;
-  readonly sideEffect: ToolBinding["sideEffect"];
+  /** Original variable name -> generated variable name holding the resolved value. */
+  readonly envNames: Readonly<Record<string, string>>;
+  readonly sideEffect: ToolSideEffect;
   readonly timeoutMs: number;
-  readonly inputSchema: ToolBinding["inputSchema"];
 }
+export interface PiHttpBridgeServer {
+  readonly id: string;
+  readonly transport: "http";
+  readonly url: string;
+  /** Original header name -> generated variable name holding the resolved value. */
+  readonly headerNames: Readonly<Record<string, string>>;
+  readonly sideEffect: ToolSideEffect;
+  readonly timeoutMs: number;
+}
+export type PiBridgeServer = PiStdioBridgeServer | PiHttpBridgeServer;
 
 export interface DroppedPiToolBinding {
   readonly id: string;
   readonly transport: ToolBinding["transport"];
   readonly reason: string;
 }
-
 export interface PiToolProjection {
-  readonly supported: readonly CommandToolBinding[];
+  readonly servers: readonly PiBridgeServer[];
+  /** Generated variable name -> resolved value. Only ever placed in `LaunchSpec.env`. */
+  readonly env: Readonly<Record<string, string>>;
   readonly dropped: readonly DroppedPiToolBinding[];
 }
 
-const MCP_UNSUPPORTED_REASON = "pi native extensions are not an MCP client";
-
-/** Pi's generated extension can invoke command bindings only. MCP servers need an MCP client and
- * must never be reinterpreted as ordinary commands, even when an stdio binding happens to carry
- * command-shaped fields. */
-export function projectPiTools(tools: readonly ToolBinding[]): PiToolProjection {
-  const supported: CommandToolBinding[] = [];
-  const dropped: DroppedPiToolBinding[] = [];
-  for (const tool of tools) {
-    if (tool.transport === "cli" || tool.transport === "native") supported.push(tool);
-    else dropped.push({ id: tool.id, transport: tool.transport, reason: MCP_UNSUPPORTED_REASON });
-  }
-  return { supported, dropped };
-}
-
-// Built from two pieces so this file's text never spells out a quoted import target ending in
-// the forbidden "child_process" substring (scripts/check-boundaries.mjs scans raw source text,
-// including comments, for that pattern). The module named here is only ever required by the
-// *generated* extension text below, which pi's own extension loader runs inside the pi process,
-// not by this adapter's process, so the boundary rule's intent (adapters must not spawn a child
-// process directly) still holds either way.
-const childProcessModuleSpecifier = ["node:", "child_process"].join("");
+const COMMAND_UNSUPPORTED_REASON = "the pi bridge is an MCP client; cli/native command bindings are not supported";
 
 /**
- * Generates the pi extension (`-e <file>`) that exposes supported cli/native bindings as pi
- * custom tools. MCP bindings are intentionally omitted because this extension is not an MCP
- * client. The extension is generated once at `open()` time from the IntegrationContext bound to that
- * session (contracts.md §6: pi has no runtime "hot add tool" RPC command, so per-run tool
- * changes are rejected explicitly by the channel instead of being silently ignored here).
+ * Projects the run's tool bindings onto the sidecar the in-pi bridge extension reads.
  *
- * Secrets in `ToolBinding.env` are written to a 0600 sidecar file under the session's own
- * native data directory (same pattern as `LocalProcessHost`'s ownership records) and read by the
- * generated extension at pi startup, instead of being inlined into the generated source text.
+ * Only MCP transports are supported: the bridge connects with the MCP SDK client, so an
+ * `mcp-stdio` binding is started by the SDK's own stdio transport inside the pi process and an
+ * `mcp-http` binding is reached over Streamable HTTP. `cli`/`native` bindings used to be executed
+ * by a generated extension calling `execFile`; that path is gone, so they are dropped and
+ * reported through the existing `tools.unsupported-transport` notice rather than being
+ * reinterpreted as MCP servers.
  */
-export async function writeToolBridge(paths: PiSessionPaths, tools: readonly ToolBinding[]): Promise<string | undefined> {
-  const { supported } = projectPiTools(tools);
-  if (supported.length === 0) return undefined;
-  const fixtures: ToolFixtureEntry[] = supported.map((tool) => ({
-    id: tool.id, command: tool.command, args: [...tool.args], env: { ...tool.env },
-    sideEffect: tool.sideEffect, timeoutMs: tool.timeoutMs ?? 30_000, inputSchema: tool.inputSchema ?? null,
-  }));
-  await writeFile(paths.toolsFile, JSON.stringify(fixtures), { mode: 0o600 });
-  await writeFile(paths.extensionFile, renderExtensionModule(paths.toolsFile), { mode: 0o600 });
-  return paths.extensionFile;
+export function projectPiTools(tools: readonly ToolBinding[]): PiToolProjection {
+  const servers: PiBridgeServer[] = [];
+  const dropped: DroppedPiToolBinding[] = [];
+  const env: Record<string, string> = {};
+  let envIndex = 0;
+  let headerIndex = 0;
+  for (const tool of tools) {
+    const timeoutMs = tool.timeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+    if (tool.transport === "mcp-stdio") {
+      const envNames: Record<string, string> = {};
+      for (const [name, value] of Object.entries(tool.env)) {
+        envIndex += 1;
+        const variable = `${TOOL_ENVIRONMENT_PREFIX}${String(envIndex)}`;
+        envNames[name] = variable;
+        env[variable] = value;
+      }
+      servers.push({ id: tool.id, transport: "stdio", command: tool.command, args: [...tool.args], envNames, sideEffect: tool.sideEffect, timeoutMs });
+      continue;
+    }
+    if (tool.transport === "mcp-http") {
+      const headerNames: Record<string, string> = {};
+      for (const [name, value] of Object.entries(tool.headers)) {
+        headerIndex += 1;
+        const variable = `${TOOL_HEADER_ENVIRONMENT_PREFIX}${String(headerIndex)}`;
+        headerNames[name] = variable;
+        env[variable] = value;
+      }
+      servers.push({ id: tool.id, transport: "http", url: tool.url, headerNames, sideEffect: tool.sideEffect, timeoutMs });
+      continue;
+    }
+    dropped.push({ id: tool.id, transport: tool.transport, reason: COMMAND_UNSUPPORTED_REASON });
+  }
+  return { servers, env, dropped };
 }
 
-function renderExtensionModule(toolsFilePath: string): string {
-  const toolsFileLiteral = JSON.stringify(toolsFilePath);
-  return `// Generated by PNP (code/src/drivers/pi-rpc/tool-bridge.ts). Do not edit by hand.
-// Runs inside the pi process (jiti-loaded extension), not inside the PNP gateway process.
-import { readFileSync } from "node:fs";
-import { execFile as execFileCb } from "${childProcessModuleSpecifier}";
-import { promisify } from "node:util";
-const execFile = promisify(execFileCb);
-const tools = JSON.parse(readFileSync(${toolsFileLiteral}, "utf8"));
-export default function activate(pi) {
-  for (const tool of tools) {
-    pi.registerTool({
-      name: tool.id,
-      parameters: tool.inputSchema ?? { type: "object" },
-      async execute(toolCallId, params, signal, onUpdate, ctx) {
-        if (tool.sideEffect !== "read" && ctx.hasUI) {
-          const confirmed = await ctx.ui.confirm(
-            "Tool approval required",
-            "PNP policy must approve " + tool.id + " before it runs.",
-          );
-          if (!confirmed) return { output: { blocked: true }, isError: true };
-        } else if (tool.sideEffect !== "read" && !ctx.hasUI) {
-          // No UI bridge available (print/json mode): fail closed instead of running unapproved.
-          return { output: { blocked: true, reason: "no-ui-bridge" }, isError: true };
-        }
-        try {
-          const { stdout } = await execFile(tool.command, tool.args, {
-            cwd: process.cwd(), env: { ...process.env, ...tool.env }, timeout: tool.timeoutMs, signal,
-          });
-          return { output: { stdout }, isError: false };
-        } catch (error) {
-          return { output: { message: String(error && error.message ? error.message : error) }, isError: true };
-        }
-      },
-    });
-  }
+export interface WrittenToolBridge {
+  /** Absolute sidecar path, or undefined when this session has no MCP server at all. */
+  readonly bridgeFile?: string;
+  readonly env: Readonly<Record<string, string>>;
+  readonly dropped: readonly DroppedPiToolBinding[];
 }
-`;
+/**
+ * Writes the session sidecar. Mode 0600 is requested for the same reason `LocalProcessHost` does
+ * it for ownership records; on Windows Node ignores the mode and the directory ACL is the only
+ * protection, which is exactly why the file carries variable names and never a resolved value
+ * (docs/engineering-review-3.md section 16 B).
+ */
+export async function writeToolBridge(paths: PiSessionPaths, tools: readonly ToolBinding[]): Promise<WrittenToolBridge> {
+  const projection = projectPiTools(tools);
+  if (projection.servers.length === 0) return { env: projection.env, dropped: projection.dropped };
+  await writeFile(paths.toolsFile, JSON.stringify(projection.servers, null, 2), { mode: 0o600 });
+  return { bridgeFile: paths.toolsFile, env: projection.env, dropped: projection.dropped };
 }

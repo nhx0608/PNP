@@ -3,7 +3,45 @@
   "channel": "rpc",
   "owner": "B",
   "implementationEntry": "src/engines/pi/pack.ts",
-  "engineVersion": null,
-  "capabilityEvidence": "declared",
-  "notes": "Driver code (code/src/drivers/pi-rpc/**) is implemented against docs/research/T02-pi-harness.md's documented `--mode rpc` wire format. A real `@earendil-works/pi-coding-agent` 0.85.1 was installed via `npm install -g` and manually exercised over `--mode rpc` (get_state, and a full prompt round-trip against a local OpenAI-Chat-Completions mock server) in this environment; that probe found and corrected two real bugs the earlier declared-only shapes had (see docs/engines/pi.md 'B08'): `agent_end` never carries a top-level `stopReason` (it is only ever on the last entry of `messages`; the old code read a field that never exists, so every real run — including genuine errors — was reported as `finish:\"stop\"`), and there is no generic `OPENAI_BASE_URL`/`ANTHROPIC_BASE_URL` override for a custom endpoint (verified: a real pi process ignored `OPENAI_BASE_URL` and called the real api.openai.com); model/endpoint/credential injection now goes through a session-private `~/.pi/agent/models.json` redirected via `PI_CODING_AGENT_DIR`, not environment variables. `engineVersion` stays null until a release is formally locked by SHA/version per team process; this was a manual, reproducible probe (commands recorded in docs/engines/pi.md), not yet an automated CI-gated test against the real binary."
+  "engineVersion": "0.85.1",
+  "engineVersionLocked": true,
+  "engineVersionNotes": "Locked at @earendil-works/pi-coding-agent 0.85.1, the release every wire shape in src/drivers/pi-rpc/** was probed against (docs/engines/pi.md B08 records the exact commands). engines.lock.json must record the SHA-256 of the npm tarball used for a delivery; that entry and the launcher's install step are WP5's work, not declared here.",
+  "distribution": {
+    "kind": "npm-node-entry",
+    "packageNameCandidates": ["@earendil-works/pi-coding-agent"],
+    "entry": "dist/bundle/cli.js",
+    "notes": "The package's only launchable target is a JS entry run by Node: a global install writes a pi.cmd shim on Windows, which the shared ProcessHost rejects (shell:false, and win32 requires a real .exe), so the launch pair is PNP_PI_NODE (a Node executable) plus PNP_PI_ENTRY pointing at <package root>/dist/bundle/cli.js. Verified by installing the package in this environment and running `node <entry> --version`, which printed 0.85.1. Installing it into runtime/bootstrap/engines/pi/0.85.1 and exporting those two variables is WP5's launcher work; this file only declares the metadata that work reads."
+  },
+  "executable": {
+    "kindEnvironmentVariable": null,
+    "defaultKind": "node-entry",
+    "environmentVariables": {
+      "PNP_PI_EXECUTABLE": "Absolute path to a directly launchable pi executable (a repackaged single-file build). Takes precedence over the node-entry pair.",
+      "PNP_PI_NODE": "Absolute path to the Node executable used to run PNP_PI_ENTRY; defaults to the gateway's own process.execPath.",
+      "PNP_PI_ENTRY": "Absolute path to dist/bundle/cli.js inside the installed package.",
+      "PNP_PI_EXTRA_ARGS": "Optional JSON array of strings appended verbatim to the launch arguments.",
+      "PNP_PI_APPROVE": "Optional; \"always\" passes --approve, anything else passes --no-approve."
+    },
+    "modeNotes": "No well-known path list: there is no portable global-install layout across npm/pnpm and platforms, and guessing one would silently launch the wrong file. resolvePiLaunchConfig() throws ENGINE_UNAVAILABLE (503) when neither form is configured rather than probing."
+  },
+  "model": {
+    "policy": "launch",
+    "policyEvidence": "probed",
+    "rationale": "The model's endpoint and credential reach pi through a session-private models.json that references environment-variable NAMES (pi's documented $VAR value resolution), and the values live in LaunchSpec.env, which is fixed when the process starts. pi's set_model command exists, but switching to a binding whose variables are not already in that environment cannot work, so any run whose model fingerprint differs from the one the session was opened with is refused with 409 ENGINE_BINDINGS_CHANGED instead of being answered by the model the session was opened for. Probed: a real 0.85.1 process configured exactly this way sent Authorization: Bearer <value> plus every custom header to a local endpoint, with no value anywhere in models.json."
+  },
+  "modelEnvironmentPrefixes": {
+    "apiKey": "PNP_PI_MODEL_API_KEY",
+    "headers": "PNP_PI_MODEL_HEADER_",
+    "toolEnvironment": "PNP_PI_TOOLENV_",
+    "toolHeaders": "PNP_PI_TOOLHDR_",
+    "bridgeFile": "PNP_PI_BRIDGE_FILE"
+  },
+  "nativePermissions": "extension-hook",
+  "nativePermissionsNotes": "pi has no permission system of its own. The bridge extension (src/drivers/pi-rpc/extension/pnp-bridge.ts) registers a tool_call hook that maps every tool to a gateway operation class and asks the gateway to authorize each non-read call through ctx.ui.confirm(\"pnp:<operation>\", ...); the decision is made by the gateway's policy, never in the pi process. Probed end to end on real 0.85.1: a built-in bash call produced extension_ui_request{title:\"pnp:shell\"} and a negative answer blocked the call (tool_execution_end isError:true).",
+  "timeouts": {
+    "handshakeMs": 15000,
+    "requestMs": 120000
+  },
+  "capabilityEvidence": "probed",
+  "notes": "Driver code lives in code/src/drivers/pi-rpc/**. Every wire shape it depends on was exercised against a real installed @earendil-works/pi-coding-agent 0.85.1 in this environment (docs/engines/pi.md B08): the --mode rpc frame format, the agent_end stop-reason position, models.json + PI_CODING_AGENT_DIR as the only working endpoint/credential injection (there is no generic *_BASE_URL override), $VAR resolution for apiKey and custom headers, extension loading from both a .ts and a compiled .js file, the MCP bridge registering a fixture MCP server's tools inside the pi process, and the tool_call policy hook blocking a built-in bash call. Still NOT verified, and not claimed: an internal model endpoint end to end, Windows Job Object lifecycle against a real pi process, and any automated CI test against the real binary (the automated suite runs a fixture process plus a fixture MCP server, which is why capabilityEvidence is \"probed\", not \"verified\")."
 }

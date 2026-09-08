@@ -1,21 +1,26 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { HostedProcess } from "../../contracts/host.ts";
 import type {
   DriverServices, EngineCapabilities, EngineOpenInput, EngineResult, EngineSessionChannel,
-  IntegrationContext, Json, MessageFinish, NativeSessionRef, StopEvidence, StopReason, ToolBinding,
+  InteractionRequest, Json, MessageFinish, NativeSessionRef, ResolvedModel, StopEvidence,
+  StopReason, ToolBinding,
 } from "../../contracts/index.ts";
 import { PnpError } from "../../core/errors.ts";
 import { deferred } from "../../runtime/deadline.ts";
 import { PiRpcClient } from "./client.ts";
 import type { PiEvent } from "./protocol.ts";
-import { buildLaunchSpec, resolvePiLaunchConfig, resolveSessionPaths, writePiModelsConfig } from "./launch.ts";
+import {
+  buildLaunchSpec, fingerprintPiModel, readInstructionText, resolveBridgeExtensionPath,
+  resolvePiLaunchConfig, resolveSessionPaths, writePiModelsConfig, writePiSettings,
+} from "./launch.ts";
 import type { PiSessionPaths } from "./launch.ts";
 import { projectPiTools, writeToolBridge } from "./tool-bridge.ts";
 import type { DroppedPiToolBinding } from "./tool-bridge.ts";
 
-/** Declared target; update alongside `code/config/engines/pi.json` once a release is locked and
- * exercised, per contracts.md "declared/probed/verified" evidence tiers. */
-const DECLARED_PROTOCOL_VERSION = "pi-rpc (docs/research/T02-pi-harness.md, ~0.84.x, unverified)";
+/** Probed, not merely declared: every wire shape this driver depends on was exercised against a
+ * real `@earendil-works/pi-coding-agent` 0.85.1 process (`docs/engines/pi.md` B08 records the
+ * commands). Update alongside `code/config/engines/pi.json` when a new release is locked. */
+const DECLARED_PROTOCOL_VERSION = "pi-rpc (@earendil-works/pi-coding-agent 0.85.1, probed)";
 
 function canonicalize(value: Json): Json {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -47,9 +52,6 @@ export function fingerprintPiTools(tools: readonly ToolBinding[]): string {
   });
   return createHash("sha256").update(JSON.stringify(canonicalize(canonicalTools))).digest("hex");
 }
-function modelKey(context: IntegrationContext): string {
-  return `${context.model.selection.providerID}::${context.model.selection.modelID}`;
-}
 /** `EngineResult.finish` is deliberately narrower than the full `MessageFinish` union (it excludes
  * "tool-calls"/"interrupted", which describe mid-turn/observation states, not a run's terminal
  * outcome); this driver's stop-reason mapping never produces either, so the return type says so. */
@@ -70,7 +72,6 @@ interface RunTracker {
   readonly tools: Map<string, ToolState>;
   finalText: string;
   lastStopReason?: string;
-  fallbackTimer?: NodeJS.Timeout;
   /** Serializes async event handling so `services.events.emit()` is always awaited in arrival
    * order (contracts.md §2: "事件回调必须返回并等待 emit()；不得 fire-and-forget"); a rejection
    * here fails the run instead of being silently dropped. */
@@ -80,17 +81,74 @@ interface RunTracker {
 export async function openPiSession(input: EngineOpenInput): Promise<EngineSessionChannel> {
   const config = resolvePiLaunchConfig();
   const paths = resolveSessionPaths(input.nativeDataDirectory);
-  const extensionPath = await writeToolBridge(paths, input.integration.tools);
-  await writePiModelsConfig(paths, input.integration.model);
+  // Order matters: everything pi reads at startup must exist before the process is started. The
+  // three writes below produce no credential on disk -- models.json and the tool sidecar carry
+  // generated variable NAMES, and the values they refer to travel only in `LaunchSpec.env`.
+  const bridge = await writeToolBridge(paths, input.integration.tools);
+  const modelEnv = await writePiModelsConfig(paths, input.integration.model);
+  await writePiSettings(paths);
   const spec = buildLaunchSpec(config, {
-    sessionId: input.session.id, ownerToken: input.session.id, cwd: input.session.directory,
-    paths, extensionPath, model: input.integration.model,
+    sessionId: input.session.id,
+    // The gateway Session id is public (it is in every client URL); an ownership record's holder
+    // token must not be guessable from it (docs/engineering-review-3.md section 16 E3).
+    ownerToken: randomUUID(),
+    cwd: input.session.directory,
+    paths,
+    // Always loaded: even with no MCP server the extension carries the `tool_call` policy hook
+    // that puts pi's own built-ins under the gateway's permission policy (section 16 A).
+    extensionPath: resolveBridgeExtensionPath(),
+    ...(bridge.bridgeFile === undefined ? {} : { bridgeFile: bridge.bridgeFile }),
+    model: input.integration.model,
+    modelEnv,
+    toolEnv: bridge.env,
+    ...await appendSystemPromptOption(input),
   });
   const process = await input.host.start(spec, input.signal, input.resources);
-  const channel = new PiSessionChannel(process, paths, input.integration.tools, modelKey(input.integration));
+  const channel = new PiSessionChannel(process, paths, input.integration.tools, input.integration.model);
   try { await channel.handshake(); }
   catch (error) { await process.terminate().catch(() => undefined); throw error; }
   return channel;
+}
+async function appendSystemPromptOption(input: EngineOpenInput): Promise<{ appendSystemPrompt?: string }> {
+  const text = await readInstructionText(input.integration.assets);
+  return text === undefined ? {} : { appendSystemPrompt: text };
+}
+
+/** Real 0.85.1's `get_state` reply carries the session's model, thinking level and counters, but
+ * no engine version at all (probed; `docs/engines/pi.md` B08 records the exact command). The
+ * lookup stays because that reply is the only place a version could appear and reading one costs
+ * nothing; when it is absent `engineVersion` honestly stays "unknown" rather than being guessed
+ * from the configured package version, which is not proof of what is running. */
+export function readEngineVersion(state: Json): string | undefined {
+  if (state === null || typeof state !== "object" || Array.isArray(state)) return undefined;
+  const record = state as Record<string, Json>;
+  for (const key of ["version", "agentVersion", "piVersion"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return undefined;
+}
+
+/** Titles the in-pi bridge extension uses for a policy question, so a plain `ctx.ui.confirm` from
+ * any other extension keeps the old generic behaviour instead of being read as an operation. */
+export const POLICY_TITLE_PREFIX = "pnp:";
+export function policyInteraction(title: string | undefined, message: string | undefined): InteractionRequest {
+  const raw = title ?? "";
+  const operation = raw.startsWith(POLICY_TITLE_PREFIX) ? raw.slice(POLICY_TITLE_PREFIX.length) : "";
+  if (operation.length === 0) {
+    return { kind: "permission", operation: "pi.extension.confirm", payload: { title: raw, message: message ?? "" } };
+  }
+  let tool = "";
+  let patterns: string[] = [];
+  try {
+    const parsed: unknown = JSON.parse(message ?? "");
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const record = parsed as { tool?: unknown; patterns?: unknown };
+      if (typeof record.tool === "string") tool = record.tool;
+      if (Array.isArray(record.patterns)) patterns = record.patterns.filter((value): value is string => typeof value === "string");
+    }
+  } catch { /* A malformed message still authorizes: the operation from the title is what decides. */ }
+  return { kind: "permission", operation, payload: { patterns, tool } };
 }
 
 /** One PNP gateway Session = one long-lived `pi --mode rpc` process + one pi session file.
@@ -98,28 +156,32 @@ export async function openPiSession(input: EngineOpenInput): Promise<EngineSessi
  * active on a channel at a time, so a single mutable `active` slot (not a map) is sufficient and
  * mirrors how `GatewayCore` already serializes execution per session. */
 export class PiSessionChannel implements EngineSessionChannel {
-  readonly native: NativeSessionRef;
   readonly capabilities: EngineCapabilities = {
     sessionResume: true, streaming: true, cancellation: true, nativeDelete: false,
     extensions: [{
-      id: "pi.tool-bridge", available: true, configuration: "session", control: "extension",
-      observation: "native", evidence: "declared",
+      // The in-pi MCP bridge plus its `tool_call` policy hook. "probed": a real 0.85.1 process
+      // loaded `extension/pnp-bridge.ts` with `-e`, registered the fixture MCP server's tools,
+      // and routed a built-in `bash` call through `pnp:shell` -> `extension_ui_request` -> block
+      // (`docs/engines/pi.md` B08). Not "verified": no internal MCP server or model yet.
+      id: "pi.mcp-bridge", available: true, configuration: "session", control: "extension",
+      observation: "native", evidence: "probed",
     }],
   };
   private readonly client: PiRpcClient;
   private readonly process: HostedProcess;
-  private readonly paths: PiSessionPaths;
   private readonly toolFingerprint: string;
+  /** Identity of the model binding this process's fixed environment was built for. */
+  private readonly modelFingerprint: string;
   private readonly droppedTools: readonly DroppedPiToolBinding[];
   private unsupportedNoticeSent = false;
-  private currentModelKey: string;
+  private exit: { code: number | null; signal: string | null } | undefined;
+  private nativeSession: NativeSessionRef;
   private active: { tracker: RunTracker; services: DriverServices; cancelling: boolean; promptSubmitted: boolean } | undefined;
-  constructor(process: HostedProcess, paths: PiSessionPaths, tools: readonly ToolBinding[], initialModelKey: string) {
+  constructor(process: HostedProcess, paths: PiSessionPaths, tools: readonly ToolBinding[], model: ResolvedModel) {
     this.process = process;
-    this.paths = paths;
     this.toolFingerprint = fingerprintPiTools(tools);
+    this.modelFingerprint = fingerprintPiModel(model);
     this.droppedTools = projectPiTools(tools).dropped;
-    this.currentModelKey = initialModelKey;
     this.client = new PiRpcClient(process, {
       onEvent: (event) => this.dispatch(event),
       onProtocolWarning: () => { /* Isolated: a single malformed frame must not end the channel. */ },
@@ -128,15 +190,39 @@ export class PiSessionChannel implements EngineSessionChannel {
     // in-flight run waiting on agent_settled needs its own, separate failure signal, or an
     // unexpected process death would leave run() hanging forever instead of failing loudly.
     process.onExit((exit) => {
+      this.exit = exit;
       if (this.active === undefined) return;
       this.active.tracker.settle.reject(new PnpError("ENGINE_UNAVAILABLE",
         `Pi RPC process exited unexpectedly (code=${exit.code ?? "null"}, signal=${exit.signal ?? "null"}).`, 502));
     });
-    this.native = { nativeId: paths.sessionFile, channelId: "rpc", engineVersion: "unknown", protocolVersion: DECLARED_PROTOCOL_VERSION, resumeToken: paths.sessionFile };
+    this.nativeSession = { nativeId: paths.sessionFile, channelId: "rpc", engineVersion: "unknown", protocolVersion: DECLARED_PROTOCOL_VERSION, resumeToken: paths.sessionFile };
   }
+  get native(): NativeSessionRef { return this.nativeSession; }
+  /**
+   * Separates the two failures `get_state` can report (docs/engineering-review-3.md section 16 E4).
+   *
+   * A pi process that died at startup (wrong entry path, an argument this build rejects) rejects
+   * `send` immediately, and returning a "usable" channel then defers the real failure to the first
+   * prompt, where it surfaces as "process is not running" and is attributed to the wrong thing. So
+   * an exit during the handshake fails `open()` with `ENGINE_HANDSHAKE_FAILED`. A `get_state` that
+   * merely fails or is unsupported stays tolerated: it is a diagnostic, not a precondition.
+   *
+   * The exit code and signal are all the detail available here -- `HostedProcess` exposes frames
+   * and exit only, no stderr stream; the process's own startup output is captured (and redacted)
+   * by `LocalProcessHost` in its own `HOST_*` diagnostics.
+   */
   async handshake(): Promise<void> {
-    // Best-effort only: an operator-visible diagnostic, not a precondition for a usable channel.
-    try { await this.client.send("get_state", {}, 15_000); } catch { /* Version stays "unknown" until probed. */ }
+    let state: Json;
+    try { state = await this.client.send("get_state", {}, 15_000); }
+    catch (error) {
+      const exit = this.exit;
+      if (exit === undefined) return; // Unsupported/failed command on a live process: tolerated.
+      throw new PnpError("ENGINE_HANDSHAKE_FAILED",
+        `The Pi RPC process exited during the handshake (code=${exit.code ?? "null"}, signal=${exit.signal ?? "null"}); `
+        + "the process's own startup output is in the process host's redacted diagnostics.", 502);
+    }
+    const version = readEngineVersion(state);
+    if (version !== undefined) this.nativeSession = { ...this.nativeSession, engineVersion: version };
   }
   private dispatch(event: PiEvent): void {
     if (event.type === "extension_ui_request") { void this.bridgeInteraction(event); return; }
@@ -189,18 +275,15 @@ export class PiSessionChannel implements EngineSessionChannel {
         // `lastStopReason` permanently `undefined`, which `mapFinish` defaults to "stop": every
         // real run (including genuine upstream errors) was silently reported as a success.
         run.tracker.lastStopReason = event.messages.at(-1)?.stopReason;
-        if (!event.willRetry) {
-          // `agent_settled` should always follow (docs/research/T02-pi-harness.md), but an older
-          // or divergent build might omit it; settle from `agent_end` after a short grace window
-          // instead of hanging forever on an event that never arrives.
-          clearTimeout(run.tracker.fallbackTimer);
-          run.tracker.fallbackTimer = setTimeout(() => {
-            if (this.active === run) run.tracker.settle.resolve({ finalText: run.tracker.finalText, nativeStopReason: run.tracker.lastStopReason ?? "agent_end" });
-          }, 2_000);
-        }
+        // No timer settles a run from `agent_end` (docs/engineering-review-3.md section 16 F). The
+        // old 2-second fallback resolved the run as `completed` whenever `agent_settled` was
+        // merely late -- and because `dispatch` only looks at the *current* active run, a late
+        // `agent_settled` then landed on the NEXT run and settled it early with empty text. Real
+        // 0.85.1 always emits `agent_settled` (probed); if a build ever did not, the run stays
+        // pending until the process exits or `GatewayCore`'s own deadline fires, which is a
+        // truthful timeout instead of a fabricated success.
         return;
       case "agent_settled":
-        clearTimeout(run.tracker.fallbackTimer);
         run.tracker.settle.resolve({ finalText: run.tracker.finalText, nativeStopReason: run.tracker.lastStopReason ?? "agent_settled" });
         return;
       default:
@@ -212,7 +295,9 @@ export class PiSessionChannel implements EngineSessionChannel {
     if (run === undefined || !run.promptSubmitted) { await this.respondUi(event.id, { confirmed: false, cancelled: true }); return; }
     try {
       if (event.method === "confirm") {
-        const decision = await run.services.interact({ kind: "permission", operation: "pi.extension.confirm", payload: { title: event.title ?? "", message: event.message ?? "" } });
+        // A `pnp:<operation>` title is the in-pi policy hook asking the gateway to authorize one
+        // tool call; anything else is an ordinary extension dialog and keeps the generic shape.
+        const decision = await run.services.interact(policyInteraction(event.title, event.message));
         await this.respondUi(event.id, { confirmed: decision.decision === "allow" });
       } else {
         const response = await run.services.interact({ kind: "question", operation: `pi.extension.${event.method}`,
@@ -228,8 +313,15 @@ export class PiSessionChannel implements EngineSessionChannel {
   }
   async run(input: Parameters<EngineSessionChannel["run"]>[0]): Promise<EngineResult> {
     if (this.active !== undefined) throw new PnpError("SESSION_BUSY", "Pi RPC channel already has an active run.", 409);
+    // Both bindings are fixed at `open()`: the tool sidecar and `models.json` are read once at pi
+    // startup, and the values they name live in `LaunchSpec.env`, which cannot be changed on a
+    // running process. Rebinding either one is refused with the same code the ACP driver uses
+    // (docs/engineering-review-3.md section 16 B/E2), never silently served with the old binding.
     if (fingerprintPiTools(input.integration.tools) !== this.toolFingerprint) {
-      throw new PnpError("ENGINE_TOOLS_IMMUTABLE", "This Pi RPC session was opened with different tools; open a new session to change tools.", 409);
+      throw new PnpError("ENGINE_BINDINGS_CHANGED", "This Pi RPC session was opened with a different tool set; open a new session to change tools.", 409);
+    }
+    if (fingerprintPiModel(input.integration.model) !== this.modelFingerprint) {
+      throw new PnpError("ENGINE_BINDINGS_CHANGED", "This Pi RPC session was opened for a different model binding; open a new session to change the model.", 409);
     }
     const tracker: RunTracker = { settle: deferred(), tools: new Map(), finalText: "", queue: Promise.resolve() };
     // A process exit during preflight may reject this deferred before run() reaches its terminal
@@ -253,18 +345,6 @@ export class PiSessionChannel implements EngineSessionChannel {
       }
       cancelled = cancelledBeforePrompt();
       if (cancelled !== undefined) return cancelled;
-      const requestedModelKey = modelKey(input.integration);
-      if (requestedModelKey !== this.currentModelKey) {
-        // The new model's provider/credential must exist in this session's models.json *before*
-        // pi is asked to switch to it (docs/models.md: the file "reloads each time you open
-        // /model"); writing it first avoids a race where `set_model` asks for a provider pi has
-        // not seen yet.
-        await writePiModelsConfig(this.paths, input.integration.model);
-        await this.client.send("set_model", { provider: input.integration.model.selection.providerID, model: input.integration.model.selection.modelID });
-        this.currentModelKey = requestedModelKey;
-      }
-      cancelled = cancelledBeforePrompt();
-      if (cancelled !== undefined) return cancelled;
       const text = input.request.parts.map((part) => part.text).join("\n");
       // The `prompt` response is acceptance evidence only; completion is decided below by
       // `agent_settled` (contracts.md §4), never by this await resolving.
@@ -280,12 +360,11 @@ export class PiSessionChannel implements EngineSessionChannel {
       }
       return { state: "failed", finish, quiescent: true, finalText: settled.finalText, nativeStopReason: settled.nativeStopReason, taskOutcome: "unknown" };
     } finally {
-      clearTimeout(tracker.fallbackTimer);
       this.active = undefined;
     }
   }
-  /** Acceptance of the abort command is not stop evidence (contracts.md §2); `run()` only
-   * returns once `agent_settled` (or the fallback above) actually observes the stop. */
+  /** Acceptance of the abort command is not stop evidence (contracts.md §2); `run()` only returns
+   * once `agent_settled` -- or the process exiting -- actually observes the stop. */
   async cancel(_reason: StopReason): Promise<void> {
     if (this.active !== undefined) this.active.cancelling = true;
     if (!this.client.running || this.active?.promptSubmitted !== true) return;

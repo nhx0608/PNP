@@ -16,14 +16,18 @@ export class PiPack implements EnginePack {
   async open(input: EngineOpenInput): Promise<EngineSessionChannel> {
     return openPiSession(input);
   }
-  /** The pi session file and tool bridge live inside `nativeDataDirectory`, which
-   * `GatewayCore.deleteSession` already removes; nothing lives outside it to purge. This hook
-   * only defends against a future layout change leaving an orphaned file elsewhere. */
+  /** The pi session file, the tool sidecar and this session's private pi config root all live
+   * inside `nativeDataDirectory`, which `GatewayCore.deleteSession` already removes; nothing lives
+   * outside it to purge. This hook only defends against a future layout change leaving an orphan.
+   *
+   * Neither file holds a resolved value any more -- both carry generated environment-variable
+   * names -- but the private config root still records this session's endpoint and header names,
+   * which should not outlive the session they were written for. The bridge extension itself is a
+   * build artefact in the gateway's own tree and is never copied here, so there is nothing of it
+   * to delete. */
   async purge(input: { nativeDataDirectory: string }): Promise<void> {
     const paths = resolveSessionPaths(input.nativeDataDirectory);
     await rm(paths.toolsFile, { force: true });
-    // Holds this session's private models.json (provider baseUrl + credential); must not
-    // outlive the session it was written for.
     await rm(paths.agentConfigDir, { force: true, recursive: true });
   }
 }
