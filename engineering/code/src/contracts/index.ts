@@ -190,6 +190,10 @@ export interface ResolvedModel {
   /** Never persist or log resolved model configuration. */
   headers: Readonly<Record<string, string>>;
   caFile?: string;
+  /** Last-resort switch for an internal endpoint whose certificate chain cannot be supplied as a
+   * `caFile`. An Engine Pack projects it onto whatever its engine process understands (Node
+   * engines: `NODE_TLS_REJECT_UNAUTHORIZED=0`); absent and `false` both mean normal verification. */
+  tlsInsecure?: boolean;
   /** Absent means the provider does not report a resolution; callers treat that as `exact`. */
   resolution?: ModelResolution;
 }
