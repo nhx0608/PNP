@@ -396,7 +396,10 @@ if (currentSessionId !== null) {
     // request carries for an opencode edit) would match no configured operation at all.
     assert(asked.entry.permission === "write",
       "the permission must be keyed on the tool name, not on the file being written", evidence.permission);
-    const named = [...evidence.permission.diff_paths, ...(evidence.permission.locations ?? []), evidence.permission.title];
+    // The specification's own `patterns` field counts: a driver that names the file there (the Pi policy
+    // bridge) tells the approver as much as ACP's locations/title do.
+    const named = [...evidence.permission.diff_paths, ...(evidence.permission.locations ?? []),
+      ...(evidence.permission.patterns ?? []), evidence.permission.title];
     evidence.permission.names_target = named.some((value) => typeof value === "string" && value.includes(writeFileName));
     assert(evidence.permission.names_target,
       "the payload must tell the approver which file is being written", evidence.permission);
@@ -449,7 +452,8 @@ if (currentSessionId !== null) {
       terminal_status: part.state?.terminalStatus ?? null,
       input_keys: part.input !== null && typeof part.input === "object" ? Object.keys(part.input) : null,
     }));
-    assert(observations.some((part) => part.input?.filepath === writeTarget || part.input?.filePath === writeTarget),
+    // The key is the engine's own: opencode's write tool says filePath, pi's says path.
+    assert(observations.some((part) => [part.input?.filepath, part.input?.filePath, part.input?.file_path, part.input?.path].includes(writeTarget)),
       "the observed tool input must preserve the exact file target", evidence.tool_observations);
     assert(observations.some((part) => ["completed", "failed"].includes(part.state?.status)),
       "the observed tool trajectory must reach an engine-reported terminal state", evidence.tool_observations);

@@ -486,6 +486,8 @@ export class GatewayCore {
                 message: { ...makeMessage("assistant", text), id: finalId, parts: [textPart(text)] } });
               properties.part = textPart(text);
             } else if (event.type === "tool.started") {
+              // The started/finished family names a call from the engine's explicit `name` field, so the
+              // trace records `nameSource: "name"` exactly as the observed family does for its named calls.
               const existing = tools.get(event.callId);
               if (existing?.family === "observed") throw new PnpError("ENGINE_PROTOCOL_ERROR", "Tool event families cannot be mixed.", 502);
               if (existing !== undefined) throw new PnpError("DUPLICATE_TOOL", "Duplicate tool identity.", 502);
@@ -494,7 +496,7 @@ export class GatewayCore {
               item.tool_calls = [{ id: event.callId, name: event.name, arguments: args }];
               item.info = { role: "assistant", finish: "tool-calls" };
               item.parts = [{ type: "tool", tool: event.name, callID: event.callId, input: args,
-                state: { status: "running", title: event.name } }];
+                state: { status: "running", title: event.name, nameSource: "name" } }];
               tools.set(event.callId, { family: "legacy", name: event.name, input: args, inputObserved: true,
                 message: item, canonical: true, terminal: false, terminalOutputObserved: false, outputPersisted: false,
                 status: "running" });
@@ -507,7 +509,7 @@ export class GatewayCore {
               if (tool === undefined || tool.terminal || tool.name === undefined) throw new PnpError("UNMATCHED_TOOL_UPDATE", "Tool is not active.", 502);
               properties.messageID = tool.message.id;
               properties.part = { type: "tool", tool: tool.name, callID: event.callId, input: tool.input ?? null,
-                state: { status: "running", title: redactor.text(event.title) } };
+                state: { status: "running", title: redactor.text(event.title), nameSource: "name" } };
             } else if (event.type === "tool.finished") {
               const tool = tools.get(event.callId);
               if (tool?.family === "observed") throw new PnpError("ENGINE_PROTOCOL_ERROR", "Tool event families cannot be mixed.", 502);
@@ -520,7 +522,7 @@ export class GatewayCore {
               item.tool_call_id = event.callId;
               item.tool_name = tool.name;
               const part: Json = { type: "tool", tool: tool.name, callID: event.callId, input: tool.input ?? null, output,
-                state: { status: event.failed ? "error" : "completed", title: tool.name, source: "engine" } };
+                state: { status: event.failed ? "error" : "completed", title: tool.name, source: "engine", nameSource: "name" } };
               tool.message.parts = [part];
               await this.store.call("appendMessage", { sessionId, runId: run.id, message: tool.message });
               await this.store.call("appendMessage", { sessionId, runId: run.id, message: item });

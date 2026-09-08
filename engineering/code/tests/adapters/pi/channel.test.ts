@@ -414,9 +414,11 @@ test("a get_state answer that carries a version fills in native.engineVersion", 
 
 test("a pnp: confirm becomes an operation-scoped permission request; other confirms stay generic", async () => {
   assert.deepEqual(policyInteraction("pnp:shell", JSON.stringify({ tool: "bash", operation: "shell", patterns: ["rd /s C:\\data"] })), {
-    kind: "permission", operation: "shell", payload: { patterns: ["rd /s C:\\data"], tool: "bash" },
+    kind: "permission", operation: "shell",
+    payload: { patterns: ["rd /s C:\\data"], tool: "bash", title: "bash rd /s C:\\data", locations: [{ path: "rd /s C:\\data" }] },
   });
-  assert.deepEqual(policyInteraction("pnp:external", "not json"), { kind: "permission", operation: "external", payload: { patterns: [], tool: "" } });
+  assert.deepEqual(policyInteraction("pnp:external", "not json"),
+    { kind: "permission", operation: "external", payload: { patterns: [], tool: "", title: "external", locations: [] } });
   assert.deepEqual(policyInteraction("Clear session?", "All messages will be lost."), {
     kind: "permission", operation: "pi.extension.confirm", payload: { title: "Clear session?", message: "All messages will be lost." },
   });
@@ -440,7 +442,8 @@ test("the in-pi policy hook's confirm is authorized by the gateway and answered 
   assert.equal(reply.type, "extension_ui_response");
   assert.equal(reply.id, "ui-1");
   assert.equal(reply.confirmed, false);
-  assert.deepEqual(interactRequests, [{ kind: "permission", operation: "write", payload: { patterns: ["C:\\out\\report.docx"], tool: "write" } }]);
+  assert.deepEqual(interactRequests, [{ kind: "permission", operation: "write",
+    payload: { patterns: ["C:\\out\\report.docx"], tool: "write", title: "write C:\\out\\report.docx", locations: [{ path: "C:\\out\\report.docx" }] } }]);
   process.push(JSON.stringify({ type: "agent_end", willRetry: false, messages: [{ role: "assistant", stopReason: "end_turn" }] }));
   process.push(JSON.stringify({ type: "agent_settled" }));
   await outcome;

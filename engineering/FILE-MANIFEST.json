@@ -251,8 +251,8 @@
       "path": "code/scripts/e2e/run-e2e.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 41541,
-      "sha256": "81dbea60917177239080ca41de426acb06130ad019071e5bab4c586f303c4ca9"
+      "bytes": 41885,
+      "sha256": "976ca43c2bbe6973a6e65fc89ebdb721457242e7b0efee9d3c1145db1da063c5"
     },
     {
       "path": "code/scripts/export-diagnostics.mjs",
@@ -412,8 +412,8 @@
       "path": "code/src/core/gateway-core.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 51520,
-      "sha256": "3f24c4d3f590edf59b88d65ae6700f8affe9a2c4e4aaf3ae5253453bf11b4c0e"
+      "bytes": 51795,
+      "sha256": "c22b7afca38009e6e15acaf3c94da80a7a4f459e64ccdffa02fb18a48b15a18a"
     },
     {
       "path": "code/src/core/interactions.ts",
@@ -482,8 +482,8 @@
       "path": "code/src/drivers/pi-rpc/channel.ts",
       "owner": "B",
       "category": "实现源码",
-      "bytes": 23286,
-      "sha256": "929205b3f14c8b93a643efe07aec9caf34d6c1745f5b6c7535392efb2bf9aaf4"
+      "bytes": 23661,
+      "sha256": "7bb636b9a86f8636614df183e328f80b7e94d2348de6d2be7ad2ac9c535f1513"
     },
     {
       "path": "code/src/drivers/pi-rpc/client.ts",
@@ -1042,8 +1042,8 @@
       "path": "code/tests/adapters/pi/channel.test.ts",
       "owner": "B",
       "category": "测试代码",
-      "bytes": 27148,
-      "sha256": "9d085c93ef2088ae6c02131598063aaffa22c0deb83a83b5e6eecee691c535c3"
+      "bytes": 27349,
+      "sha256": "1edf8dbd68d4e33f970e232af1f099d9b69a3b89a62d11c39f7d688120a507cf"
     },
     {
       "path": "code/tests/adapters/pi/client.test.ts",

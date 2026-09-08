@@ -147,3 +147,13 @@
 ## 6. 审计来源
 
 四份审计报告（HTTP 接口、模型配置、工具/指令/权限、安装/启动/打包，2026-09-08）与上游一手文档：pi `docs/models.md`（Value Resolution、Custom Headers）、`docs/extensions.md`（`tool_call` 阻断、RPC 模式 `hasUI=true`）、`docs/rpc.md`（`extension_ui_request` 超时）、`docs/windows.md`（Git Bash 默认、`powershell` 工具与 `defaultTools`）、README（`--tools`、`--append-system-prompt <text>`）；OpenCode `config.mdx`（`OPENCODE_CONFIG`/`OPENCODE_CONFIG_DIR`、`instructions`、`shell`）；仓库内 `docs/research/T02`/`T03`。
+
+## 7. 落地记录（2026-09-08）
+
+五个工作包全部合入 master：WP2 `54a2e02`、WP1 `e4403da`、WP4 `28d5371`、WP3 `935fd20`、WP5 `f8e779c`，集成修正 `a822db1` 及其后一提交。合入后的树：`npm run typecheck`、单元测试 447 项（442 通过、5 项 Windows 专属跳过）、契约测试 9 项、边界与 strip-only 检查、`npm run build` 全部通过。
+
+**真实引擎冒烟（本机 Linux，mock 模型服务，交付配置 `settings.json` 原样，含 Office MCP 与指令文件）：** OpenCode 1.18.29 17/18 通过（1 项按设计跳过）；Pi 0.85.1 17/18 通过（同一跳过项）——Pi 首次在真实二进制上走通"内建 `write` 工具 → `tool_call` 钩子 → 网关 `permission.asked{permission:"write", patterns:[目标]}` → `once`/`reject` 回复 → 文件写入/拒绝 → 204"，以及 abort → `finish:"cancelled"`。集成时补的三处：Pi 策略桥的授权载荷增加 `title`/`locations`（与 ACP 驱动同形）；核心对 started/finished 事件族的工具 part 记录 `nameSource:"name"`；冒烟脚本接受 pi 的 `path` 键与规范的 `patterns` 字段。
+
+**落地与方案的差异：** D3 中 `PNP_ALLOW_HTTP_MODEL_ENDPOINT` 实际命名为 `PNP_ALLOW_HTTP_ENDPOINTS`（模型端点与 MCP URL 共用一个开关）；Pi 不再发送 `set_model`，模型绑定变化一律 409 `ENGINE_BINDINGS_CHANGED`（评测下所有选择都映射到同一配置模型，不会触发）；Pi 的 `native.engineVersion` 在真实 0.85.1 上仍为 `unknown`（`get_state` 不带版本）；`gateway.ps1` 不再出现在裁判文档里；bundle 剔除 `opencode-windows-x64-baseline`（无 AVX2 的机器需按 `BUNDLE-MANIFEST.json` 里的命令补装）；bundle 实测 463 MiB（zip 151 MiB）。
+
+**仍未验证（需 Windows 真机）：** `pnp.cmd start/stop/selfcheck` 的 PowerShell 侧只做了结构审查；两引擎在真实 Windows 上对 `D:\test_data` 类中文绝对路径的端到端产物；Office 工具的 `app_open`；真实内网模型与 appid 头；WeLink 等内网 MCP（C 线）。CI 的 windows × pi 腿与 `pnp.cmd bootstrap --engine pi` 在本次推送后首次运行。

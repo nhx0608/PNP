@@ -148,7 +148,10 @@ export function policyInteraction(title: string | undefined, message: string | u
       if (Array.isArray(record.patterns)) patterns = record.patterns.filter((value): value is string => typeof value === "string");
     }
   } catch { /* A malformed message still authorizes: the operation from the title is what decides. */ }
-  return { kind: "permission", operation, payload: { patterns, tool } };
+  // `patterns` is the specification's field for the target; `title` and `locations` give an approver
+  // the same picture the ACP driver publishes for an engine-side permission (tool + files named).
+  const label: string = patterns.length > 0 ? `${tool || operation} ${patterns[0] ?? ""}` : (tool || operation);
+  return { kind: "permission", operation, payload: { patterns, tool, title: label, locations: patterns.map((path) => ({ path })) } };
 }
 
 /** One PNP gateway Session = one long-lived `pi --mode rpc` process + one pi session file.
