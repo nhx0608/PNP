@@ -79,6 +79,35 @@ pnp.cmd selfcheck --engine opencode
 
 该命令准备依赖后，用**内置的本地模拟模型服务**跑一遍完整链路（建会话、发提示词、工具调用、权限回环、中止、并发），最后打印 `[pnp] SELFCHECK PASS` 或 `FAIL`，退出码 0 表示通过。它不使用上面配置的真实模型，也不联网，可先于模型配置执行。把 `--engine opencode` 换成 `--engine pi` 可同样验证第二个引擎。
 
+### 1.4b 用真实模型自测（可选）
+
+1.4 的 `selfcheck` 用的是内置模拟模型，不碰真实模型服务。按 1.3 配好变量之后，可以再跑一次真实模型的自测，确认"网关 + 引擎 + 这个模型"整条链路能跑通：
+
+```bat
+cd /d D:\pnp\solution\code
+pnp.cmd livecheck --engine opencode
+```
+
+它按 1.3 的变量启动网关（进程环境或 `code\runtime\local.env`；两处都缺 `PNP_MODEL_ENDPOINT` 或 `PNP_MODEL_ID` 时直接拒绝执行并指出缺哪个变量），然后对**真实模型**依次验证：
+
+1. `/health/ready` 就绪；事件流可连接（收到 `server.connected`，所有帧写入 `events.jsonl`）。
+2. 建会话（默认新建一个临时工作目录，`--directory D:\test_data` 可指定）与 `GET /session/status` 的 `{会话号:{"type":"idle"}}` 形状。
+3. 让模型在工作目录里写一个带随机标记的文件：`prompt_async` 返回 204、文件确实存在且内容含该标记、轨迹满足第 3 节的完成三条件、事件流出现 `session.status` 的 busy → idle、`session.idle` 与 `message.part.updated`。
+4. 在**同一个会话**里追问该文件的内容：返回 204、最终回复里含那个标记（同时证明会话历史连续和模型确实读了文件）、`GET /session/{id}` 的 `message_count` 增长、`GET /session/{id}/message` 的 user/assistant/tool 记录顺序正确。
+5. 发一个长任务并中止：`POST /session/{id}/abort` 返回 `{"ok":true}`、被中止的 `prompt_async` 返回 204（若该轮尚未开始则是 `409 EXECUTION_CANCELLED`，报告里会写明是哪一种）、轨迹最后一条 assistant 为 `finish:"cancelled"` 且无 `step-finish`、会话回到 idle。模型在中止到达前就把长任务做完时，这一项记 `[SKIP]` 并说明原因。
+6. `GET /question` 与 `GET /permission` 返回数组（默认配置下为空）。
+7. `DELETE /session/{id}` 返回 `{"ok":true}`，且任务产物文件仍在。
+
+每项打印一行 `[PASS]` / `[FAIL]` / `[SKIP]`，最后打印 `{"total":…,"passed":…,"failed":…}` 与 `[pnp] LIVECHECK PASS`（或 `FAIL`），退出码 0 表示通过。失败打印的是 HTTP 状态码与响应体或断言证据，不会只说一句"失败"。证据（`events.jsonl`、每轮轨迹 `messages-<n>.json`、网关日志、`summary.json`）写在结尾打印的产物目录里；单轮提示词上限 10 分钟（`--prompt-timeout-ms` 可调）。换引擎同样用 `--engine pi`。
+
+这一项同时也在考察模型本身：模型不支持工具调用、或不按提示词把文件写到指定路径时，第 3、4 项会 `[FAIL]`，那说明的是该模型不适合本任务，而不是网关故障。
+
+模型变量还没写好时，可以先用交互式的 `pnp.cmd config` 把它们写进 `code\runtime\local.env`（密钥输入不回显，只打印变量名，文件里其他行保持不动）；也可以一次写完：
+
+```bat
+pnp.cmd config --endpoint https://主机/v1 --model 模型名称 --api-key 凭据
+```
+
 ### 1.5 只有从源码运行时才需要的镜像变量
 
 本包已自带全部依赖，正常无需下列变量；仅当在**未打包的源码**上运行时才需要：`npm_config_registry`（内网 npm 镜像）、`PNP_NODE_DOWNLOAD_URL`（内网镜像上的 `node-v24.19.0-win-x64.zip`，仍按固定 SHA-256 校验）、`PNP_NODE_HOME`（本机已装的 Node.js 24.19+ 目录，用它代替下载）。
