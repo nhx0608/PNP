@@ -2,6 +2,7 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { loadLocalEnvironment } from "./config/local-env.ts";
 import { StateStore } from "./storage/store.ts";
 import { GatewayCore } from "./core/gateway-core.ts";
 import { buildApp } from "./gateway/app.ts";
@@ -20,6 +21,28 @@ function duration(name: string, fallback: number, minimum: number, maximum: numb
   const value = Number(raw);
   if (!Number.isInteger(value) || value < minimum || value > maximum) throw new PnpError("VALIDATION_ERROR", `Invalid ${name}.`, 400);
   return value;
+}
+
+/**
+ * Whether a `question` from the engine waits for a client reply. The delivery runs unattended, so
+ * `auto` is the default: the question is still recorded and published, and the gateway answers it
+ * immediately instead of blocking the run until the interaction deadline expires.
+ */
+function questionPolicy(): "auto" | "ask" {
+  const raw = process.env.PNP_QUESTION_POLICY;
+  if (raw === undefined || raw.trim() === "") return "auto";
+  const value = raw.trim();
+  if (value !== "auto" && value !== "ask") throw new PnpError("VALIDATION_ERROR", "Invalid PNP_QUESTION_POLICY.", 400);
+  return value;
+}
+
+// The deployment's own environment file, before anything reads a variable. `gateway.cmd`, `npm
+// start` and `pnp.cmd` then all see the same environment: the launcher used to be the only route
+// that loaded this file, so a gateway started any other way ran without the deployment's model
+// configuration. A variable the process already carries wins, and only NAMES are printed.
+const localEnvironment = await loadLocalEnvironment();
+if (localEnvironment.present) {
+  console.log(JSON.stringify({ event: "local-env.loaded", file: localEnvironment.file, names: localEnvironment.names }));
 }
 
 const args = parseArgs({ options: { engine: { type: "string" }, port: { type: "string" }, host: { type: "string" } } });
@@ -81,6 +104,7 @@ try {
   const core = new GatewayCore(state, engine, provider, {
     dataDirectory: data, maxResidentSessions: capacity, processHost,
     runTimeoutMs, openTimeoutMs, cancelGraceMs, interactionTimeoutMs, runQueueLimit,
+    questionPolicy: questionPolicy(),
   });
   app = buildApp(core);
   process.once("SIGINT", () => { void shutdown().catch(() => { process.exitCode = 1; }); });

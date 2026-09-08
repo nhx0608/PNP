@@ -74,9 +74,11 @@
 | 503 | `SERVICE_UNAVAILABLE`、`STORAGE_UNAVAILABLE`、`STORAGE_BACKPRESSURE`、`EXECUTION_UNCERTAIN`、`HOST_START_FAILED`、`HOST_FAILURE`、`HOST_CAPACITY`、`RESOURCE_SCOPE_CLOSED`、`ENGINE_UNAVAILABLE`、`ENGINE_CONFIGURATION_ERROR`、`INTEGRATION_UNAVAILABLE` | 不可用。`ENGINE_CONFIGURATION_ERROR` 是运维配置错误（引擎路径、启动参数），HTTP 调用方改请求也修不了，因此与 `MODEL_ENVIRONMENT_MISSING` 同为 503 而不是 400。`SERVICE_UNAVAILABLE` 只在存储不可用或关机排空时出现；`EXECUTION_UNCERTAIN` 只描述当前请求的会话，不改变 `/health/ready`；`HOST_CAPACITY` 只在淘汰空闲通道也失败时出现 |
 | 504 | `DEADLINE_EXCEEDED`、`EXECUTION_TIMEOUT` | 超时 |
 
-### 3.3 待定
+### 3.3 abort 后的返回码（已决）
 
-用户主动 abort 后，被中止的 `prompt_async` 返回 204 还是 409 `EXECUTION_CANCELLED`，尚未拍板。轨迹在两种返回下都如实记录 `finish=cancelled`，不构成伪造成功。决策人 A；截止条件：共享加固批次 CR-14 合入前，并同步写入 `INSTRUCTION.md`。
+用户主动 abort 后，被中止的 `prompt_async` 返回 **204**。停止是调用方自己要求的，且已被证实，因此对该请求而言是正常结束；轨迹如实记录最终助手消息 `info.finish=cancelled` 且不带 `step-finish`，`session.status idle` 与 `session.idle` 照常发布，不构成伪造成功。
+
+只有"调用方要求的停止"走这一条：deadline 仍为 504 `EXECUTION_TIMEOUT`，关机排空仍为 503 `SERVICE_UNAVAILABLE`，排队中被 abort 的请求（尚未创建 Run）仍按 3.1 以 409 `EXECUTION_CANCELLED` 结束。无法证实停止时以 503 `EXECUTION_UNCERTAIN` 结束，并在返回前发布 `session.error{code:"EXECUTION_UNCERTAIN"}`，使只看 SSE 的客户端不会永远等待一个不会到来的 idle。
 
 ### 3.4 启动阶段错误
 
@@ -156,6 +158,8 @@ Core 调用 `cancel()` 后，Driver 必须在宽限期内让进行中的 `run()`
 
 ToolBinding 的 executable、args、env 来自可信配置。工具凭据与模型请求头一样按轮解析，不在启动时常驻。用户输入只能作为结构化工具参数，不得拼接成 shell 命令字符串。CLI 参数是否幂等和是否有外部副作用由 C 声明；未知提交结果不重试。
 
+`ResolvedModel` 的 `headers` 是本轮已解析的取值（含设置文件按变量名声明的凭据、附加头与 `Authorization`），`caFile` 是本模型需要信任的 PEM 绝对路径，`tlsInsecure` 是部署显式要求不校验证书（1.1.0 新增，可选，缺省即校验，Adapter 不得自行推断）。三者都不落盘、不入日志、不进错误消息。
+
 ToolBinding 按 transport 分两形：`mcp-stdio`/`cli`/`native` 由网关本地拉起，带 `command`、`args`、`env`；`mcp-http` 是 Streamable HTTP 的远端 MCP 服务器，带 `url` 与 `headers`，两者都是**已解析的取值**而不是变量名，与模型请求头同级，不落盘、不入日志、不进错误消息。字段随 transport 存在，Adapter 不能把一种 transport 的绑定投影成另一种；原生通道声明不支持时按第 8 节记为不可用并明示丢弃，不静默改道。
 
 ## 7. 交互规则
@@ -166,9 +170,9 @@ ToolBinding 按 transport 分两形：`mcp-stdio`/`cli`/`native` 由网关本地
 
 `GET /permission` 的条目与 `permission.asked` 事件是同一个权限对象：`{id, sessionID, permission, patterns, created_at}` 加驱动载荷（`title`、`name`、`kind`、`locations`、`rawInput`、`content`、`options` 等），网关标识排在最后，不被引擎载荷覆盖。`permission` 是策略可写的工具名（取名规则同第 4 节，与轨迹一致）。`patterns` 是本次请求涉及的路径数组，永远存在：驱动按 `locations[].path` → `rawInput` 的 `filepath`/`filePath`/`path` → 引擎把 title 当作路径使用时的 title 依次取值，保序去重；引擎没有指明任何路径时为空数组。`patterns` 只转述引擎请求里已有的事实，网关不推断、不补写目标，也不因缺少 `patterns` 拒绝或改写请求。question 的载荷形状不受本段约束。
 
-`InteractionResponse.source` 标明决定来源：`policy` 为组织策略直接裁决，`user` 为回复接口提交，`timeout` 为等待过期，`cancelled` 为 Run 取消或终止清理等待者。`reasonCode` 携带非敏感原因码。Adapter 据此区分组织拒绝与无人应答，把两者映射为各自引擎的原生拒绝原因；组织拒绝依然不可被用户回复覆盖。
+`InteractionResponse.source` 标明决定来源：`policy` 为组织策略直接裁决，`user` 为回复接口提交，`timeout` 为等待过期，`cancelled` 为 Run 取消或终止清理等待者，`auto` 为网关在无人值守问答策略下自答，`remembered` 为本会话内用户已 `always` 许可的同一操作。`reasonCode` 携带非敏感原因码。Adapter 据此区分组织拒绝与无人应答，把两者映射为各自引擎的原生拒绝原因；组织拒绝依然不可被用户回复覆盖。
 
-`always` 不得自动升级为跨租户、跨会话或长期组织授权。系统可把它限制为当前操作许可；所有范围扩张必须由 C 的策略层明确允许。取消与 Run 终止清理等待者，不能留下阻塞 Promise。
+`always` 不得自动升级为跨租户、跨会话或长期组织授权。网关把它记为"本会话 + 本操作"的许可（后续同一操作以 `source:"remembered"` 直接 allow），不下发给引擎作为原生 allow_always，也不覆盖组织 deny；所有范围扩张必须由 C 的策略层明确允许。取消与 Run 终止清理等待者，不能留下阻塞 Promise。
 
 ## 8. 资产与原生扩展
 

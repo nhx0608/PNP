@@ -145,3 +145,18 @@ test("the shipped config/engines/opencode.json matches the real OpenCode distrib
   // Nothing here has been observed on the Windows target yet, so nothing claims to be verified.
   assert.notEqual(config.capabilityEvidence, "verified");
 });
+
+test("the shipped redirect list privatises OpenCode's own directories and nothing of the user profile", async () => {
+  const config = await loadOpenCodeEngineConfig({});
+  // OpenCode resolves its global directories as XDG_<X>_HOME || <home>/<default>, with no platform branch, so
+  // these four are the whole of its own state: config, data (database, logs), cache and state (locks).
+  assert.deepEqual(Object.keys(config.redirect.variables).sort(),
+    ["XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"]);
+  // The profile variables must never come back: Office COM and Outlook, and anything else the model launches,
+  // need the real per-user state of whoever runs the gateway (docs/competition-readiness.md B8/D4).
+  for (const variable of ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"]) {
+    assert.equal(variable in config.redirect.variables, false, `${variable} must not be redirected`);
+  }
+  // Every value is a single relative segment: the Pack roots them under nativeDataDirectory/opencode itself.
+  for (const value of Object.values(config.redirect.variables)) assert.match(value, /^[a-z-]+$/);
+});

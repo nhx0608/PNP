@@ -3,8 +3,7 @@
   "common": {
     "model": {
       "default": {
-        "providerID": "competition",
-        "modelID": "default"
+        "providerID": "competition"
       },
       "models": [
         {
@@ -12,33 +11,12 @@
             "providerID": "competition",
             "modelID": "default"
           },
+          "modelIDEnvironment": "PNP_MODEL_ID",
           "endpointEnvironment": "PNP_MODEL_ENDPOINT",
           "protocol": "openai-chat",
-          "headerEnvironment": {
-            "Authorization": "PNP_MODEL_AUTHORIZATION"
-          }
-        },
-        {
-          "selection": {
-            "providerID": "his",
-            "modelID": "GLM-V5.1-DX"
-          },
-          "endpointEnvironment": "PNP_HIS_MODEL_ENDPOINT",
-          "protocol": "openai-chat",
-          "headerEnvironment": {
-            "Authorization": "PNP_HIS_AUTHORIZATION"
-          }
-        },
-        {
-          "selection": {
-            "providerID": "his",
-            "modelID": "Qwen-V3.6-27B-DX"
-          },
-          "endpointEnvironment": "PNP_HIS_MODEL_ENDPOINT",
-          "protocol": "openai-chat",
-          "headerEnvironment": {
-            "Authorization": "PNP_HIS_AUTHORIZATION"
-          }
+          "apiKeyEnvironment": "PNP_MODEL_API_KEY",
+          "headersEnvironment": "PNP_MODEL_HEADERS",
+          "caFileEnvironment": "PNP_MODEL_CA_FILE"
         }
       ]
     },
@@ -46,8 +24,21 @@
       "default": "allow",
       "operations": {}
     },
+    "instructions": [
+      "instructions/competition.md"
+    ],
     "mcp": {
-      "servers": {}
+      "servers": {
+        "office": {
+          "transport": "stdio",
+          "command": "${PNP_NODE}",
+          "args": [
+            "${PNP_CODE_ROOT}/dist/tools/office-mcp/main.js"
+          ],
+          "sideEffect": "write",
+          "enabled": true
+        }
+      }
     }
   },
   "cores": {

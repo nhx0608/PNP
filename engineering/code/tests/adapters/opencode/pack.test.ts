@@ -1,11 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { OpenCodePack } from "../../../src/engines/opencode/pack.ts";
+import { createHash } from "node:crypto";
+import { OpenCodePack, PROXY_ENVIRONMENT_VARIABLES, proxyEnvironment } from "../../../src/engines/opencode/pack.ts";
 import type {
-  EngineOpenInput, IntegrationContext, ProcessHost, ResourceScope, Session, StopEvidence,
+  AssetBinding, EngineOpenInput, IntegrationContext, ProcessHost, ResolvedModel, ResourceScope, Session,
+  StopEvidence,
 } from "../../../src/contracts/index.ts";
 import type { HostedProcess, LaunchSpec } from "../../../src/contracts/host.ts";
 import { removeTree } from "../../kit/fs.ts";
@@ -97,6 +99,31 @@ async function fakeExecutable(root: string): Promise<string> {
   await writeFile(executable, "", "utf8");
   return executable;
 }
+/** Writes one instruction file and the AssetBinding WP1's ConfiguredIntegration produces for it. */
+async function instructionAsset(sourceRoot: string, id: string, filename: string, content: string): Promise<AssetBinding> {
+  const file = path.join(sourceRoot, id, filename);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, content, "utf8");
+  return { id, kind: "instruction", path: file, sha256: createHash("sha256").update(content).digest("hex"), required: true };
+}
+/** Opens one session through the Pack and hands the resulting LaunchSpec to the caller, then closes it. */
+async function withLaunchSpec(
+  root: string, nativeDataDirectory: string, integration: IntegrationContext,
+  body: (spec: LaunchSpec) => Promise<void>,
+): Promise<void> {
+  const host = new FakeProcessHost();
+  const input: EngineOpenInput = {
+    host, session: fakeSession(path.join(root, "workspace")), nativeDataDirectory,
+    integration, resources: new FakeResourceScope(), signal: new AbortController().signal,
+  };
+  const channel = await new OpenCodePack().open(input);
+  try {
+    assert.equal(host.launched.length, 1);
+    await body(host.launched[0]!.spec);
+  } finally {
+    await channel.close();
+  }
+}
 /** Sets engine env vars for one test and restores exactly what was there before, including "was unset". */
 async function withEnvironment(values: Record<string, string | undefined>, body: () => Promise<void>): Promise<void> {
   const previous = new Map<string, string | undefined>();
@@ -152,10 +179,22 @@ test("open() launches the resolved executable with just the ACP subcommand and r
         assert.equal(parsed["model"], "acme-internal/acme-large-v3");
         assert.equal(parsed["share"], "disabled");
 
-        // The fallback config homes still exist, and the profile redirects still point into the private tree.
-        assert.ok(spec.env["HOME"]?.startsWith(nativeDataDirectory));
-        const mirrored = await readFile(path.join(spec.env["HOME"]!, ".config", "opencode", "opencode.json"), "utf8");
+        // The private config directory is the documented "Custom directory" step, and the fallback config home
+        // mirror is byte-identical to the file OPENCODE_CONFIG names.
+        const configDirectory = spec.env["OPENCODE_CONFIG_DIR"];
+        assert.equal(configDirectory, path.join(nativeDataDirectory, "opencode", "config"));
+        assert.ok(spec.env["XDG_CONFIG_HOME"]?.startsWith(nativeDataDirectory));
+        const mirrored = await readFile(path.join(spec.env["XDG_CONFIG_HOME"]!, "opencode", "opencode.json"), "utf8");
         assert.equal(mirrored, text);
+
+        // The user profile is NOT redirected any more: Office COM and Outlook need the real per-user state of
+        // whoever runs the gateway, and the private profile they used to see broke exactly that.
+        for (const variable of ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"]) {
+          assert.equal(variable in spec.env, false, `${variable} must not be redirected by the Pack`);
+        }
+        // question is off in the generated config, and external_directory is explicitly allowed.
+        assert.deepEqual(parsed["tools"], { question: false });
+        assert.deepEqual(parsed["permission"], { external_directory: "allow" });
       } finally {
         await channel.close();
       }
@@ -189,14 +228,23 @@ test("open() projects the context's permission policy into the private config, a
       };
 
       // A gateway policy of "ask" on write must become a native prompt: without it OpenCode allows the edit on
-      // its own and the gateway is never asked to hold it.
+      // its own and the gateway is never asked to hold it. external_directory rides along because the policy
+      // default is allow and nothing named that operation (see buildNativePermissionConfig).
       assert.deepEqual(
         await permissionOf(fakeIntegration({ permissions: { default: "allow", operations: { write: "ask" } } }),
           path.join(root, "native-ask")),
-        { edit: "ask" },
+        { edit: "ask", external_directory: "allow" },
       );
-      // A provider that publishes no policy has nothing to project; the block stays out of the file entirely.
-      assert.equal(await permissionOf(fakeIntegration(), path.join(root, "native-none")), undefined);
+      // A provider that publishes no policy leaves the Pack on its allow-everything default, which still has to
+      // say external_directory explicitly: OpenCode's own default for it is `ask`, and nobody is at the keyboard.
+      assert.deepEqual(await permissionOf(fakeIntegration(), path.join(root, "native-none")),
+        { external_directory: "allow" });
+      // A policy that does name it keeps exactly what the operator asked for.
+      assert.deepEqual(
+        await permissionOf(fakeIntegration({ permissions: { default: "allow", operations: { external_directory: "ask" } } }),
+          path.join(root, "native-external-ask")),
+        { external_directory: "ask" },
+      );
     });
   } finally {
     await removeTree(root);
@@ -248,4 +296,127 @@ test("open() fails before any process starts when a required asset kind has no n
   } finally {
     await removeTree(root);
   }
+});
+
+test("one instruction asset yields an instructions entry that points at a readable file", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pnp-opencode-pack-"));
+  const executable = await fakeExecutable(root);
+  try {
+    await withEnvironment({ PNP_OPENCODE_EXECUTABLE_KIND: undefined, PNP_OPENCODE_EXE_PATH: executable }, async () => {
+      const nativeDataDirectory = path.join(root, "native-one-instruction");
+      const workspace = path.join(root, "workspace");
+      const text = "Never ask the user a question. Write artefacts to the absolute path you were given.\n";
+      const asset = await instructionAsset(path.join(root, "source-one"), "inst-competition", "COMPETITION.md", text);
+      await withLaunchSpec(root, nativeDataDirectory, fakeIntegration({ assets: [asset] }), async (spec) => {
+        const parsed = JSON.parse(await readFile(spec.env["OPENCODE_CONFIG"]!, "utf8")) as { instructions?: string[] };
+        assert.equal(parsed.instructions?.length, 1, "the projected instruction must reach the generated config");
+        const entry = parsed.instructions![0]!;
+        assert.ok(path.isAbsolute(entry), `${entry} must be absolute: OpenCode resolves a relative entry against the config file`);
+        // The path in the config is the copy this Pack made, inside the private tree and never in the workspace.
+        assert.ok(entry.startsWith(nativeDataDirectory + path.sep));
+        assert.ok(!entry.startsWith(workspace + path.sep));
+        assert.equal(await readFile(entry, "utf8"), text, "the file the engine will read must exist with the asset's content");
+      });
+    });
+  } finally {
+    await removeTree(root);
+  }
+});
+
+test("several instruction assets each reach the config as their own readable file", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pnp-opencode-pack-"));
+  const executable = await fakeExecutable(root);
+  try {
+    await withEnvironment({ PNP_OPENCODE_EXECUTABLE_KIND: undefined, PNP_OPENCODE_EXE_PATH: executable }, async () => {
+      const nativeDataDirectory = path.join(root, "native-many-instructions");
+      const sourceRoot = path.join(root, "source-many");
+      // The third asset deliberately repeats the second one's basename: the per-asset-id directory is what keeps
+      // two instruction files from overwriting each other, and both must survive into the config.
+      const assets = [
+        await instructionAsset(sourceRoot, "inst-competition", "COMPETITION.md", "one\n"),
+        await instructionAsset(sourceRoot, "inst-office", "GUIDE.md", "two\n"),
+        await instructionAsset(sourceRoot, "inst-shell", "GUIDE.md", "three\n"),
+      ];
+      await withLaunchSpec(root, nativeDataDirectory, fakeIntegration({ assets }), async (spec) => {
+        const parsed = JSON.parse(await readFile(spec.env["OPENCODE_CONFIG"]!, "utf8")) as { instructions?: string[] };
+        assert.equal(parsed.instructions?.length, 3, "no instruction asset may be dropped or collapsed");
+        assert.equal(new Set(parsed.instructions).size, 3, "two assets must never share one target path");
+        const contents: string[] = [];
+        for (const entry of parsed.instructions!) {
+          assert.ok(path.isAbsolute(entry));
+          contents.push(await readFile(entry, "utf8"));
+        }
+        assert.deepEqual(contents, ["one\n", "two\n", "three\n"], "order and content follow the assets as they arrived");
+      });
+    });
+  } finally {
+    await removeTree(root);
+  }
+});
+
+test("the child gets the model's CA file, the TLS opt-out only when the model asks for it, and the gateway's proxy", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pnp-opencode-pack-"));
+  const executable = await fakeExecutable(root);
+  const caFile = path.join(root, "internal-ca.pem");
+  await writeFile(caFile, "", "utf8");
+  const modelWith = (overrides: Partial<ResolvedModel>): ResolvedModel => ({
+    selection: { providerID: "acme-internal", modelID: "acme-large-v3" },
+    protocol: "openai-chat",
+    endpoint: "https://model.internal.example.invalid/v1",
+    headers: {},
+    ...overrides,
+  });
+  try {
+    await withEnvironment({
+      PNP_OPENCODE_EXECUTABLE_KIND: undefined, PNP_OPENCODE_EXE_PATH: executable,
+      HTTP_PROXY: "http://proxy.internal.example.invalid:8080",
+      HTTPS_PROXY: "http://proxy.internal.example.invalid:8080",
+      NO_PROXY: "localhost,127.0.0.1",
+      http_proxy: undefined, https_proxy: undefined, no_proxy: undefined,
+    }, async () => {
+      // A CA file alone must never imply the opt-out: a deployment that supplied a CA still wants verification.
+      await withLaunchSpec(root, path.join(root, "native-ca"), fakeIntegration({ model: modelWith({ caFile }) }), async (spec) => {
+        assert.equal(spec.env["NODE_EXTRA_CA_CERTS"], caFile);
+        assert.equal("NODE_TLS_REJECT_UNAUTHORIZED" in spec.env, false);
+        // Proxy configuration is host configuration, not a credential: the child needs the same route out.
+        assert.equal(spec.env["HTTP_PROXY"], "http://proxy.internal.example.invalid:8080");
+        assert.equal(spec.env["HTTPS_PROXY"], "http://proxy.internal.example.invalid:8080");
+        assert.equal(spec.env["NO_PROXY"], "localhost,127.0.0.1");
+        assert.equal("http_proxy" in spec.env, false, "an unset variable must not be exported as an empty string");
+      });
+      // tlsInsecure is the only thing that turns verification off, and only when it is exactly true.
+      await withLaunchSpec(root, path.join(root, "native-insecure"),
+        fakeIntegration({ model: modelWith({ caFile, tlsInsecure: true }) }), async (spec) => {
+          assert.equal(spec.env["NODE_TLS_REJECT_UNAUTHORIZED"], "0");
+          assert.equal(spec.env["NODE_EXTRA_CA_CERTS"], caFile);
+        });
+      await withLaunchSpec(root, path.join(root, "native-secure"),
+        fakeIntegration({ model: modelWith({ tlsInsecure: false }) }), async (spec) => {
+          assert.equal("NODE_TLS_REJECT_UNAUTHORIZED" in spec.env, false);
+          assert.equal("NODE_EXTRA_CA_CERTS" in spec.env, false, "no caFile means no trust-store extension");
+        });
+    });
+    // With no proxy in the gateway's own environment the child gets none either -- nothing is invented.
+    await withEnvironment({
+      PNP_OPENCODE_EXECUTABLE_KIND: undefined, PNP_OPENCODE_EXE_PATH: executable,
+      ...Object.fromEntries(PROXY_ENVIRONMENT_VARIABLES.map((name) => [name, undefined])),
+    }, async () => {
+      await withLaunchSpec(root, path.join(root, "native-no-proxy"), fakeIntegration(), async (spec) => {
+        for (const name of PROXY_ENVIRONMENT_VARIABLES) assert.equal(name in spec.env, false, `${name} must not be invented`);
+      });
+    });
+  } finally {
+    await removeTree(root);
+  }
+});
+
+test("proxyEnvironment copies both cases, skips what is unset, and never invents a value", () => {
+  assert.deepEqual(proxyEnvironment({}), {});
+  assert.deepEqual(proxyEnvironment({
+    HTTP_PROXY: "http://a.invalid:1", https_proxy: "http://b.invalid:2", NO_PROXY: "", no_proxy: "localhost",
+    SOME_OTHER: "kept out",
+  }), { HTTP_PROXY: "http://a.invalid:1", https_proxy: "http://b.invalid:2", no_proxy: "localhost" });
+  // The list itself is part of the contract with the shared host, whose allow-list carries none of these.
+  assert.deepEqual([...PROXY_ENVIRONMENT_VARIABLES],
+    ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]);
 });

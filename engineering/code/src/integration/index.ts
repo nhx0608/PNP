@@ -1,11 +1,10 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import type {
   AuthorizationDecision, CommandToolBinding, IntegrationProvider, ModelSelection, PermissionEffect,
   PermissionPolicy, ToolBinding, ToolSideEffect,
 } from "../contracts/index.ts";
-import { loadPnpSettings, parseSettingsModel, parseSettingsSelection, validateRemoteUrl } from "../config/settings.ts";
+import { CODE_ROOT, loadPnpSettings, parseSettingsModel, parseSettingsSelection, resolveCodePath, validateRemoteUrl } from "../config/settings.ts";
 import type {
   EffectiveSettings, McpServerSettings, McpStreamableHttpServerSettings, SettingsModelDefinition,
 } from "../config/settings.ts";
@@ -18,9 +17,6 @@ type IntegrationKind = "internal" | "configured" | "mock";
 type JsonObject = Record<string, unknown>;
 type Effect = PermissionEffect;
 const EFFECTS: readonly Effect[] = ["allow", "deny", "ask"];
-/** `src/integration/` in the source tree and `dist/integration/` in a build both sit one level
- *  below the package root, so the shipped profile is found the same way in either. */
-const codeRoot = fileURLToPath(new URL("../../", import.meta.url));
 /**
  * The integration is shipped configuration, not a code delivery: an operator who follows
  * INSTRUCTION.md gets this profile and the shipped settings without setting anything
@@ -30,7 +26,7 @@ const codeRoot = fileURLToPath(new URL("../../", import.meta.url));
  * public repository holds no deployment address. Those values only ever exist in the process
  * environment, and `probeIntegration` refuses to start when one of them is missing.
  */
-export const DEFAULT_CONFIGURED_PROFILE = path.join(codeRoot, "config", "competition-profile.json");
+export const DEFAULT_CONFIGURED_PROFILE = path.join(CODE_ROOT, "config", "competition-profile.json");
 
 function object(value: unknown, label: string): JsonObject {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -65,6 +61,37 @@ function modelKey(selection: ModelSelection): string {
 }
 function configuredModels(values: readonly SettingsModelDefinition[]): ConfiguredModel[] {
   return values.map((entry) => ({ ...entry }));
+}
+/** An environment variable that holds nothing but blanks names no model, endpoint or path; every
+ *  consumer here treats it as unset rather than sending a blank identifier to an endpoint. */
+function unset(value: string | undefined): boolean {
+  return value === undefined || value.trim() === "";
+}
+/**
+ * `modelIDEnvironment` applied once, at load: the identifier the intranet endpoint expects is the
+ * deployment's fact, not this repository's, so the settings name a variable and the value replaces
+ * `selection.modelID` before anything else sees the catalog. One identifier then travels through the
+ * whole gateway — `model.resolved`, the trajectory and the driver all show what actually ran.
+ *
+ * The declared default is rewritten with it, because it names the entry by its settings identifier;
+ * leaving it behind would silently bind the deployment to whichever entry happened to be listed
+ * first. An entry whose variable is absent keeps its declared identifier and fails when a prompt
+ * actually selects it (ConfiguredIntegration.modelIdOf); the effective default fails earlier, at the
+ * startup probe, because nothing can run without it.
+ */
+function applyModelIdentifierEnvironment(
+  models: readonly ConfiguredModel[], defaultSelection: ModelSelection, environment: NodeJS.ProcessEnv,
+): { models: ConfiguredModel[]; defaultSelection: ModelSelection } {
+  const substituted = new Map<string, ModelSelection>();
+  const resolved = models.map((entry) => {
+    if (entry.modelIDEnvironment === undefined) return entry;
+    const value = environment[entry.modelIDEnvironment];
+    if (unset(value)) return entry;
+    const selection: ModelSelection = { providerID: entry.selection.providerID, modelID: value!.trim() };
+    substituted.set(modelKey(entry.selection), selection);
+    return { ...entry, selection };
+  });
+  return { models: resolved, defaultSelection: substituted.get(modelKey(defaultSelection)) ?? defaultSelection };
 }
 /** Legacy profile/model-settings parsing keeps the old public error code even though it reuses the new parser. */
 function parseLegacyModel(value: unknown, label: string): SettingsModelDefinition {
@@ -191,7 +218,9 @@ function mcpServerUrl(server: McpStreamableHttpServerSettings, environment: Node
   if (raw === undefined || raw === "") {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "Required tool environment variable is absent.", 503);
   }
-  try { return validateRemoteUrl(raw, `mcp.servers.${server.id}.url`); }
+  // The same environment the rest of this load reads, so `PNP_ALLOW_HTTP_ENDPOINTS` means the same
+  // thing for a variable-backed MCP address as it does for a literal one in the settings file.
+  try { return validateRemoteUrl(raw, `mcp.servers.${server.id}.url`, environment); }
   catch (error) {
     if (error instanceof PnpError && error.code === "SETTINGS_INVALID") {
       throw new PnpError("INTEGRATION_CONFIG_INVALID", error.message, 400);
@@ -260,13 +289,15 @@ export async function loadIntegration(input: {
   // https or loopback — the same trust model as the internal provider. A real (non-mock) engine
   // must have a usable model path in a non-development deployment, and configured is currently the
   // only one that is actually implemented.
-  // An unset PNP_CONFIGURED_PROFILE (or an empty one) means the shipped profile; an explicit
-  // absolute path still wins. PNP_SETTINGS works the same way for the unified settings file.
+  // An unset PNP_CONFIGURED_PROFILE (or an empty one) means the shipped profile; a path the
+  // deployment names wins. PNP_SETTINGS works the same way for the unified settings file.
   const environment = input.environment ?? process.env;
   const explicitProfile = input.configuredProfile !== undefined && input.configuredProfile.trim() !== "";
   const explicitSettings = input.settingsPath !== undefined && input.settingsPath.trim() !== "";
-  const profilePath = explicitProfile ? input.configuredProfile! : DEFAULT_CONFIGURED_PROFILE;
-  if (!path.isAbsolute(profilePath)) throw new PnpError("INTEGRATION_CONFIG_INVALID", "PNP_CONFIGURED_PROFILE must be an absolute path.", 400);
+  // A deployment names this file relative to the package root when it keeps it inside the delivery:
+  // the unpack location is not known when the value is written. An absolute path is used as given,
+  // and an empty value is not a path at all — it means the shipped profile (`explicitProfile`).
+  const profilePath = explicitProfile ? resolveCodePath(input.configuredProfile!.trim()) : DEFAULT_CONFIGURED_PROFILE;
   const profile = object(await readJson(profilePath, "Configured integration profile"), "profile");
   exactKeys(profile, ["models", "tools", "policy"], "profile");
   const rawTools = profile.tools ?? [];
@@ -293,20 +324,25 @@ export async function loadIntegration(input: {
     unified ??= await loadPnpSettings({ engineId: input.engineId ?? "", settingsPath: input.settingsPath });
     return unified;
   };
-  let models: ConfiguredModel[];
-  let defaultSelection: ModelSelection;
-  if (legacyModelSettings !== undefined) ({ models, defaultSelection } = legacyModelSettings);
-  else if (legacyModels !== undefined) { models = legacyModels; defaultSelection = legacyModels[0]!.selection; }
+  let declaredModels: ConfiguredModel[];
+  let declaredDefault: ModelSelection;
+  if (legacyModelSettings !== undefined) ({ models: declaredModels, defaultSelection: declaredDefault } = legacyModelSettings);
+  else if (legacyModels !== undefined) { declaredModels = legacyModels; declaredDefault = legacyModels[0]!.selection; }
   else {
     const effective = await settings();
-    models = configuredModels(effective.model.models);
-    defaultSelection = effective.model.default;
+    declaredModels = configuredModels(effective.model.models);
+    declaredDefault = effective.model.default;
   }
+  const { models, defaultSelection } = applyModelIdentifierEnvironment(declaredModels, declaredDefault, environment);
   const configuredPolicy = legacyPolicy ?? (await settings()).permissions;
 
   const tools: ToolBinding[] = legacyOnly
     ? rawTools.map((value) => tool(value, environment))
     : mcpToolBindings((await settings()).mcp.servers, environment);
+  // Instruction files follow the same rule as the tools above: a deployment that names its own
+  // legacy profile without an explicit PNP_SETTINGS is the whole source, and that profile shape has
+  // no instructions. Every other deployment takes them from the unified settings file.
+  const instructions = legacyOnly ? [] : (await settings()).instructions;
   if (new Set(tools.map((entry) => entry.id)).size !== tools.length) {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "Tool identifiers must be unique.", 400);
   }
@@ -328,7 +364,7 @@ export async function loadIntegration(input: {
   // R2). A deployment that would rather answer 403 sets PNP_MODEL_STRICT=1.
   const strictModel = environment.PNP_MODEL_STRICT === "1";
   return new ConfiguredIntegration(
-    models, tools, decide, environment, strictModel, defaultSelection, permissionPolicy,
+    models, tools, decide, environment, strictModel, defaultSelection, permissionPolicy, instructions,
   );
 }
 

@@ -153,8 +153,13 @@ export interface InteractionRequest {
 export interface InteractionResponse {
   decision: "allow" | "deny" | "answer";
   answers?: string[][];
-  /** Lets an adapter separate an organisation refusal from an unanswered request. */
-  source?: "policy" | "user" | "timeout" | "cancelled";
+  /**
+   * Lets an adapter separate an organisation refusal from an unanswered request. `auto` is the
+   * gateway answering a question itself under an unattended question policy, and `remembered` is a
+   * permission the user already allowed for this session and operation; both are still gateway
+   * decisions, and neither can override an organisational deny.
+   */
+  source?: "policy" | "user" | "timeout" | "cancelled" | "auto" | "remembered";
   reasonCode?: string;
 }
 export interface AuthorizationDecision {
@@ -189,10 +194,13 @@ export interface ResolvedModel {
   endpoint?: string;
   /** Never persist or log resolved model configuration. */
   headers: Readonly<Record<string, string>>;
+  /** Absolute path of a PEM bundle the engine process must trust for this endpoint. */
   caFile?: string;
-  /** Last-resort switch for an internal endpoint whose certificate chain cannot be supplied as a
-   * `caFile`. An Engine Pack projects it onto whatever its engine process understands (Node
-   * engines: `NODE_TLS_REJECT_UNAUTHORIZED=0`); absent and `false` both mean normal verification. */
+  /**
+   * Contract 1.1.0, additive and optional: the deployment asked for certificate verification to be
+   * switched off for this model (`PNP_MODEL_TLS_INSECURE=1`). It is a last-resort deployment
+   * decision, never a default and never inferred from a failed handshake; absent means verify.
+   */
   tlsInsecure?: boolean;
   /** Absent means the provider does not report a resolution; callers treat that as `exact`. */
   resolution?: ModelResolution;
