@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
+import { constants } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ModelSelection, PermissionEffect, PermissionPolicy, ToolSideEffect } from "../contracts/index.ts";
@@ -11,7 +12,21 @@ export interface SettingsModelDefinition {
   endpoint?: string;
   endpointEnvironment?: string;
   protocol: "openai-chat" | "anthropic-messages";
+  /** Request header name -> environment variable NAME. Every variable named here is required. */
   headerEnvironment: Readonly<Record<string, string>>;
+  /** Variable holding the model name the endpoint expects; it replaces `selection.modelID` at load. */
+  modelIDEnvironment?: string;
+  /** Variable holding a bare credential, sent as `Authorization: Bearer <value>` when nothing else set one. */
+  apiKeyEnvironment?: string;
+  /** Variable holding a JSON object of additional request headers (an appid header, for instance). */
+  headersEnvironment?: string;
+  /** Variable holding the path of a PEM bundle; a relative path resolves against the package root. */
+  caFileEnvironment?: string;
+}
+/** A `model.default` entry: `modelID` may be omitted when the provider has exactly one model. */
+export interface SettingsDefaultSelection {
+  providerID: string;
+  modelID?: string;
 }
 export interface McpStdioServerSettings {
   id: string;
@@ -42,6 +57,8 @@ export interface EffectiveSettings {
     models: readonly SettingsModelDefinition[];
   };
   permissions: PermissionPolicy;
+  /** Instruction files for this Core, absolute and readable, in declaration order. */
+  instructions: readonly string[];
   mcp: {
     servers: readonly McpServerSettings[];
   };
@@ -50,8 +67,47 @@ export interface EffectiveSettings {
 type JsonObject = Record<string, unknown>;
 const EFFECTS: readonly PermissionEffect[] = ["allow", "deny", "ask"];
 const SIDE_EFFECTS: readonly ToolSideEffect[] = ["read", "write", "external"];
-const codeRoot = fileURLToPath(new URL("../../", import.meta.url));
-export const DEFAULT_SETTINGS = path.join(codeRoot, "config", "settings.json");
+/** `src/config/` in the source tree and `dist/config/` in a build both sit one level below the
+ *  package root, so this is the directory holding package.json in either shape. It comes from this
+ *  module's own location, never from the working directory a launcher happened to start in. */
+export const CODE_ROOT = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
+export const DEFAULT_SETTINGS = path.join(CODE_ROOT, "config", "settings.json");
+/**
+ * A path a deployment supplies may be written relative to the package root, the one directory it
+ * can name without knowing where the delivery was unpacked; an absolute path is used as given. An
+ * empty or whitespace-only value is not a path at all, and every caller treats it as unset rather
+ * than letting it resolve to the package root itself.
+ */
+export function resolveCodePath(value: string): string {
+  return path.isAbsolute(value) ? path.normalize(value) : path.resolve(CODE_ROOT, value);
+}
+/**
+ * The transport rule shared by model endpoints and remote MCP servers: `https` anywhere, `http` on
+ * loopback, and never credentials in the URL. An intranet endpoint that only speaks plain HTTP is a
+ * deployment decision rather than a default, so one switch — `PNP_ALLOW_HTTP_ENDPOINTS=1` — opens it
+ * for both kinds of address at once instead of leaving two half-configured surfaces.
+ */
+const LOOPBACK = ["localhost", "127.0.0.1", "[::1]"];
+export function isApprovedEndpoint(url: URL, environment: NodeJS.ProcessEnv = process.env): boolean {
+  if (url.username !== "" || url.password !== "") return false;
+  if (url.protocol === "https:") return true;
+  if (url.protocol !== "http:") return false;
+  return LOOPBACK.includes(url.hostname) || environment.PNP_ALLOW_HTTP_ENDPOINTS === "1";
+}
+/**
+ * The two placeholders a settings file may use where a path is required: the package root, so the
+ * shipped file can point at a tool inside the delivery without knowing where it was unpacked, and
+ * the running Node executable, so it can start one without a PATH lookup. Anything else is refused
+ * rather than passed through — a credential belongs in `env`/`headerEnvironment` by variable name,
+ * never expanded into a command line.
+ */
+function expandPlaceholders(value: string, label: string): string {
+  return value.replace(/\$\{([^}]*)\}/g, (_match, name: string) => {
+    if (name === "PNP_CODE_ROOT") return CODE_ROOT;
+    if (name === "PNP_NODE") return process.execPath;
+    throw new PnpError("SETTINGS_INVALID", `${label} uses an unsupported placeholder \${${name}}.`, 400);
+  });
+}
 
 function object(value: unknown, label: string): JsonObject {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -118,7 +174,20 @@ export function parseSettingsSelection(value: unknown, label = "model selection"
     modelID: nonEmptyString(item.modelID, `${label}.modelID`),
   };
 }
+/**
+ * The default may name only its provider. A deployment that ships one model per provider then says
+ * so once, instead of repeating an identifier that the environment replaces at load anyway
+ * (`modelIDEnvironment`). Which entry it means is decided against the effective catalog, not here.
+ */
+function parseDefaultSelection(value: unknown, label: string): SettingsDefaultSelection {
+  const item = object(value, label);
+  exactKeys(item, ["providerID", "modelID"], label);
+  const providerID = nonEmptyString(item.providerID, `${label}.providerID`);
+  if (!Object.hasOwn(item, "modelID")) return { providerID };
+  return { providerID, modelID: nonEmptyString(item.modelID, `${label}.modelID`) };
+}
 function headerEnvironment(value: unknown, label: string): Readonly<Record<string, string>> {
+  if (value === undefined) return {};
   const item = object(value, label);
   return Object.fromEntries(Object.entries(item).map(([name, variable]) => [
     name,
@@ -132,9 +201,14 @@ function headerEnvironment(value: unknown, label: string): Readonly<Record<strin
  * moment it resolves (ConfiguredIntegration.endpointOf), because its value exists only in the
  * process environment.
  */
-export function parseSettingsModel(value: unknown, label = "model"): SettingsModelDefinition {
+export function parseSettingsModel(
+  value: unknown, label = "model", environment: NodeJS.ProcessEnv = process.env,
+): SettingsModelDefinition {
   const item = object(value, label);
-  exactKeys(item, ["selection", "endpoint", "endpointEnvironment", "protocol", "headerEnvironment"], label);
+  exactKeys(item, [
+    "selection", "endpoint", "endpointEnvironment", "protocol", "headerEnvironment",
+    "modelIDEnvironment", "apiKeyEnvironment", "headersEnvironment", "caFileEnvironment",
+  ], label);
   const protocol = nonEmptyString(item.protocol, `${label}.protocol`);
   if (protocol !== "openai-chat" && protocol !== "anthropic-messages") {
     throw new PnpError("SETTINGS_INVALID", `${label}.protocol is unsupported.`, 400);
@@ -144,10 +218,18 @@ export function parseSettingsModel(value: unknown, label = "model"): SettingsMod
   if (hasEndpoint === hasEndpointEnvironment) {
     throw new PnpError("SETTINGS_INVALID", `${label} needs exactly one of endpoint and endpointEnvironment.`, 400);
   }
+  const modelIDEnvironment = item.modelIDEnvironment;
+  const apiKeyEnvironment = item.apiKeyEnvironment;
+  const headersEnvironment = item.headersEnvironment;
+  const caFileEnvironment = item.caFileEnvironment;
   const common = {
     selection: parseSettingsSelection(item.selection, `${label}.selection`),
     protocol,
     headerEnvironment: headerEnvironment(item.headerEnvironment, `${label}.headerEnvironment`),
+    ...(modelIDEnvironment === undefined ? {} : { modelIDEnvironment: nonEmptyString(modelIDEnvironment, `${label}.modelIDEnvironment`) }),
+    ...(apiKeyEnvironment === undefined ? {} : { apiKeyEnvironment: nonEmptyString(apiKeyEnvironment, `${label}.apiKeyEnvironment`) }),
+    ...(headersEnvironment === undefined ? {} : { headersEnvironment: nonEmptyString(headersEnvironment, `${label}.headersEnvironment`) }),
+    ...(caFileEnvironment === undefined ? {} : { caFileEnvironment: nonEmptyString(caFileEnvironment, `${label}.caFileEnvironment`) }),
   } as const;
   if (hasEndpointEnvironment) {
     return { ...common, endpointEnvironment: nonEmptyString(item.endpointEnvironment, `${label}.endpointEnvironment`) };
@@ -156,8 +238,7 @@ export function parseSettingsModel(value: unknown, label = "model"): SettingsMod
   let url: URL;
   try { url = new URL(endpoint); }
   catch { throw new PnpError("SETTINGS_INVALID", `${label}.endpoint must be a valid URL.`, 400); }
-  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
-  if (!(url.protocol === "https:" || (url.protocol === "http:" && loopback)) || url.username || url.password) {
+  if (!isApprovedEndpoint(url, environment)) {
     throw new PnpError("SETTINGS_INVALID", `${label}.endpoint is not an approved transport.`, 400);
   }
   return { ...common, endpoint };
@@ -200,20 +281,22 @@ function parseCorePermissions(value: unknown, engineId: string): PartialPermissi
 }
 
 interface ModelSection {
-  default?: ModelSelection;
+  default?: SettingsDefaultSelection;
   models: SettingsModelDefinition[];
 }
-function parseModelSection(value: unknown, label: string, requireDefault: boolean): ModelSection {
+function parseModelSection(
+  value: unknown, label: string, requireDefault: boolean, environment: NodeJS.ProcessEnv,
+): ModelSection {
   const item = object(value, label);
   exactKeys(item, ["default", "models"], label);
-  const defaultSelection = item.default === undefined ? undefined : parseSettingsSelection(item.default, `${label}.default`);
+  const defaultSelection = item.default === undefined ? undefined : parseDefaultSelection(item.default, `${label}.default`);
   if (requireDefault && defaultSelection === undefined) {
     throw new PnpError("SETTINGS_INVALID", `${label}.default is required.`, 400);
   }
   let models: SettingsModelDefinition[] = [];
   if (item.models !== undefined) {
     if (!Array.isArray(item.models)) throw new PnpError("SETTINGS_INVALID", `${label}.models must be an array.`, 400);
-    models = item.models.map((entry, index) => parseSettingsModel(entry, `${label}.models[${index}]`));
+    models = item.models.map((entry, index) => parseSettingsModel(entry, `${label}.models[${index}]`, environment));
   }
   if (requireDefault && models.length === 0) {
     throw new PnpError("SETTINGS_INVALID", `${label}.models requires at least one model.`, 400);
@@ -229,6 +312,50 @@ function mergeModels(common: readonly SettingsModelDefinition[], core: readonly 
   const merged = new Map(common.map((entry) => [modelKey(entry.selection), entry]));
   for (const entry of core) merged.set(modelKey(entry.selection), entry);
   return [...merged.values()];
+}
+/**
+ * The effective default as one concrete selection. A default that names only its provider means the
+ * single entry that provider has: with none there is nothing to run, and with several the file has
+ * not said which, and guessing would silently bind a deployment to whichever entry was listed first.
+ */
+function resolveDefaultSelection(
+  selection: SettingsDefaultSelection, models: readonly SettingsModelDefinition[], engineId: string,
+): ModelSelection {
+  if (selection.modelID !== undefined) {
+    const wanted = { providerID: selection.providerID, modelID: selection.modelID };
+    if (!models.some((entry) => modelKey(entry.selection) === modelKey(wanted))) {
+      throw new PnpError("SETTINGS_INVALID", `Effective default model for ${engineId} is not configured.`, 400);
+    }
+    return wanted;
+  }
+  const candidates = models.filter((entry) => entry.selection.providerID === selection.providerID);
+  if (candidates.length !== 1) {
+    throw new PnpError("SETTINGS_INVALID",
+      `Effective default model for ${engineId} names a provider with ${candidates.length} models; name modelID.`, 400);
+  }
+  return { ...candidates[0]!.selection };
+}
+/**
+ * Instruction files, in declaration order, as absolute paths. They are written relative to the
+ * directory holding the settings file — the file and the text it points at travel together — and an
+ * absolute path is honoured for a deployment that keeps its instructions elsewhere. A Core's list
+ * REPLACES the common one rather than extending it, so a Core can also state "no instructions".
+ */
+function parseInstructions(value: unknown, label: string, settingsDirectory: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new PnpError("SETTINGS_INVALID", `${label} must be an array of paths.`, 400);
+  return value.map((entry, index) => {
+    const file = nonEmptyString(entry, `${label}[${index}]`);
+    return path.isAbsolute(file) ? path.normalize(file) : path.resolve(settingsDirectory, file);
+  });
+}
+/** The file a settings entry names is part of the deployment, so the failure names it: it is
+ *  configuration an operator wrote, never a credential and never a caller's input. */
+async function assertInstructionsReadable(files: readonly string[]): Promise<void> {
+  for (const file of files) {
+    try { await access(file, constants.R_OK); }
+    catch { throw new PnpError("SETTINGS_INVALID", `Instruction file is missing or unreadable: ${file}`, 400); }
+  }
 }
 
 function mcpServerObjects(value: unknown, label: string): JsonObject {
@@ -256,17 +383,16 @@ function mergedServerObject(baseValue: unknown, overrideValue: unknown, label: s
  * the integration layer resolves at load. `label` names the setting, never the value: a deployment
  * address must not reach an error message.
  */
-export function validateRemoteUrl(raw: string, label: string): string {
+export function validateRemoteUrl(raw: string, label: string, environment: NodeJS.ProcessEnv = process.env): string {
   let url: URL;
   try { url = new URL(raw); }
   catch { throw new PnpError("SETTINGS_INVALID", `${label} must be a valid URL.`, 400); }
-  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
-  if (!(url.protocol === "https:" || (url.protocol === "http:" && loopback)) || url.username || url.password) {
+  if (!isApprovedEndpoint(url, environment)) {
     throw new PnpError("SETTINGS_INVALID", `${label} is not an approved transport.`, 400);
   }
   return raw;
 }
-function parseMcpServer(id: string, value: unknown, label: string): McpServerSettings {
+function parseMcpServer(id: string, value: unknown, label: string, environment: NodeJS.ProcessEnv): McpServerSettings {
   if (id.length === 0) throw new PnpError("SETTINGS_INVALID", `${label} server id must be non-empty.`, 400);
   const item = object(value, label);
   exactKeys(item, [
@@ -281,8 +407,11 @@ function parseMcpServer(id: string, value: unknown, label: string): McpServerSet
     if (item.url !== undefined || item.urlEnvironment !== undefined || item.headerEnvironment !== undefined) {
       throw new PnpError("SETTINGS_INVALID", `${label} stdio server cannot define HTTP fields.`, 400);
     }
-    const command = nonEmptyString(item.command, `${label}.command`);
-    const args = optionalStringArray(item.args, `${label}.args`);
+    // Expanded before anything else looks at them: the absolute-command rule and every later
+    // consumer see the real path, and a shipped settings file can point inside the delivery.
+    const command = expandPlaceholders(nonEmptyString(item.command, `${label}.command`), `${label}.command`);
+    const args = optionalStringArray(item.args, `${label}.args`)
+      .map((argument, index) => expandPlaceholders(argument, `${label}.args[${index}]`));
     const env = optionalStringMap(item.env, `${label}.env`);
     return {
       id, transport, command, args, env, enabled, sideEffect,
@@ -306,15 +435,18 @@ function parseMcpServer(id: string, value: unknown, label: string): McpServerSet
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
       };
     }
+    const url = expandPlaceholders(nonEmptyString(item.url, `${label}.url`), `${label}.url`);
     return {
-      id, transport, url: validateRemoteUrl(nonEmptyString(item.url, `${label}.url`), `${label}.url`),
+      id, transport, url: validateRemoteUrl(url, `${label}.url`, environment),
       headerEnvironment: headerEnv, enabled, sideEffect,
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
     };
   }
   throw new PnpError("SETTINGS_INVALID", `${label}.transport must be stdio or streamable-http.`, 400);
 }
-function resolveMcp(commonValue: unknown, coreValue: unknown, engineId: string): McpServerSettings[] {
+function resolveMcp(
+  commonValue: unknown, coreValue: unknown, engineId: string, environment: NodeJS.ProcessEnv,
+): McpServerSettings[] {
   const commonServers = mcpServerObjects(commonValue, "common.mcp");
   const coreServers = mcpServerObjects(coreValue, `cores.${engineId}.mcp`);
   const ids = [...new Set([...Object.keys(commonServers), ...Object.keys(coreServers)])];
@@ -322,6 +454,7 @@ function resolveMcp(commonValue: unknown, coreValue: unknown, engineId: string):
     id,
     mergedServerObject(commonServers[id], coreServers[id], `mcp.servers.${id}`),
     `effective.mcp.servers.${id}`,
+    environment,
   ));
 }
 
@@ -329,10 +462,11 @@ async function readSettingsFile(file: string): Promise<unknown> {
   try { return JSON.parse(await readFile(file, "utf8")); }
   catch { throw new PnpError("SETTINGS_INVALID", "PNP settings could not be loaded.", 400); }
 }
+/** An unset or empty `PNP_SETTINGS` means the shipped file; anything else is a path, and a relative
+ *  one is taken from the package root so a deployment can write `config/settings.json`. */
 function settingsPath(explicit: string | undefined): string {
   if (explicit === undefined || explicit.trim() === "") return DEFAULT_SETTINGS;
-  if (!path.isAbsolute(explicit)) throw new PnpError("SETTINGS_INVALID", "PNP_SETTINGS must be an absolute path.", 400);
-  return explicit;
+  return resolveCodePath(explicit.trim());
 }
 
 /**
@@ -342,34 +476,48 @@ function settingsPath(explicit: string | undefined): string {
  * A Core can therefore disable or partially override a common MCP server without copying the whole definition.
  * This layer preserves environment-variable NAMES; it never resolves model or MCP secrets.
  */
-export async function loadPnpSettings(input: { engineId: string; settingsPath?: string }): Promise<EffectiveSettings> {
+export async function loadPnpSettings(input: {
+  engineId: string;
+  settingsPath?: string;
+  environment?: NodeJS.ProcessEnv;
+}): Promise<EffectiveSettings> {
+  const environment = input.environment ?? process.env;
   const file = settingsPath(input.settingsPath);
+  const directory = path.dirname(file);
   const root = object(await readSettingsFile(file), "settings");
   exactKeys(root, ["version", "common", "cores"], "settings");
   if (root.version !== 1) throw new PnpError("SETTINGS_INVALID", "settings.version must be 1.", 400);
 
   const common = object(root.common, "common");
-  exactKeys(common, ["model", "permissions", "mcp"], "common");
-  const commonModel = parseModelSection(common.model, "common.model", true);
+  exactKeys(common, ["model", "permissions", "instructions", "mcp"], "common");
+  const commonModel = parseModelSection(common.model, "common.model", true, environment);
   const commonPermissions = parseCommonPermissions(common.permissions);
+  const commonInstructions = parseInstructions(common.instructions, "common.instructions", directory) ?? [];
 
   const cores = object(root.cores, "cores");
   for (const [engineId, value] of Object.entries(cores)) {
     const core = object(value, `cores.${engineId}`);
-    exactKeys(core, ["model", "permissions", "mcp"], `cores.${engineId}`);
-    if (core.model !== undefined) parseModelSection(core.model, `cores.${engineId}.model`, false);
+    exactKeys(core, ["model", "permissions", "instructions", "mcp"], `cores.${engineId}`);
+    if (core.model !== undefined) parseModelSection(core.model, `cores.${engineId}.model`, false, environment);
     parseCorePermissions(core.permissions, engineId);
-    resolveMcp(common.mcp, core.mcp, engineId);
+    parseInstructions(core.instructions, `cores.${engineId}.instructions`, directory);
+    resolveMcp(common.mcp, core.mcp, engineId, environment);
   }
 
   const selected = cores[input.engineId] === undefined ? undefined : object(cores[input.engineId], `cores.${input.engineId}`);
-  const coreModel = selected?.model === undefined ? { models: [] } : parseModelSection(selected.model, `cores.${input.engineId}.model`, false);
+  const coreModel = selected?.model === undefined ? { models: [] } : parseModelSection(selected.model, `cores.${input.engineId}.model`, false, environment);
   const corePermissions = parseCorePermissions(selected?.permissions, input.engineId);
   const models = mergeModels(commonModel.models, coreModel.models);
-  const defaultSelection = coreModel.default ?? commonModel.default;
-  if (defaultSelection === undefined || !models.some((entry) => modelKey(entry.selection) === modelKey(defaultSelection))) {
+  const declaredDefault = coreModel.default ?? commonModel.default;
+  if (declaredDefault === undefined) {
     throw new PnpError("SETTINGS_INVALID", `Effective default model for ${input.engineId} is not configured.`, 400);
   }
+  const defaultSelection = resolveDefaultSelection(declaredDefault, models, input.engineId);
+  const instructions = parseInstructions(selected?.instructions, `cores.${input.engineId}.instructions`, directory)
+    ?? commonInstructions;
+  // Checked once, here, so a deployment that misspelled a path learns it at startup instead of
+  // handing the engine an instruction set that silently lost a file.
+  await assertInstructionsReadable(instructions);
 
   return {
     model: { default: defaultSelection, models },
@@ -377,6 +525,7 @@ export async function loadPnpSettings(input: { engineId: string; settingsPath?: 
       default: corePermissions.default ?? commonPermissions.default,
       operations: { ...commonPermissions.operations, ...corePermissions.operations },
     },
-    mcp: { servers: resolveMcp(common.mcp, selected?.mcp, input.engineId) },
+    instructions,
+    mcp: { servers: resolveMcp(common.mcp, selected?.mcp, input.engineId, environment) },
   };
 }

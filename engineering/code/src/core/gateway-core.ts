@@ -10,7 +10,7 @@ import type { RecoverySummary } from "../runtime/recovery.ts";
 import { LocalProcessHost } from "../runtime/process-host.ts";
 import { StateStore } from "../storage/store.ts";
 import { EventJournal } from "./journal.ts";
-import { InteractionBroker } from "./interactions.ts";
+import { InteractionBroker, type QuestionPolicy } from "./interactions.ts";
 import { PnpError, asPnpError } from "./errors.ts";
 import { bounded, deferred } from "../runtime/deadline.ts";
 import { OwnedResourceScope } from "../runtime/resource-scope.ts";
@@ -38,6 +38,8 @@ export interface CoreOptions {
   interactionTimeoutMs?: number;
   maxResidentSessions?: number;
   runQueueLimit?: number;
+  /** `auto` (the default) answers a question itself; `ask` waits for a client reply. See QuestionPolicy. */
+  questionPolicy?: QuestionPolicy;
 }
 const makeMessage = (role: Message["role"], content: string): Message => ({
   id: randomUUID(), role, content, created_at: new Date().toISOString(),
@@ -227,9 +229,10 @@ export class GatewayCore {
       interactionTimeoutMs: options.interactionTimeoutMs ?? 45_000,
       maxResidentSessions: options.maxResidentSessions ?? 16,
       runQueueLimit: options.runQueueLimit ?? 8,
+      questionPolicy: options.questionPolicy ?? "auto",
     };
     this.journal = new EventJournal(store);
-    this.interactions = new InteractionBroker(store, this.journal, this.options.interactionTimeoutMs);
+    this.interactions = new InteractionBroker(store, this.journal, this.options.interactionTimeoutMs, this.options.questionPolicy);
   }
   async initialize(): Promise<void> {
     await this.store.call("recover", null);
@@ -737,8 +740,17 @@ export class GatewayCore {
           for (const part of message.parts) {
             await this.journal.publish("message.part.updated", { sessionID: sessionId, runID: ctx.runId, messageID: finalId, part });
           }
-          if (failure !== undefined) await this.journal.publish("session.error", { sessionID: sessionId, runID: ctx.runId,
-            error: { message: failure.message, code: failure.code } });
+          // Every run that published `busy` publishes its ending: `idle` when the stop is proven, and
+          // otherwise the uncertainty itself, under the very code the HTTP caller receives. An
+          // unproven stop used to publish either nothing or a plain cancellation, so a client that
+          // watches only the event stream waited for an idle that was never coming.
+          if (!quiescent) {
+            await this.journal.publish("session.error", { sessionID: sessionId, runID: ctx.runId,
+              error: { message: "Execution stop is unverified.", code: "EXECUTION_UNCERTAIN" } });
+          } else if (failure !== undefined) {
+            await this.journal.publish("session.error", { sessionID: sessionId, runID: ctx.runId,
+              error: { message: failure.message, code: failure.code } });
+          }
           if (quiescent) {
             await this.journal.publish("session.status", { sessionID: sessionId, runID: ctx.runId, status: { type: "idle" } });
             await this.journal.publish("session.idle", { sessionID: sessionId, runID: ctx.runId });
@@ -770,7 +782,11 @@ export class GatewayCore {
     }
     // An unproven stop is the more severe fact and must not be reported as a plain cancellation.
     if (!quiescent) throw new PnpError("EXECUTION_UNCERTAIN", "Execution stop is unverified.", 503);
-    if (failure !== undefined) throw failure;
+    // A user's own abort is answered 204 (contracts.md section 3.3): the caller asked for the stop,
+    // it was proven, and the trajectory records `finish: cancelled` with no step-finish, so nothing
+    // is claimed to have succeeded. A deadline, a shutdown drain and every engine failure keep their
+    // own status: only the stop this caller asked for is a normal ending.
+    if (failure !== undefined && !(ctx.reason === "user" && failure.code === "EXECUTION_CANCELLED")) throw failure;
   }
   private stopError(reason: StopReason): PnpError {
     return new PnpError(reason === "deadline" ? "EXECUTION_TIMEOUT" : "EXECUTION_CANCELLED",
@@ -801,6 +817,9 @@ export class GatewayCore {
   async deleteSession(id: string): Promise<void> {
     if (this.deleting.has(id)) throw new PnpError("SESSION_BUSY", "Session deletion is already active.", 409);
     this.deleting.add(id);
+    // An `always` approval is scoped to the session that gave it; a later session with a recycled
+    // identifier must start from the policy, never from someone else's answer.
+    this.interactions.forgetSession(id);
     try {
       const session = await this.getSession(id);
       if (session.engineId !== this.engineId || session.channelId !== this.channelId) throw new PnpError("ENGINE_SESSION_MISMATCH", "Use the session's engine channel to delete it.", 409);

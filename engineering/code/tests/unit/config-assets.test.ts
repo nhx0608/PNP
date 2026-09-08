@@ -171,12 +171,21 @@ test("a real engine defaults to the shipped settings, which name its endpoint an
   // The settings hold the model, and hold it by variable NAME: no endpoint literal, no credential.
   assert.match(DEFAULT_SETTINGS, /settings\.json$/);
   const effective = await loadPnpSettings({ engineId: "opencode" });
+  // The shipped default names only its provider; the single entry of that provider is what it means.
   assert.deepEqual(effective.model.default, { providerID: "competition", modelID: "default" });
-  const first = effective.model.models.find((entry) => entry.selection.modelID === "default");
+  assert.equal(effective.model.models.length, 1);
+  const first = effective.model.models[0];
   assert.equal(first?.endpoint, undefined);
   assert.equal(first?.endpointEnvironment, "PNP_MODEL_ENDPOINT");
-  assert.deepEqual(first?.headerEnvironment, { Authorization: "PNP_MODEL_AUTHORIZATION" });
+  assert.equal(first?.modelIDEnvironment, "PNP_MODEL_ID");
+  assert.equal(first?.apiKeyEnvironment, "PNP_MODEL_API_KEY");
+  assert.equal(first?.headersEnvironment, "PNP_MODEL_HEADERS");
+  assert.equal(first?.caFileEnvironment, "PNP_MODEL_CA_FILE");
+  assert.deepEqual(first?.headerEnvironment, {});
   assert.deepEqual(effective.permissions, { default: "allow", operations: {} });
+  // The delivery's own behaviour instructions travel with the settings file.
+  assert.equal(effective.instructions.length, 1);
+  assert.match(effective.instructions[0]!, /competition\.md$/);
 
   // A non-mock engine with nothing configured: the integration loads, and only a variable the
   // settings name — not an unimplemented provider — can stop the gateway from starting.
@@ -187,11 +196,15 @@ test("a real engine defaults to the shipped settings, which name its endpoint an
     const failure = error as { code: string; message: string };
     assert.equal(failure.code, "MODEL_ENVIRONMENT_MISSING");
     assert.match(failure.message, /PNP_MODEL_ENDPOINT/);
-    assert.match(failure.message, /PNP_MODEL_AUTHORIZATION/);
+    assert.match(failure.message, /PNP_MODEL_ID/);
     return true;
   });
-  // Both variables present: startup passes and the endpoint the variable holds is the one used.
-  const environment = { PNP_MODEL_ENDPOINT: "http://127.0.0.1:9000/v1", PNP_MODEL_AUTHORIZATION: "Bearer not-a-secret" };
+  // The required variables present: startup passes, the endpoint the variable holds is the one used,
+  // and the model identifier the endpoint expects has replaced the one the settings file declared.
+  const environment = {
+    PNP_MODEL_ENDPOINT: "http://127.0.0.1:9000/v1", PNP_MODEL_ID: "endpoint-model",
+    PNP_MODEL_API_KEY: "not-a-secret",
+  };
   const ready = await loadIntegration({ kind: undefined, development: false, engineDevelopmentOnly: false, environment });
   await probeIntegration(ready);
   const context = await ready.prepare({
@@ -200,7 +213,9 @@ test("a real engine defaults to the shipped settings, which name its endpoint an
     request: { parts: [{ type: "text", text: "test" }], model: { providerID: "competition", modelID: "default" } },
     signal: new AbortController().signal });
   assert.equal(context.model.endpoint, "http://127.0.0.1:9000/v1");
+  assert.deepEqual(context.model.selection, { providerID: "competition", modelID: "endpoint-model" });
   assert.equal(context.model.headers.Authorization, "Bearer not-a-secret");
+  assert.deepEqual(context.assets.map((asset) => asset.kind), ["instruction"]);
   // The endpoint safety rule applies to whatever the variable holds, not only to a literal.
   const insecure = await loadIntegration({ kind: "configured", development: false, engineDevelopmentOnly: false,
     environment: { ...environment, PNP_MODEL_ENDPOINT: "http://model.example.invalid/v1" } });
@@ -239,7 +254,7 @@ test("endpointEnvironment is parsed as an alternative to a literal endpoint, and
 });
 
 test("PNP_CONFIGURED_POLICY_OVERRIDES adds a deployment policy without forking the shipped profile", async () => {
-  const environment = { PNP_MODEL_ENDPOINT: "http://127.0.0.1:9000/v1", PNP_MODEL_AUTHORIZATION: "Bearer not-a-secret" };
+  const environment = { PNP_MODEL_ENDPOINT: "http://127.0.0.1:9000/v1", PNP_MODEL_ID: "endpoint-model" };
   const load = (overrides?: string) => loadIntegration({ kind: undefined, development: false, engineDevelopmentOnly: false,
     environment: overrides === undefined ? environment : { ...environment, PNP_CONFIGURED_POLICY_OVERRIDES: overrides } });
   const context = async (provider: Awaited<ReturnType<typeof load>>) => provider.prepare({
