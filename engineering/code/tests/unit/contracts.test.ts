@@ -269,7 +269,7 @@ test("question reply is stored and resumes the waiting adapter", async () => {
     channel.run = async (input) => { observed = await input.services.interact({ kind: "question", operation: "choose", payload: { questions: [{ question: "Select", options: [{ label: "A" }] }] } }); return run(input); }; return channel; };
   const provider = new MockIntegration(); const prepare = provider.prepare.bind(provider);
   provider.prepare = async (input) => ({ ...(await prepare(input)), authorize: async () => ({ effect: "ask", reasonCode: "ASK" }) });
-  const f = await create(pack, provider);
+  const f = await create(pack, provider, { questionPolicy: "ask" });
   try {
     const running = f.core.run(f.session.id, request);
     await waitFor(async () => (await f.core.interactions.list("question")).length === 1);
@@ -290,7 +290,7 @@ test("run completion closes unanswered interactions before a late reply", async 
     }; return channel; };
   const provider = new MockIntegration(); const prepare = provider.prepare.bind(provider);
   provider.prepare = async (input) => ({ ...(await prepare(input)), authorize: async () => ({ effect: "ask", reasonCode: "ASK" }) });
-  const f = await create(pack, provider);
+  const f = await create(pack, provider, { questionPolicy: "ask" });
   try {
     const running = f.core.run(f.session.id, request);
     await waitFor(async () => (await f.core.interactions.list("question")).length === 1);
@@ -307,7 +307,7 @@ test("concurrent interaction replies have exactly one persisted winner", async (
     channel.run = async (runInput) => { await runInput.services.interact({ kind: "question", operation: "choose", payload: { questions: [] } }); return run(runInput); }; return channel; };
   const provider = new MockIntegration(); const prepare = provider.prepare.bind(provider);
   provider.prepare = async (input) => ({ ...(await prepare(input)), authorize: async () => ({ effect: "ask", reasonCode: "ASK" }) });
-  const f = await create(pack, provider);
+  const f = await create(pack, provider, { questionPolicy: "ask" });
   try {
     const running = f.core.run(f.session.id, request);
     await waitFor(async () => (await f.core.interactions.list("question")).length === 1);
@@ -372,7 +372,7 @@ test("question policy allow still asks and uses question event names", async () 
     channel.run = async (runInput) => { observed = await runInput.services.interact({ kind: "question", operation: "choose", payload: { questions: [] } }); return run(runInput); }; return channel; };
   const provider = new MockIntegration(); const prepare = provider.prepare.bind(provider);
   provider.prepare = async (input) => ({ ...(await prepare(input)), authorize: async () => ({ effect: "allow", reasonCode: "ALLOWED_TO_ASK" }) });
-  const f = await create(pack, provider); const types: string[] = [];
+  const f = await create(pack, provider, { questionPolicy: "ask" }); const types: string[] = [];
   f.core.journal.subscribe((event) => types.push(event.type));
   try {
     const running = f.core.run(f.session.id, request);

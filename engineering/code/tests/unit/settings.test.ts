@@ -37,10 +37,19 @@ const commonModels = [
 test("shipped settings are the single default runtime settings source", async () => {
   assert.match(DEFAULT_SETTINGS, /settings\.json$/);
   const effective = await loadPnpSettings({ engineId: "opencode" });
+  // One model, named entirely by environment variable, so the delivery carries no deployment
+  // address and an operator configures the run without editing this file.
   assert.deepEqual(effective.model.default, { providerID: "competition", modelID: "default" });
-  assert.ok(effective.model.models.some((entry) => entry.selection.providerID === "his" && entry.selection.modelID === "GLM-V5.1-DX"));
-  assert.ok(effective.model.models.some((entry) => entry.selection.providerID === "his" && entry.selection.modelID === "Qwen-V3.6-27B-DX"));
+  assert.deepEqual(effective.model.models.map((entry) => entry.selection),
+    [{ providerID: "competition", modelID: "default" }]);
   assert.deepEqual(effective.permissions, { default: "allow", operations: {} });
+  // The shipped MCP server is addressed through the package-root placeholder, so it resolves
+  // wherever the delivery was unpacked, and the Node executable running the gateway starts it.
+  const office = effective.mcp.servers.find((server) => server.id === "office");
+  assert.equal(office?.transport, "stdio");
+  assert.equal(office?.transport === "stdio" && office.command, process.execPath);
+  assert.ok(office?.transport === "stdio" && path.isAbsolute(office.args[0]!));
+  assert.equal(office?.sideEffect, "write");
 });
 
 test("Core settings inherit common values and override only declared model and permission fields", async () => {
@@ -164,7 +173,7 @@ test("a deployment override reaches both the decision and the policy published o
     environment: {
       PNP_CONFIGURED_POLICY_OVERRIDES: JSON.stringify({ write: "ask" }),
       PNP_MODEL_ENDPOINT: "http://127.0.0.1:9001/v1",
-      PNP_MODEL_AUTHORIZATION: "Bearer test-only",
+      PNP_MODEL_ID: "endpoint-model",
     },
   });
   const context = await provider.prepare({
@@ -181,8 +190,14 @@ test("a deployment override reaches both the decision and the policy published o
   assert.equal((await context.authorize({ kind: "permission", operation: "read", payload: {} })).reasonCode, "SETTINGS_DEFAULT");
 });
 
-test("settings reject relative explicit paths and Core defaults missing from the effective catalog", async () => {
-  await assert.rejects(loadPnpSettings({ engineId: "opencode", settingsPath: "relative/settings.json" }), { code: "SETTINGS_INVALID" });
+test("a relative settings path resolves against the package root, not the working directory", async () => {
+  // A deployment writes `config/settings.json` because it cannot know where the delivery was
+  // unpacked; the launcher's working directory must not decide which file that is.
+  const fromRoot = await loadPnpSettings({ engineId: "opencode", settingsPath: "config/settings.json" });
+  assert.deepEqual(fromRoot.model.default, { providerID: "competition", modelID: "default" });
+  await assert.rejects(loadPnpSettings({ engineId: "opencode", settingsPath: "config/absent.json" }), { code: "SETTINGS_INVALID" });
+});
+test("settings reject Core defaults missing from the effective catalog", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "pnp-settings-invalid-"));
   try {
     const file = await writeSettings(dir, {

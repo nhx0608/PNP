@@ -17,21 +17,67 @@ function patternsOf(payload: Json): Json[] {
   return Array.isArray(named) ? named : [];
 }
 
+/**
+ * How an unattended deployment answers a `question`. `ask` is the interactive behaviour: the request
+ * is published and the run waits for a client reply. `auto` is for an evaluation nobody is watching,
+ * where a waiting question costs the whole case: the request is still recorded and still published,
+ * so the trajectory shows what the engine asked, and the gateway then answers it immediately.
+ */
+export type QuestionPolicy = "auto" | "ask";
+/**
+ * The answer an unattended gateway gives: the first offered option, because an engine that offers
+ * options treats the first as its own default, and an empty string when it offered none. Nothing is
+ * invented about the subject of the question, and one answer array is produced per question so the
+ * shape matches what the reply endpoint would have submitted.
+ */
+export function automaticAnswers(payload: Json): string[][] {
+  const questions = payload !== null && typeof payload === "object" && !Array.isArray(payload)
+    ? payload["questions"] : undefined;
+  if (!Array.isArray(questions)) return [[""]];
+  return questions.map((question) => {
+    const options = question !== null && typeof question === "object" && !Array.isArray(question)
+      ? question["options"] : undefined;
+    const first = Array.isArray(options) ? options[0] : undefined;
+    if (typeof first === "string") return [first];
+    if (first !== null && typeof first === "object" && !Array.isArray(first) && typeof first["label"] === "string") {
+      return [first["label"]];
+    }
+    return [""];
+  });
+}
 /** Questions and approvals are run-scoped; permission answers cannot override policy denial. */
 export class InteractionBroker {
   private readonly liveRuns = new Set<string>();
   private readonly pending = new Map<string, {
+    sessionId: string;
+    operation: string;
     runId: string;
     kind: "permission" | "question";
     state: "waiting" | "replying";
     resolve(value: InteractionResponse): void;
     settlement?: Promise<void>;
   }>();
+  /**
+   * `(sessionId, operation)` pairs a user allowed with `always`. Contract section 7 forbids turning
+   * `always` into a cross-session or organisational grant, so it is remembered here — in the gateway,
+   * for this session and this operation only — and never handed to an engine as a native
+   * allow-always. An organisational `deny` is checked first and is not affected by it.
+   */
+  private readonly remembered = new Set<string>();
   private readonly store: StateStore;
   private readonly journal: EventJournal;
   private readonly timeoutMs: number;
-  constructor(store: StateStore, journal: EventJournal, timeoutMs = 45_000) {
-    this.store = store; this.journal = journal; this.timeoutMs = timeoutMs;
+  private readonly questionPolicy: QuestionPolicy;
+  constructor(store: StateStore, journal: EventJournal, timeoutMs = 45_000, questionPolicy: QuestionPolicy = "auto") {
+    this.store = store; this.journal = journal; this.timeoutMs = timeoutMs; this.questionPolicy = questionPolicy;
+  }
+  private static rememberKey(sessionId: string, operation: string): string {
+    return `${sessionId}\0${operation}`;
+  }
+  /** The memory belongs to the session; when the session is gone, so is it. */
+  forgetSession(sessionId: string): void {
+    const prefix = `${sessionId}\0`;
+    for (const key of this.remembered) if (key.startsWith(prefix)) this.remembered.delete(key);
   }
   beginRun(runId: string): void {
     if (this.liveRuns.has(runId)) throw new PnpError("INTERACTION_RUN_EXISTS", "Run interaction scope already exists.", 500);
@@ -71,7 +117,10 @@ export class InteractionBroker {
       return { decision: "deny", source: "cancelled", reasonCode: "RUN_NOT_ACTIVE" };
     }
     const choice = deferred<InteractionResponse>();
-    this.pending.set(id, { runId: input.runId, kind: request.kind, state: "waiting", resolve: choice.resolve });
+    this.pending.set(id, {
+      sessionId: input.sessionId, operation: request.operation, runId: input.runId,
+      kind: request.kind, state: "waiting", resolve: choice.resolve,
+    });
     const onAbort = () => choice.resolve({ decision: "deny", source: "cancelled", reasonCode: "RUN_CANCELLED" });
     signal.addEventListener("abort", onAbort, { once: true });
     try {
@@ -87,12 +136,35 @@ export class InteractionBroker {
         });
         return response;
       }
+      // Only `ask` reaches here, so this is the operation the user was already asked about once and
+      // answered with `always`. It is resolved without publishing a request nobody has to answer;
+      // the resolution is still recorded and published, so the trajectory shows why it was allowed.
+      if (request.kind === "permission" && this.remembered.has(InteractionBroker.rememberKey(input.sessionId, request.operation))) {
+        const response: InteractionResponse = {
+          decision: "allow", source: "remembered", reasonCode: "USER_ALLOWED_ALWAYS",
+        };
+        await this.store.call("resolveInteraction", { id, response: response as unknown as Json });
+        await this.journal.publish("permission.resolved", {
+          sessionID: input.sessionId, runID: input.runId, id, decision: "allow",
+          reasonCode: "USER_ALLOWED_ALWAYS", source: "remembered",
+        });
+        return response;
+      }
       // Listener registration precedes publishing; an immediate reply is safe.
       const body = payload !== null && !Array.isArray(payload) && typeof payload === "object" ? payload : {};
       await this.journal.publish(`${request.kind}.asked`, {
         ...body, sessionID: input.sessionId, runID: input.runId, id,
         ...(request.kind === "permission" ? { permission: request.operation, patterns: patternsOf(body) } : {}),
       });
+      // An unattended deployment answers its own questions: the request above was recorded and
+      // published first, so the trajectory carries the question exactly as an interactive run would,
+      // and everything below -- storage, the resolution event, the waiting driver -- runs unchanged.
+      if (request.kind === "question" && this.questionPolicy === "auto") {
+        choice.resolve({
+          decision: "answer", answers: automaticAnswers(payload), source: "auto",
+          reasonCode: "QUESTION_AUTO_ANSWERED",
+        });
+      }
       if (signal.aborted) choice.resolve({ decision: "deny", source: "cancelled", reasonCode: "RUN_CANCELLED" });
       let answer: InteractionResponse;
       try { answer = await bounded(choice.promise, this.timeoutMs); }
@@ -120,7 +192,13 @@ export class InteractionBroker {
       id: row.id, sessionID: row.sessionId, created_at: row.createdAt,
     }));
   }
-  async reply(id: string, kind: "permission" | "question", response: InteractionResponse): Promise<void> {
+  /**
+   * A client reply. `remember` is the `always` form of a permission approval: it is kept for this
+   * session and this operation only (see `remembered`), and it changes nothing about THIS response,
+   * which stays an ordinary one-off allow as far as the engine is concerned.
+   */
+  async reply(id: string, kind: "permission" | "question", response: InteractionResponse,
+    options: { remember?: boolean } = {}): Promise<void> {
     const waiter = this.pending.get(id);
     if (waiter === undefined || waiter.kind !== kind) throw new PnpError("NOT_FOUND", "No pending interaction.", 404);
     if (!this.liveRuns.has(waiter.runId) || waiter.state !== "waiting") {
@@ -128,6 +206,10 @@ export class InteractionBroker {
     }
     if (kind === "question" && response.decision === "allow") throw new PnpError("VALIDATION_ERROR", "Question requires an answer.", 400);
     await this.settle(id, waiter, { ...response, source: "user" });
+    // Recorded only once the approval itself is settled, so a reply that lost a race remembers nothing.
+    if (options.remember === true && kind === "permission" && response.decision === "allow") {
+      this.remembered.add(InteractionBroker.rememberKey(waiter.sessionId, waiter.operation));
+    }
   }
   private settle(id: string, waiter: NonNullable<ReturnType<InteractionBroker["pending"]["get"]>>,
     response: InteractionResponse): Promise<void> {
