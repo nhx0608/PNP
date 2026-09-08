@@ -1,10 +1,18 @@
 [CmdletBinding()]
 param(
-  [ValidateSet("start", "bootstrap", "selfcheck", "stop", "help")]
+  [ValidateSet("start", "bootstrap", "selfcheck", "livecheck", "config", "stop", "help")]
   [string]$Mode = "start",
   [string]$Engine = "",
   [int]$Port = 6217,
-  [string]$BindHost = "localhost"
+  [string]$BindHost = "localhost",
+  # livecheck only: the absolute working directory the session is created with.
+  [string]$Directory = "",
+  # config only: the non-interactive answers. An empty one means "ask", or "leave the file's line
+  # as it is" for the two optional variables.
+  [string]$Endpoint = "",
+  [string]$ModelId = "",
+  [string]$ApiKey = "",
+  [string]$Headers = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -767,6 +775,246 @@ function Invoke-SelfCheck([string]$NodeExe, [string]$SelectedEngine, [int]$Selec
   return $exitCode
 }
 
+<#
+  One live end-to-end proof: the same north-bound HTTP surface as the self-check, but against the
+  REAL model service this machine configures. The harness starts no model stand-in; it launches the
+  gateway through the shipped launcher and inherits this process's environment, so PNP_MODEL_* and
+  runtime\local.env are the only model configuration involved.
+#>
+function Invoke-LiveCheck([string]$NodeExe, [string]$SelectedEngine, [int]$SelectedPort, [string]$SelectedDirectory) {
+  $live = Join-Path $CodeRoot "scripts\e2e\live-check.mjs"
+  if (-not (Test-Path -LiteralPath $live -PathType Leaf)) {
+    Fail "The live-check harness is missing at $live."
+  }
+  $arguments = @($live, "--engine", $SelectedEngine, "--port", [string]$SelectedPort)
+  if (-not [string]::IsNullOrWhiteSpace($SelectedDirectory)) {
+    if (-not [System.IO.Path]::IsPathRooted($SelectedDirectory)) {
+      Fail "--directory must be an absolute path; the gateway rejects a relative working directory."
+    }
+    $arguments += @("--directory", $SelectedDirectory)
+  }
+  Write-Step "Running the live check for engine '$SelectedEngine' on port $SelectedPort against the configured model service."
+  Write-Step "The endpoint and credentials come from this environment and runtime\local.env; only variable names are printed."
+  # Out-Host, not the pipeline: the harness prints a lot, and its output must reach the console
+  # rather than become this function's return value (which is the exit code).
+  & $NodeExe @arguments | Out-Host
+  $exitCode = $LASTEXITCODE
+  if ($exitCode -eq 0) {
+    Write-Host "[pnp] LIVECHECK PASS (engine=$SelectedEngine)"
+  } else {
+    Write-Host "[pnp] LIVECHECK FAIL (engine=$SelectedEngine, exit code $exitCode)"
+  }
+  return $exitCode
+}
+
+# The four variables `pnp.cmd config` owns. Every other line of the file belongs to the operator
+# and is copied through untouched.
+$ManagedModelVariables = @("PNP_MODEL_ENDPOINT", "PNP_MODEL_ID", "PNP_MODEL_API_KEY", "PNP_MODEL_HEADERS")
+
+<#
+  The active NAME=VALUE assignments of an env file, as a hashtable. A commented line is not an
+  assignment and is ignored here exactly as the gateway ignores it. Nothing is printed: these
+  values only become the defaults the operator can accept with Enter.
+#>
+function Get-LocalEnvironmentValues([string]$Path) {
+  $values = @{}
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    return $values
+  }
+  foreach ($rawLine in Get-Content -LiteralPath $Path -Encoding UTF8) {
+    $line = $rawLine.Trim()
+    if ($line.Length -eq 0 -or $line.StartsWith("#")) {
+      continue
+    }
+    $separator = $line.IndexOf("=")
+    if ($separator -le 0) {
+      continue
+    }
+    $name = $line.Substring(0, $separator).Trim()
+    if ($name -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+      continue
+    }
+    if (-not $values.ContainsKey($name)) {
+      $values[$name] = $line.Substring($separator + 1).Trim()
+    }
+  }
+  return $values
+}
+
+<#
+  Writes the managed variables into the env file and leaves every other line where it was:
+  comments, spacing and any other variable the operator put there survive. A managed variable whose
+  new value is empty has its assignment removed, which is how "no key at all" is expressed. The
+  return value carries NAMES only; no value is returned, printed or logged.
+#>
+function Set-LocalEnvironmentValues([string]$Path, [hashtable]$Values) {
+  $parent = Split-Path -Parent $Path
+  if (-not [string]::IsNullOrWhiteSpace($parent)) {
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+  }
+  $existed = Test-Path -LiteralPath $Path -PathType Leaf
+  [string[]]$existing = @()
+  if ($existed) {
+    $existing = @(Get-Content -LiteralPath $Path -Encoding UTF8)
+  }
+
+  $output = New-Object System.Collections.Generic.List[string]
+  $written = New-Object System.Collections.Generic.List[string]
+  $removed = New-Object System.Collections.Generic.List[string]
+  $seen = New-Object System.Collections.Generic.List[string]
+
+  if (-not $existed) {
+    $output.Add("# Written by 'pnp.cmd config'. runtime\ is git-ignored.") | Out-Null
+    $output.Add("# The gateway loads this file at startup and prints only the names it applied, never a value.") | Out-Null
+    $output.Add("") | Out-Null
+  }
+
+  foreach ($rawLine in $existing) {
+    $line = $rawLine.Trim()
+    $name = ""
+    if ($line.Length -gt 0 -and -not $line.StartsWith("#")) {
+      $separator = $line.IndexOf("=")
+      if ($separator -gt 0) {
+        $name = $line.Substring(0, $separator).Trim()
+      }
+    }
+    if ($name -ne "" -and $Values.ContainsKey($name)) {
+      if ($seen.Contains($name)) {
+        # A second assignment of a managed name would shadow the one just written.
+        continue
+      }
+      $seen.Add($name) | Out-Null
+      $value = [string]$Values[$name]
+      if ($value -eq "") {
+        $removed.Add($name) | Out-Null
+        continue
+      }
+      $output.Add("$name=$value") | Out-Null
+      $written.Add($name) | Out-Null
+      continue
+    }
+    $output.Add($rawLine) | Out-Null
+  }
+
+  foreach ($name in $ManagedModelVariables) {
+    if (-not $Values.ContainsKey($name)) { continue }
+    if ($seen.Contains($name)) { continue }
+    $value = [string]$Values[$name]
+    if ($value -eq "") { continue }
+    $output.Add("$name=$value") | Out-Null
+    $written.Add($name) | Out-Null
+  }
+
+  Set-Content -LiteralPath $Path -Value $output.ToArray() -Encoding UTF8
+  return @{ Written = $written.ToArray(); Removed = $removed.ToArray() }
+}
+
+<#
+  Asks for one value, showing the current one (or the suggested one) in brackets. Enter keeps that
+  default; a single "-" clears the variable. A secret is read through -AsSecureString so it never
+  appears on the console, in the command line or in the shell history, and it is turned back into
+  plain text only to be written into the file.
+#>
+function Read-ConfiguredValue([string]$Label, [string]$Default, [bool]$Secret, [bool]$HasCurrent) {
+  if ($Secret) {
+    $hint = if ($HasCurrent) { "keep the current value" } else { "none" }
+    $secure = Read-Host -Prompt "$Label [$hint]" -AsSecureString
+    $pointer = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try {
+      $entered = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+    } finally {
+      [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+    }
+  } else {
+    $hint = if ($Default -ne "") { $Default } else { "none" }
+    $entered = Read-Host -Prompt "$Label [$hint]"
+  }
+  if ($null -eq $entered) {
+    $entered = ""
+  }
+  $entered = $entered.Trim()
+  if ($entered -eq "") {
+    return $Default
+  }
+  if ($entered -eq "-") {
+    return ""
+  }
+  return $entered
+}
+
+<#
+  `pnp.cmd config`: writes the model variables into the local env file, interactively or straight
+  from the command line. It runs no engine, needs no build and never contacts the model service;
+  the proof that the values actually work is `pnp.cmd livecheck`.
+#>
+function Invoke-Configure([string]$Path) {
+  # The team's own free test tier is the suggested answer; any OpenAI-compatible service is accepted.
+  $suggestedEndpoint = "https://open.bigmodel.cn/api/paas/v4"
+  $suggestedModelId = "glm-4-flash"
+  $current = Get-LocalEnvironmentValues $Path
+  $values = @{}
+
+  $nonInteractive = (-not [string]::IsNullOrWhiteSpace($Endpoint)) -or (-not [string]::IsNullOrWhiteSpace($ModelId))
+  if ($nonInteractive) {
+    if ([string]::IsNullOrWhiteSpace($Endpoint) -or [string]::IsNullOrWhiteSpace($ModelId)) {
+      Fail "--endpoint and --model go together. Give both, or give neither and answer the prompts."
+    }
+    $values["PNP_MODEL_ENDPOINT"] = $Endpoint.Trim()
+    $values["PNP_MODEL_ID"] = $ModelId.Trim()
+    # An option that was not given leaves the file's line alone: only what was named is rewritten.
+    if (-not [string]::IsNullOrWhiteSpace($ApiKey)) {
+      $values["PNP_MODEL_API_KEY"] = $ApiKey.Trim()
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Headers)) {
+      $values["PNP_MODEL_HEADERS"] = $Headers.Trim()
+    }
+  } else {
+    Write-Step "Writing the model configuration into $Path."
+    Write-Step "Press Enter to accept the value in brackets; type a single '-' to clear a variable."
+    $endpointDefault = if ($current.ContainsKey("PNP_MODEL_ENDPOINT")) { [string]$current["PNP_MODEL_ENDPOINT"] } else { $suggestedEndpoint }
+    $modelDefault = if ($current.ContainsKey("PNP_MODEL_ID")) { [string]$current["PNP_MODEL_ID"] } else { $suggestedModelId }
+    $keyDefault = if ($current.ContainsKey("PNP_MODEL_API_KEY")) { [string]$current["PNP_MODEL_API_KEY"] } else { "" }
+    $headersDefault = if ($current.ContainsKey("PNP_MODEL_HEADERS")) { [string]$current["PNP_MODEL_HEADERS"] } else { "" }
+    $values["PNP_MODEL_ENDPOINT"] = Read-ConfiguredValue "PNP_MODEL_ENDPOINT (OpenAI-compatible base URL)" $endpointDefault $false ($endpointDefault -ne "")
+    $values["PNP_MODEL_ID"] = Read-ConfiguredValue "PNP_MODEL_ID (the name that endpoint knows)" $modelDefault $false ($modelDefault -ne "")
+    $values["PNP_MODEL_API_KEY"] = Read-ConfiguredValue "PNP_MODEL_API_KEY (optional, not echoed)" $keyDefault $true ($keyDefault -ne "")
+    $values["PNP_MODEL_HEADERS"] = Read-ConfiguredValue "PNP_MODEL_HEADERS (optional JSON object)" $headersDefault $false ($headersDefault -ne "")
+  }
+
+  $endpointValue = [string]$values["PNP_MODEL_ENDPOINT"]
+  $modelValue = [string]$values["PNP_MODEL_ID"]
+  if ([string]::IsNullOrWhiteSpace($endpointValue) -or [string]::IsNullOrWhiteSpace($modelValue)) {
+    Fail "PNP_MODEL_ENDPOINT and PNP_MODEL_ID are both required; nothing was written."
+  }
+  if ($endpointValue -notmatch '^https?://') {
+    Fail "PNP_MODEL_ENDPOINT must be an http:// or https:// base URL; nothing was written."
+  }
+  if ($values.ContainsKey("PNP_MODEL_HEADERS")) {
+    $headersValue = [string]$values["PNP_MODEL_HEADERS"]
+    if ($headersValue -ne "") {
+      try {
+        $null = ConvertFrom-Json $headersValue
+      } catch {
+        Fail "PNP_MODEL_HEADERS must be a JSON object such as {""appid"":""12345""}; nothing was written."
+      }
+    }
+  }
+
+  $result = Set-LocalEnvironmentValues $Path $values
+  Write-Step "Wrote $Path"
+  if ($result.Written.Count -gt 0) {
+    Write-Step "Variables written (names only; values are never printed): $($result.Written -join ', ')"
+  }
+  if ($result.Removed.Count -gt 0) {
+    Write-Step "Variables cleared: $($result.Removed -join ', ')"
+  }
+  if ($endpointValue -match '^http://' -and $endpointValue -notmatch '^http://(127\.0\.0\.1|localhost|\[::1\])(:|/|$)') {
+    Write-Step "That endpoint is plain http outside loopback, so the gateway also needs PNP_ALLOW_HTTP_ENDPOINTS=1."
+  }
+  Write-Step "Next: 'pnp.cmd livecheck --engine opencode' verifies the whole chain against this service."
+  return 0
+}
+
 function Show-Help {
   @"
 PNP launcher (dependency preparation + gateway lifecycle)
@@ -775,6 +1023,8 @@ Usage:
   .\pnp.cmd start      [--engine <id>] [--port 6217] [--host localhost]
   .\pnp.cmd bootstrap  [--engine <id>]
   .\pnp.cmd selfcheck  [--engine <id>] [--port 6217]
+  .\pnp.cmd livecheck  [--engine <id>] [--port 6217] [--directory <absolute path>]
+  .\pnp.cmd config     [--endpoint <url> --model <id> [--api-key <key>] [--headers <json>]]
   .\pnp.cmd stop
   .\pnp.cmd help
 
@@ -789,7 +1039,13 @@ Modes:
   start      bootstrap, then run the gateway. The process id goes to runtime\gateway.pid and the
              output to runtime\logs\gateway-<engine>.log (errors: gateway-<engine>.err.log).
   selfcheck  bootstrap, then run the offline end-to-end check (mock model service + gateway + one
-             real prompt) and print PASS or FAIL.
+             real prompt) and print PASS or FAIL. No model configuration is needed.
+  livecheck  bootstrap, then run the same shape of check against the REAL model service configured
+             in this environment or in runtime\local.env, and print PASS or FAIL. It refuses to
+             start when PNP_MODEL_ENDPOINT or PNP_MODEL_ID is missing.
+  config     write PNP_MODEL_ENDPOINT / PNP_MODEL_ID / PNP_MODEL_API_KEY / PNP_MODEL_HEADERS into
+             runtime\local.env. Interactive unless --endpoint and --model are given; the key is
+             read without echo and no value is ever printed. Other lines of the file are kept.
   stop       terminate exactly the process recorded in runtime\gateway.pid, then delete the file.
 
 Offline order (no network is used when each step is already satisfied):
@@ -820,6 +1076,11 @@ $localEnvFile = if ([string]::IsNullOrWhiteSpace($env:PNP_LOCAL_ENV_FILE)) { Joi
 
 if ($Mode -eq "stop") {
   exit (Stop-Gateway)
+}
+
+# `config` only writes the env file: no engine, no Node, no build and no call to the model service.
+if ($Mode -eq "config") {
+  exit (Invoke-Configure $localEnvFile)
 }
 
 if ($Port -lt 1 -or $Port -gt 65535) {
@@ -880,6 +1141,10 @@ if ($Mode -eq "bootstrap") {
 
 if ($Mode -eq "selfcheck") {
   exit (Invoke-SelfCheck $nodeExe $Engine $Port)
+}
+
+if ($Mode -eq "livecheck") {
+  exit (Invoke-LiveCheck $nodeExe $Engine $Port $Directory)
 }
 
 exit (Start-Gateway $nodeExe $Engine $Port $BindHost $localEnvFile)
