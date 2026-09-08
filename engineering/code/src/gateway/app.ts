@@ -55,9 +55,20 @@ function parseLastEventId(header: string | string[] | undefined): number | undef
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
-function isTextPart(value: unknown): value is { type: "text"; text: string } {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    && (value as Record<string, unknown>).type === "text" && typeof (value as Record<string, unknown>).text === "string";
+/**
+ * One text part as the contract carries it. The baseline request body names the field `text`, but the
+ * message projection this gateway returns names it `content`, and a client that mirrors what it read
+ * back sends `content` on the next turn; refusing that costs the whole case over a field name. Both
+ * are accepted, and `text` wins when a part carries both, because it is the field the request body
+ * specifies. A part of any other type is still ignored rather than failing the request.
+ */
+function textPartOf(value: unknown): { type: "text"; text: string } | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const part = value as Record<string, unknown>;
+  if (part.type !== "text") return undefined;
+  if (typeof part.text === "string") return { type: "text", text: part.text };
+  if (typeof part.content === "string") return { type: "text", text: part.content };
+  return undefined;
 }
 /** The empty-string selection is a sentinel meaning "no model requested"; config never allows
  *  empty providerID/modelID, so it can never collide with a real configured selection. The
@@ -76,7 +87,7 @@ function parseModelSelection(model: PromptBody["model"]): ModelSelection {
   return { providerID: model.providerID, modelID: model.modelID };
 }
 function resolvePromptRequest(body: PromptBody): PromptRequest {
-  const parts = body.parts.filter(isTextPart);
+  const parts = body.parts.map(textPartOf).filter((part) => part !== undefined);
   if (parts.length === 0) throw new PnpError("VALIDATION_ERROR", "No recognized message parts.", 400);
   return { parts, model: parseModelSelection(body.model), agent: body.agent };
 }
@@ -178,7 +189,11 @@ export function buildApp(core: GatewayCore, options: BuildAppOptions = {}) {
   app.post<{ Params: { id: string }; Body: { reply: string } }>("/permission/:id/reply", async (request) => {
     const value = request.body?.reply;
     if (!["once", "always", "reject"].includes(value)) throw new PnpError("VALIDATION_ERROR", "Invalid permission reply.", 400);
-    await core.interactions.reply(request.params.id, "permission", { decision: value === "reject" ? "deny" : "allow" });
+    // `always` is answered exactly like `once` for this request; what it adds is the gateway
+    // remembering this operation for the rest of this session. It never becomes a native
+    // allow-always in an engine, and it never outlives the session (contract section 7).
+    await core.interactions.reply(request.params.id, "permission",
+      { decision: value === "reject" ? "deny" : "allow" }, { remember: value === "always" });
     return { ok: true };
   });
   app.get("/event", async (request, reply) => {

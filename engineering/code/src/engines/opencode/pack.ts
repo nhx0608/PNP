@@ -6,9 +6,36 @@ import { instructionAssetTargetPath, projectOpenCodeAssets } from "./assets.ts";
 import { loadOpenCodeEngineConfig } from "./config.ts";
 import type { OpenCodeEngineConfig } from "./config.ts";
 import { resolveOpenCodeExecutable } from "./executable.ts";
-import { OPENCODE_CONFIG_ENVIRONMENT_VARIABLE, writeNativeConfig } from "./native-config.ts";
+import {
+  OPENCODE_CONFIG_DIRECTORY_ENVIRONMENT_VARIABLE, OPENCODE_CONFIG_ENVIRONMENT_VARIABLE, writeNativeConfig,
+} from "./native-config.ts";
 
 const CLIENT_INFO = { name: "pnp-gateway-opencode", version: "0.1.0" };
+/**
+ * The proxy variables an engine process needs to reach an internal model endpoint, or anything else, through
+ * the deployment's proxy. The shared ProcessHost's baseEnvironment() allow-list (src/runtime/process-host.ts)
+ * deliberately carries only OS-level keys and does not include these, so the child would otherwise start with
+ * no proxy configuration at all while the gateway itself has one. Both cases are listed because the
+ * conventional variables are case-sensitive on POSIX and tools disagree about which case they read.
+ */
+export const PROXY_ENVIRONMENT_VARIABLES: readonly string[] = [
+  "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+];
+/**
+ * Copies the gateway process's proxy configuration for the child. Values are host configuration, not
+ * credentials, and are passed through verbatim; an unset or empty variable is left out rather than exported as
+ * an empty string, which some clients read as "proxy configured, to nowhere".
+ */
+export function proxyEnvironment(
+  source: Readonly<Record<string, string | undefined>> = process.env,
+): Record<string, string> {
+  const environment: Record<string, string> = {};
+  for (const name of PROXY_ENVIRONMENT_VARIABLES) {
+    const value = source[name];
+    if (value !== undefined && value.length > 0) environment[name] = value;
+  }
+  return environment;
+}
 
 /**
  * OpenCode Engine Pack. Fills the ACP v1 Driver's `AcpEngineDefinition` seam (src/drivers/acp/channel.ts):
@@ -70,16 +97,28 @@ async function buildLaunchRequest(
     instructionAbsolutePaths,
     permissions,
   );
-  // Redirection first, then secrets: a name collision must let the header env var win, never a redirect key.
-  const env: Record<string, string> = { ...written.redirectEnv, ...written.secretEnv };
+  // Proxy first, then redirection, then secrets: a name collision must let the header env var win, never a
+  // redirect key, and never a proxy variable.
+  const env: Record<string, string> = {
+    ...proxyEnvironment(),
+    ...written.redirectEnv,
+    ...written.secretEnv,
+  };
   // The one exception is the pointer to the private config. A header mapped onto that name would send OpenCode
-  // back to the operator's real global config, so this assignment is last and unconditional.
+  // back to the operator's real global config, so these two assignments are last and unconditional.
   env[OPENCODE_CONFIG_ENVIRONMENT_VARIABLE] = written.primaryConfigPath;
+  env[OPENCODE_CONFIG_DIRECTORY_ENVIRONMENT_VARIABLE] = written.configDirectory;
   if (input.integration.model.caFile !== undefined) {
     // Standard Node.js trust-store extension (docs.node/api/cli#node_extra_ca_certsfile). The shipped exe is a
     // Bun-compiled binary and Bun documents the same variable for its own TLS stack; node-script mode runs
     // under node.exe, where it is native.
     env["NODE_EXTRA_CA_CERTS"] = input.integration.model.caFile;
+  }
+  if (input.integration.model.tlsInsecure === true) {
+    // Last resort for an internal endpoint whose certificate cannot be verified even with a supplied CA file.
+    // Only ever set from the resolved model -- an explicit deployment decision that reached this Pack through
+    // the IntegrationContext -- never inherited from the gateway's own environment, and never a default.
+    env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0";
   }
   return {
     executable: resolved.executable,

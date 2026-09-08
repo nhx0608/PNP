@@ -81,40 +81,59 @@ npm 全局安装同时会写一个 `opencode.cmd` 垫片。两种模式都不会
 
 判定用的是**目标平台**（`ExecutableEnvironment.platform`，生产取 `process.platform`，测试可注入），不是"跑校验的这台机器"，所以在 Linux 上校验一个共享 Windows 宿主的配置，`.exe` 规则照样生效。`node-script` 模式的脚本参数只校验绝对性，不校验后缀（它本来就不是 `.exe`）。违反抛 `ENGINE_EXECUTABLE_INVALID`；三个来源都找不到抛 `ENGINE_EXECUTABLE_NOT_FOUND` / `ENGINE_SCRIPT_NOT_FOUND`。这些错误都发生在 `launch()` 内、`input.host.start()` 之前，因此不会有任何进程被启动（`tests/adapters/opencode/pack.test.ts` 断言了这一点）。
 
-## 3. 配置发现：`OPENCODE_CONFIG` 是主路径
+## 3. 配置发现与私有化：`OPENCODE_CONFIG` + `OPENCODE_CONFIG_DIR` + 四个 XDG 根
 
 OpenCode 文档给出的配置发现顺序是：
 
 1. 远程 `.well-known`
-2. 全局 `~/.config/opencode/opencode.json`
+2. 全局 `<config home>/opencode/opencode.json`
 3. **`OPENCODE_CONFIG` 环境变量指定的自定义路径**
 4. 项目根 `opencode.json`
-5. `.opencode` 目录
+5. `.opencode` 目录（`OPENCODE_CONFIG_DIR` 指定的目录按同样结构参与）
 6. **`OPENCODE_CONFIG_CONTENT` 内联**
-7. 托管配置 `%ProgramData%\opencode`
+7. 托管配置
 
-**文档里没有 `XDG_CONFIG_HOME`，也没有 `%APPDATA%`。** 早先版本靠"镜像到两个猜测的 config home"来碰运气，那是没有必要的：第 3 条明确支持指定**一个确定的文件路径**。因此本 Pack：
+文档正文里没有出现 `XDG_*`，但**引擎自己的目录解析读的就是 XDG**。这一条不是推断，是从真实 1.18.29 二进制里读出来的：
 
-- 把私有配置写在 `<nativeDataDirectory>/opencode/opencode.json`，并用 `OPENCODE_CONFIG` 指向它 —— 这是主路径，**已用真实 1.18.29 进程验证过会被读取并生效**（probed，Linux）；
-- 仍然把**完全相同**的内容镜像到 `<home>/.config/opencode/opencode.json`（对应发现顺序第 2 条，`HOME` 已被重定向到私有目录）和 `<xdgConfigHome>/opencode/opencode.json`（万一实现里确实认 XDG），作为兜底；
-- 三份文件逐字节相同，且**绝不写进 `Session.directory`**（用户工作目录）。
+```
+data  = (XDG_DATA_HOME  || <home>/.local/share)/opencode      # opencode.db、log/、repos/
+config= (XDG_CONFIG_HOME|| <home>/.config)/opencode           # 全局 opencode.json、skills/
+cache = (XDG_CACHE_HOME || <home>/.cache)/opencode            # models.json 等
+state = (XDG_STATE_HOME || <home>/.local/state)/opencode      # locks/
+```
 
-环境变量重定向本身仍然必要：公共 `ProcessHost.baseEnvironment()` 默认把网关真实的 `HOME`/`USERPROFILE`/`APPDATA`/`LOCALAPPDATA` 传给子进程，不覆盖的话 OpenCode 的数据/缓存写入、以及技能扫描都会落到运维人员的真实 profile 上。
+**这段解析里没有任何平台分支**，因此同样适用于 Windows：设了 `XDG_*` 就用 `XDG_*`，没设就落在 `<home>/.config`、
+`<home>/.local/share`（**不是** `%APPDATA%`）。所以本 Pack 把这四个变量指到会话私有目录，就是把 OpenCode 自己的
+配置、数据、缓存与锁全部私有化，同时**完全不碰用户档案**。
 
 ```
 config/engines/opencode.json#redirect.variables:
   XDG_CONFIG_HOME -> <nativeDataDirectory>/opencode/xdg-config
   XDG_DATA_HOME   -> <nativeDataDirectory>/opencode/xdg-data
   XDG_CACHE_HOME  -> <nativeDataDirectory>/opencode/xdg-cache
-  HOME            -> <nativeDataDirectory>/opencode/home
-  USERPROFILE     -> <nativeDataDirectory>/opencode/home
-  APPDATA         -> <nativeDataDirectory>/opencode/appdata
-  LOCALAPPDATA    -> <nativeDataDirectory>/opencode/localappdata
-额外注入：
-  OPENCODE_CONFIG -> <nativeDataDirectory>/opencode/opencode.json   （主发现路径）
+  XDG_STATE_HOME  -> <nativeDataDirectory>/opencode/xdg-state
+额外由 pack.ts 注入：
+  OPENCODE_CONFIG     -> <nativeDataDirectory>/opencode/opencode.json   （主发现路径，文档 "Custom path"）
+  OPENCODE_CONFIG_DIR -> <nativeDataDirectory>/opencode/config          （文档 "Custom directory"）
 ```
 
-`OPENCODE_CONFIG` 在 `pack.ts` 里是**最后一个、无条件的**赋值：万一某个 header 被映射成同名环境变量，也不能把引擎指回运维人员的真实全局配置。
+**`HOME`/`USERPROFILE`/`APPDATA`/`LOCALAPPDATA` 不再重定向，且不得再加回去。** 旧实现把它们指向私有目录，代价是
+模型启动的一切东西（Office COM、Outlook）看到的是一个假档案，每用户状态全部失效
+（`docs/competition-readiness.md` B8/D4）。子进程从公共 `ProcessHost.baseEnvironment()` 继承运维人员的真实档案；
+OpenCode 自己的状态由上面四个 XDG 根 + 两个 `OPENCODE_*` 变量隔离，不再依赖档案变量。
+
+私有配置写在 `<nativeDataDirectory>/opencode/opencode.json`（`OPENCODE_CONFIG` 指向它），并把**逐字节相同**的内容
+镜像一份到 `<xdgConfigHome>/opencode/opencode.json`（发现顺序第 2 条的"全局配置"）。两份都在私有树内，**绝不写进
+`Session.directory`**。技能则复制到 `OPENCODE_CONFIG_DIR/skills/<id>/` 与 `<xdgConfigHome>/opencode/skills/<id>/`
+（见 §6）。
+
+Linux 上对真实 1.18.29 的实测（probed）：私有配置生效；`opencode.db`、`log/`、`models.json` 与 `locks/` 分别落在
+私有的 `xdg-data` / `xdg-cache` / `xdg-state` 下，**没有**写到 `HOME`；把 `OPENCODE_CONFIG` 从环境里删掉、只留
+`XDG_CONFIG_HOME` 镜像，整轮仍然正常完成 —— 镜像不是"碰运气的兜底"，它就是文档里的全局配置位置。**Windows 上这
+四个变量的行为仍未在真机复验**（二进制里没有平台分支，是代码层面的证据，不是运行证据）。
+
+`OPENCODE_CONFIG` 与 `OPENCODE_CONFIG_DIR` 在 `pack.ts` 里是**最后两个、无条件的**赋值：万一某个 header 被映射成
+同名环境变量，也不能把引擎指回运维人员的真实全局配置。
 
 ## 4. 凭据处理与替换语法
 
@@ -130,6 +149,18 @@ config/engines/opencode.json#redirect.variables:
 
 `ResolvedModel.caFile` 存在时设置标准的 `NODE_EXTRA_CA_CERTS`（`exe` 模式下是 Bun 的 TLS 栈，Bun 文档化了同一变量；`node-script` 模式下跑在 node.exe 上，是原生行为）。
 
+### 4.0 子进程环境里还有什么
+
+除了上面的 header 变量、§3 的重定向与两个 `OPENCODE_*` 指针，`pack.ts` 只往子进程环境里放三类东西，全部有明确来源：
+
+| 变量 | 何时设置 | 来源与理由 |
+|---|---|---|
+| `NODE_EXTRA_CA_CERTS` | `ResolvedModel.caFile` 存在 | 自签/内网 CA 的标准扩展点 |
+| `NODE_TLS_REJECT_UNAUTHORIZED=0` | **仅** `ResolvedModel.tlsInsecure === true` | 内网端点连 `caFile` 都验不过时的最后手段。只由解析后的模型（一次明确的部署决策，经 `IntegrationContext` 到达本 Pack）打开，**绝不**从网关自己的环境继承，也没有默认值 |
+| `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` 及三个小写别名 | 网关进程里该变量非空 | 公共 `ProcessHost.baseEnvironment()` 的白名单只带操作系统级键，不含代理变量，子进程否则会在网关有代理的情况下完全没有代理配置。值是部署配置不是凭据，原样透传；未设置或空串的变量**不导出**（有些客户端把空串读成"配了个通向虚空的代理"） |
+
+大小写两套都带，是因为 POSIX 上这些变量大小写敏感，各家客户端读哪一套并不一致。
+
 ### 4.1 提供方字段
 
 自定义 OpenAI 兼容提供方的必填字段：`provider.<id>.npm`（`@ai-sdk/openai-compatible`）、`provider.<id>.name`（显示名，本 Pack 写 `PNP <providerId>`）、`options.baseURL`、`models.<id>.name`（显示名，本 Pack 写 `modelId`）。可选：`options.apiKey`、`options.headers`、模型的 `limit`。两个 `name` 字段在真实 1.18.29 上被接受（probed）。
@@ -140,8 +171,20 @@ config/engines/opencode.json#redirect.variables:
 
 新增的可选引擎配置项 `nativePermissions`，取值 `"engine-default"`（默认）或 `"ask"`：
 
-- `"engine-default"`：不写 `permission` 块。**OpenCode 默认允许一切操作**，因此引擎不会发 ACP `session/request_permission`。
-- `"ask"`：写入 `"permission": { "edit": "ask", "bash": "ask" }`，权限请求才会真正在 ACP 上触发，由网关策略层决定 allow/ask/deny。
+- `"engine-default"`：除了下面那条 `external_directory` 之外不写任何 `permission` 条目，引擎不会发 ACP `session/request_permission`。
+- `"ask"`：追加 `"edit": "ask"` 与 `"bash": "ask"`，权限请求才会真正在 ACP 上触发，由网关策略层决定 allow/ask/deny。
+
+**`external_directory` 是一个必须显式写出来的例外。** "OpenCode 默认允许一切操作"是官方 config 文档的原话，但它不成立：
+`external_directory` 与 `doom_loop` 默认 `ask`，读 `.env` 默认 `deny`（`docs/research/T03-opencode.md` 第 151 行；真实
+1.18.29 的配置 schema 里 `external_directory`、`doom_loop`、`question` 都是有名字的权限键）。评测任务每一条都要读写会话目录
+之外的绝对路径，而无人值守时没人回答提问。因此**只要有效策略的默认是 `allow` 且没有任何 operation 指名
+`external_directory`，生成的配置就显式写入 `"external_directory": "allow"`**；策略指名了它（或默认不是 `allow`）时按策略投影，
+不会被悄悄改写 —— 要求提问的运维方不会因为这条规则失去提问。这也是唯一一个"显式 allow 不会因为与默认值相同而被省略"的键。
+
+`tools` 块同理是无人值守的硬要求：生成的配置永远写 `"tools": { "question": false }`。形状由 config 文档的 "Tools" 一节给出
+（"You can manage the tools an LLM can use through the `tools` option"，示例 `{"write": false, "bash": false}`，即 工具名 →
+布尔 的映射），名字由 1.18.29 自带的配置 schema（`tools` 为 `additionalProperties: boolean`；`question` 是权限键之一）与
+`question.asked` + `POST /question/{id}/reply` 通道佐证。反问会阻塞整轮直到交互超时、然后按拒绝收尾，所以这个工具不该存在。
 
 默认保持 `"engine-default"`：打开引擎侧提问是一个部署决策，不是网关替运维方做的默认。
 
@@ -201,8 +244,8 @@ ACP 的 `session/prompt` 请求没有模型字段；驱动的 `AcpModelPolicy` �
 
 `definition.projectAssets` 只处理两种资产：
 
-- **`instruction`**：复制到 `<nativeDataDirectory>/opencode/assets/instructions/<assetId>/<文件名>`（唯一规范位置），绝对路径写入生成的 `opencode.json` 顶层 `instructions` 数组 —— 这是我们自己生成的配置文件里的字段，不依赖猜测 OpenCode 的扫描路径。
-- **`skill`**：镜像复制到 §3 两个 config home 候选根下的 `opencode/skills/<assetId>/<文件名>`，对应 OpenCode 文档的全局技能路径 `~/.config/opencode/skills/<name>/SKILL.md`。注意 `OPENCODE_CONFIG` 只指定**配置文件**，没有说明技能从哪里扫描，所以技能仍然依赖被重定向的 config home —— 这也正是那两份镜像继续保留的原因之一。项目级路径（`.opencode/skills`，相对 `cwd`）刻意不用：那是用户工作目录，写入即违反 contracts.md 第 8 节。
+- **`instruction`**：复制到 `<nativeDataDirectory>/opencode/assets/instructions/<assetId>/<文件名>`（唯一规范位置），**绝对**路径按资产到达顺序、去重后写入生成的 `opencode.json` 顶层 `instructions` 数组。用 `path.resolve` 而不是 `join`：`instructions` 里的相对路径会被 OpenCode 按配置文件所在目录解析，那不是资产被复制到的地方。每个资产有自己的 `<assetId>` 目录，所以两个同名的指令文件（都叫 `GUIDE.md`）不会互相覆盖。写进配置的路径就是本 Pack 复制出来的那份文件，不是只存在于网关宿主上的路径。
+- **`skill`**：复制到 `RedirectPlan.skillRoots` 的每一个根下的 `<assetId>/<文件名>`，即私有 `OPENCODE_CONFIG_DIR/skills/<assetId>/`（文档化的 `.opencode` 结构）与 `<xdgConfigHome>/opencode/skills/<assetId>/`（文档化的全局技能路径 `~/.config/opencode/skills/<name>/SKILL.md`，而 §3 已经确认全局 config home 就是 `XDG_CONFIG_HOME || <home>/.config`）。`OPENCODE_CONFIG` 只指定**配置文件**，没有说明技能从哪里扫描，这正是 config-directory 这条路线在 `HOME` 不再重定向之后变得重要的原因。项目级路径（`.opencode/skills`，相对 `cwd`）刻意不用：那是用户工作目录，写入即违反 contracts.md 第 8 节。
 
 必需（`required: true`）但既非 `skill` 也非 `instruction` 的资产会在 `projectAssets` 里抛 `ENGINE_ASSET_KIND_UNSUPPORTED`；`openAcpChannel` 在 `launch()` 与任何 Prompt 之前就 await 到这个失败。可选的同类资产被跳过并在返回值的 `skipped` 里如实报告，不假装已投影。
 
@@ -226,8 +269,16 @@ ACP 的 `session/prompt` 请求没有模型字段；驱动的 `AcpModelPolicy` �
 | provider 包在运行时无需联网下载 | probed（真实二进制，Linux），**不确定** | 实跑未观察到网络拉取，1.2 s 完成 | 表述为"看起来是内置的，仅 Linux 观察"，不是定论 |
 | `session/new` 返回 model 分类的 config option（`currentValue` 反映私有配置的 `model`） | probed（真实二进制，Linux） | 实跑返回值 | 出厂仍选 `launch`，见 §5 |
 | 文本轮次的 update 类型：`available_commands_update` → `agent_message_chunk`，prompt 响应 `stopReason: "end_turn"` 带 usage | probed（真实二进制，Linux） | 实跑 | 供驱动侧参考，本 Pack 无需改动 |
-| 全局技能路径 `~/.config/opencode/skills/` | declared | opencode 文档 | Windows 上的实际落点未验证 |
-| `instructions` 配置数组接受任意文件路径 | declared | opencode 文档 | 未验证 |
+| 全局技能路径 `~/.config/opencode/skills/` | declared | opencode 文档 + 二进制里的 `config = (XDG_CONFIG_HOME \|\| <home>/.config)/opencode` | Windows 上的实际落点未验证 |
+| `instructions` 数组里的**绝对路径**会被读取，内容进入模型消息 | probed（真实二进制，Linux） | 私有配置写入一份带标记文本的绝对路径，mock 端点收到的 messages 里出现该标记 | Windows 未复跑 |
+| `tools` 是 工具名 → 布尔 的映射（`additionalProperties: boolean`） | declared（1.18.29 自带配置 schema + config 文档 "Tools"） | schema 的 `Config.tools`；文档示例 `{"write": false, "bash": false}` | |
+| `"tools": {"question": false}` 被真实引擎接受，整轮正常完成 | probed（真实二进制，Linux） | 实跑：initialize/session/new/prompt 全通过 | **但同一次实跑里，带不带这个键，模型拿到的工具表都是 `bash, edit, glob, grep, read, skill, task, todowrite, webfetch, write`，没有 `question`** —— ACP 路线上可能根本不注册它，此项是防御，不是"观察到的移除" |
+| `question` 是引擎侧的工具/权限名 | declared | 1.18.29 配置 schema 的权限键含 `question`；同一二进制的 TUI 里有 `{name:"question"}` 渲染器；`question.asked` + `POST /question/{id}/reply` 通道 | |
+| `external_directory` 是权限键，默认 `ask` | declared | 1.18.29 配置 schema 的 `PermissionConfig` 含该键；`docs/research/T03-opencode.md` 第 151 行给出默认值 | 默认值本身来自文档，未用真机反证 |
+| `shell` 配置项存在，且"compatible shells are also used for agent tool calls" | declared | config 文档 "Shell" 一节；1.18.29 schema 里 `shell` 的描述是 "Default shell to use for terminal and bash tool" | win32 分支未在 Windows 上实跑；两个分支由注入式探针在单测里覆盖 |
+| `XDG_CONFIG_HOME` / `XDG_DATA_HOME` / `XDG_CACHE_HOME` / `XDG_STATE_HOME` 决定引擎自己的四个目录 | probed（真实二进制，Linux）+ declared（二进制内的解析代码无平台分支） | 实跑：`opencode.db`、`log/`、`models.json`、`locks/` 全部落在私有根下 | Windows 未复跑 |
+| 只留 `XDG_CONFIG_HOME` 镜像、删掉 `OPENCODE_CONFIG` 也能加载到同一份配置 | probed（真实二进制，Linux） | 实跑：模型与 instructions 均生效 | 证明镜像就是文档里的"全局配置" |
+| `OPENCODE_CONFIG_DIR` 被接受（与 `OPENCODE_CONFIG` 并存不冲突） | probed（真实二进制，Linux） | 实跑：设置后整轮正常 | 目录内 `agents/commands/plugins` 的实际扫描未单独验证 |
 | 权限：默认全允许；`"permission": {"edit":"ask","bash":"ask"}` 才触发 `session/request_permission` | probed（真实二进制，Linux/Windows） | `edit: ask` 下 `write` 触发提问，载荷含 diff | `bash: ask` 未观察 |
 | 完整审批回路：`GET /permission` → `POST /permission/{id}/reply` → 引擎继续/放弃 | probed（真实二进制，Linux/Windows） | `scripts/e2e` 的 `case2`（`once`）与 `case2b`（`reject`） | 请求的 `permission` 字段为 `write`（§4.3） |
 | 网关 → 进程宿主 → ACP 驱动 → 真实引擎 → 模型服务（mock）整条链路 | probed（真实二进制，Linux/Windows） | `npm run e2e -- --engine opencode`，见 §11 | Windows契约1.1端到端14/14 |
@@ -260,11 +311,14 @@ ACP 的 `session/prompt` 请求没有模型字段；驱动的 `AcpModelPolicy` �
 1. **Windows 原生把 `opencode.exe` 拉起来跑 ACP**：整条路径至今零真机证据。`opencode-windows-x64` 是 Bun 编译的独立可执行文件，与 Linux 版同源，但这不是运行证据。
 2. **`npm i -g opencode-ai` 在 Windows 上的实际落点**：`%APPDATA%\npm\node_modules\opencode-ai\bin\opencode.exe` 是按 npm 布局 + postinstall 目标推出来的，需要在真机上 `dir` 一次核对；`wellKnownPaths` 的顺序也该按核对结果复查。
 3. **AVX2 与 baseline 包的选择**：`opencode-windows-x64-baseline` 只在 CPU 无 AVX2 时被 postinstall 选中，本 Pack 只是把它列进探测顺序，没有真机对照。
-4. **Windows 上的技能扫描落点**：`OPENCODE_CONFIG` 只管配置文件；技能仍依赖 config home 的猜测（`<home>/.config` 与 XDG 两份镜像），真机上到底认哪一份未知。
-5. **非 Bearer scheme 的 `Authorization`**：走 `options.headers` 的路线没有端到端跑过。
-6. **`nativePermissions: "ask"` 的剩余边界**：Linux/Windows 上均已观察到 `edit: ask` 触发 `session/request_permission`，且 `allow_once` 与 `reject_once` 两条分支都实跑过（§4.2、§11）；`bash: ask` 尚未观察。
-7. **provider 包是否真的完全内置**：Linux 上没观察到网络拉取，但没有做隔离网络的对照实验；Windows 上完全未知。
-8. **`NODE_EXTRA_CA_CERTS` 对 Bun 编译产物是否生效**：文档层面成立，未实测。
+4. **Windows 上的技能扫描落点**：`OPENCODE_CONFIG` 只管配置文件；技能依赖 `OPENCODE_CONFIG_DIR/skills/` 与 `<xdgConfigHome>/opencode/skills/` 两处，Linux 上的目录解析已从二进制读实，Windows 真机上到底认哪一份未验证。
+5. **四个 `XDG_*` 在 Windows 上是否照样生效**：二进制里的解析代码没有平台分支（§3），这是代码证据不是运行证据。若真机上不认，OpenCode 的数据/缓存/锁会落到运维人员的真实档案里 —— 那是脏，不是坏（配置隔离仍由 `OPENCODE_CONFIG` / `OPENCODE_CONFIG_DIR` 保证），但**修法绝不是把 `USERPROFILE`/`APPDATA` 重定向回去**。
+6. **win32 的 `shell` 回退**：`bash.exe` 三处探测（Git 两个安装位置 + `PATH`）与写入 Windows PowerShell 绝对路径这两条分支，都只在注入式探针的单测里跑过，没有在真 Windows 上让引擎用这个 shell 执行过一次 `bash` 工具调用。
+7. **关掉 `question` 是否真的改变了什么**：Linux 的 ACP 实跑里，带不带 `tools.question=false`，模型拿到的工具表都没有 `question`（§7）。这个键是防御性的：配置被接受、无副作用，但"它挡下了一次反问"没有观察到过。
+8. **非 Bearer scheme 的 `Authorization`**：走 `options.headers` 的路线没有端到端跑过。
+9. **`nativePermissions: "ask"` 的剩余边界**：Linux/Windows 上均已观察到 `edit: ask` 触发 `session/request_permission`，且 `allow_once` 与 `reject_once` 两条分支都实跑过（§4.2、§11）；`bash: ask` 尚未观察。`external_directory: "allow"` 写进去之后被接受（整轮正常完成），但"不写就会被拦下"没有做反证实验。
+10. **provider 包是否真的完全内置**：Linux 上没观察到网络拉取，但没有做隔离网络的对照实验；Windows 上完全未知。
+11. **`NODE_EXTRA_CA_CERTS` 与 `NODE_TLS_REJECT_UNAUTHORIZED` 对 Bun 编译产物是否生效**：文档层面成立，未实测。代理变量的透传同理 —— 变量确实进了子进程环境（单测断言），但没有对着真实代理跑过。
 
 ## 9. 配置样例
 
@@ -304,11 +358,18 @@ ACP 的 `session/prompt` 请求没有模型字段；驱动的 `AcpModelPolicy` �
       },
       "models": { "acme-large-v3": { "name": "acme-large-v3" } }
     }
-  }
+  },
+  "permission": { "external_directory": "allow" },
+  "tools": { "question": false },
+  "instructions": ["<nativeDataDirectory>/opencode/assets/instructions/inst-competition/COMPETITION.md"]
 }
 ```
 
-`nativePermissions` 设为 `"ask"` 时，顶层多一段 `"permission": { "edit": "ask", "bash": "ask" }`。
+`permission` 与 `tools` 见 §4.2：前者随有效策略变化（默认 allow 时至少有 `external_directory: "allow"`；
+`nativePermissions` 设为 `"ask"` 时再加 `"edit": "ask"` 与 `"bash": "ask"`），后者恒定。`instructions` 只在集成档
+真的带了 instruction 资产时出现。win32 且找不到 `bash.exe` 时还会多一行
+`"shell": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"`（`%SystemRoot%` 展开自子进程环境，
+未设置时退回 `C:\Windows`）；其它情况不写这个字段，由 OpenCode 自己发现。
 
 不改文件也可以，用环境变量覆盖（见 §4.2）：
 
@@ -325,18 +386,26 @@ $env:PNP_OPENCODE_NATIVE_PERMISSIONS = "ask"    # engine-default | ask；空或�
 
 ## 10. 测试
 
-`tests/adapters/opencode/` 共 52 例，已由 `scripts/test.mjs unit` 覆盖（该脚本的 `unit` 组包含 `tests/unit` 与 `tests/adapters`）：
+`tests/adapters/opencode/` 共 70 例，已由 `scripts/test.mjs unit` 覆盖（该脚本的 `unit` 组包含 `tests/unit` 与 `tests/adapters`）：
 
 ```
-node scripts/test.mjs unit          # 全量；含本 Pack 的 52 例
-node --experimental-strip-types --test tests/adapters/opencode/config.test.ts        # 14 例
-node --experimental-strip-types --test tests/adapters/opencode/executable.test.ts    # 14 例
-node --experimental-strip-types --test tests/adapters/opencode/native-config.test.ts # 17 例
-node --experimental-strip-types --test tests/adapters/opencode/assets.test.ts        #  4 例
-node --experimental-strip-types --test tests/adapters/opencode/pack.test.ts          #  3 例
+node scripts/test.mjs unit          # 全量；含本 Pack 的 70 例
+node --experimental-strip-types --test tests/adapters/opencode/config.test.ts               # 15 例
+node --experimental-strip-types --test tests/adapters/opencode/executable.test.ts           # 14 例
+node --experimental-strip-types --test tests/adapters/opencode/native-config.test.ts        # 23 例
+node --experimental-strip-types --test tests/adapters/opencode/assets.test.ts               #  4 例
+node --experimental-strip-types --test tests/adapters/opencode/pack.test.ts                 #  8 例
+node --experimental-strip-types --test tests/adapters/opencode/settings-permissions.test.ts #  6 例
 ```
 
-覆盖的关键点：exe 默认解析与每条 well-known 路径（含 `${APPDATA}` 展开、未设置变量则跳过）、非 Windows 平台接受 POSIX 绝对路径而 Windows 目标仍强制 `.exe`、`{env:}` 令牌且不出现 `$VAR` 值、provider/model 的 `name` 字段、`OPENCODE_CONFIG` 指向私有文件且三份副本逐字节一致、`nativePermissions` 两种取值与 `PNP_OPENCODE_NATIVE_PERMISSIONS` 覆盖（未设置/空串/两个合法值/非法值必须失败）、配置文件不含明文凭据。
+覆盖的关键点：exe 默认解析与每条 well-known 路径（含 `${APPDATA}` 展开、未设置变量则跳过）、非 Windows 平台接受 POSIX 绝对路径而 Windows 目标仍强制 `.exe`、`{env:}` 令牌且不出现 `$VAR` 值、provider/model 的 `name` 字段、`OPENCODE_CONFIG` 指向私有文件且两份副本逐字节一致、`nativePermissions` 两种取值与 `PNP_OPENCODE_NATIVE_PERMISSIONS` 覆盖（未设置/空串/两个合法值/非法值必须失败）、配置文件不含明文凭据。本次新增：
+
+- **指令**：一个 instruction 资产经 `open()` 走完投影→生成配置后，`instructions[0]` 是绝对路径、位于私有树内、**能读出资产原文**；三个资产（其中两个同名文件）各自成条、顺序不变、目标互不覆盖。
+- **`tools`**：三种策略组合下生成的配置都带 `{"question": false}`。
+- **`external_directory`**：默认 allow 且无人指名时写 `allow`；策略指名 `ask`/`deny` 时按策略投影为 `ask`；策略指名 `allow` 时保留 `allow`（这是唯一不因"与默认相同"而被省略的键）；默认为 `ask` 时由 `"*": "ask"` 承担，不额外插入。
+- **`shell`**：注入式探针覆盖 win32 无 `bash.exe`（写 PowerShell 绝对路径，含 `SystemRoot` 缺失的兜底）、Git 两个安装位置或 `PATH` 上有 `bash.exe`（不写）、以及非 win32（不写）。
+- **子进程环境**：`caFile` → `NODE_EXTRA_CA_CERTS`；`tlsInsecure === true` 才有 `NODE_TLS_REJECT_UNAUTHORIZED=0`（`false` 与缺省都没有）；代理变量按网关环境透传、空值不导出、网关没有时子进程也没有。
+- **重定向清单**：交付的 `config/engines/opencode.json` 里 `redirect.variables` 的键恰好是四个 `XDG_*`，且 `HOME`/`USERPROFILE`/`APPDATA`/`LOCALAPPDATA` 不在其中；`buildRedirectPlan` 不会凭空造出这四个档案变量；`open()` 之后子进程 `LaunchSpec.env` 里也没有它们。
 
 驱动侧的 operation 取名（§4.3）在 `tests/adapters/acp/permission.test.ts` 与 `tests/adapters/acp/updates.test.ts`（`nameOf`）里：只有 `title=路径` + `kind=edit` 的请求，在同一 `toolCallId` 被 `tool_call` 以 `name: "write"` 宣告过之后必须记成 `write`；没宣告过时 `kind` 优先于自由文本 `title`。
 

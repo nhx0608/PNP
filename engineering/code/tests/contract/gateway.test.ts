@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { StateStore } from "../../src/storage/store.ts";
@@ -8,6 +8,7 @@ import { GatewayCore } from "../../src/core/gateway-core.ts";
 import { MockPack } from "../../src/engines/mock/pack.ts";
 import { MockIntegration } from "../../src/integration/mock/provider.ts";
 import { ConfiguredIntegration } from "../../src/integration/configured/provider.ts";
+import { loadIntegration } from "../../src/integration/index.ts";
 import { buildApp } from "../../src/gateway/app.ts";
 import { removeTree } from "../kit/fs.ts";
 
@@ -156,6 +157,111 @@ test("evaluator-facing bodies ignore unknown fields but still require the docume
       payload: { parts: [{ type: "text", text: "hello" }], model: { providerID: "test", modelID: { deep: true } } } });
     assert.equal(wrongType.statusCode, 400);
     assert.equal(wrongType.json().code, "VALIDATION_ERROR");
+  } finally {
+    await app.close(); await store.close(); await removeTree(root);
+  }
+});
+
+test("a text part may name its text `content`, the field the message projection uses", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pnp-parts-"));
+  const dir = path.join(root, "data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(dir, { recursive: true });
+  const store = new StateStore(path.join(dir, "pnp.db"));
+  const core = new GatewayCore(store, new MockPack(), new MockIntegration(), { dataDirectory: dir });
+  const app = buildApp(core);
+  try {
+    const created = await app.inject({ method: "POST", url: "/session", payload: { directory: workspace } });
+    const id = (created.json() as { id: string }).id;
+    // A client that mirrors the field name it read back from GET /session/{id}/message must not
+    // lose the case over a field name.
+    assert.equal((await app.inject({ method: "POST", url: `/session/${id}/prompt_async`,
+      payload: { parts: [{ type: "text", content: "from content" }] } })).statusCode, 204);
+    assert.equal((await app.inject({ method: "GET", url: `/session/${id}/message` })).json()
+      .find((message: { role: string }) => message.role === "user").content, "from content");
+    // The request body's own field wins when a part carries both.
+    assert.equal((await app.inject({ method: "POST", url: `/session/${id}/prompt_async`,
+      payload: { parts: [{ type: "text", text: "from text", content: "from content" }] } })).statusCode, 204);
+    const users = (await app.inject({ method: "GET", url: `/session/${id}/message` })).json()
+      .filter((message: { role: string }) => message.role === "user");
+    assert.equal(users.at(-1).content, "from text");
+    // A text part with neither field is still not a recognised part.
+    assert.equal((await app.inject({ method: "POST", url: `/session/${id}/prompt_async`,
+      payload: { parts: [{ type: "text" }] } })).statusCode, 400);
+  } finally {
+    await app.close(); await store.close(); await removeTree(root);
+  }
+});
+
+test("a prompt stopped by the caller's own abort returns 204 and records a cancelled turn", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pnp-abort-"));
+  const dir = path.join(root, "data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(dir, { recursive: true });
+  const store = new StateStore(path.join(dir, "pnp.db"));
+  const core = new GatewayCore(store, new MockPack({ delayMs: 500 }), new MockIntegration(),
+    { dataDirectory: dir, cancelGraceMs: 100 });
+  const app = buildApp(core);
+  try {
+    const created = await app.inject({ method: "POST", url: "/session", payload: { directory: workspace } });
+    const id = (created.json() as { id: string }).id;
+    const prompt = app.inject({ method: "POST", url: `/session/${id}/prompt_async`,
+      payload: { parts: [{ type: "text", text: "hello" }] } });
+    for (let attempt = 0; attempt < 200; attempt++) {
+      if ((await app.inject({ method: "GET", url: "/session/status" })).json()[id]?.type === "busy") break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal((await app.inject({ method: "POST", url: `/session/${id}/abort` })).statusCode, 200);
+    // contracts.md section 3.3: the stop the caller asked for is a normal ending, not a conflict.
+    assert.equal((await prompt).statusCode, 204);
+    const history = (await app.inject({ method: "GET", url: `/session/${id}/message` })).json();
+    assert.equal(history.at(-1).info.finish, "cancelled");
+    assert.equal(JSON.stringify(history.at(-1).parts).includes("step-finish"), false);
+    assert.equal((await app.inject({ method: "GET", url: "/session/status" })).json()[id].type, "idle");
+  } finally {
+    await app.close(); await store.close(); await removeTree(root);
+  }
+});
+
+test("the model identifier the environment supplies is the one model.resolved publishes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pnp-model-id-"));
+  const dir = path.join(root, "data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(dir, { recursive: true });
+  const settings = path.join(root, "settings.json");
+  await writeFile(settings, JSON.stringify({
+    version: 1,
+    common: {
+      model: {
+        default: { providerID: "competition" },
+        models: [{
+          selection: { providerID: "competition", modelID: "default" },
+          modelIDEnvironment: "PNP_MODEL_ID",
+          endpointEnvironment: "PNP_MODEL_ENDPOINT",
+          protocol: "openai-chat",
+        }],
+      },
+      permissions: { default: "allow", operations: {} },
+    },
+    cores: { mock: {} },
+  }));
+  const store = new StateStore(path.join(dir, "pnp.db"));
+  const integration = await loadIntegration({
+    kind: "configured", development: false, engineDevelopmentOnly: false, engineId: "mock",
+    settingsPath: settings,
+    environment: { PNP_MODEL_ENDPOINT: "https://model.test.invalid/v1", PNP_MODEL_ID: "endpoint-model" },
+  });
+  const core = new GatewayCore(store, new MockPack(), integration, { dataDirectory: dir });
+  const app = buildApp(core);
+  try {
+    const created = await app.inject({ method: "POST", url: "/session", payload: { directory: workspace } });
+    const id = (created.json() as { id: string }).id;
+    assert.equal((await app.inject({ method: "POST", url: `/session/${id}/prompt_async`,
+      payload: { parts: [{ type: "text", text: "hello" }], model: { providerID: "evaluator", modelID: "unknown-1" } } })).statusCode, 204);
+    const resolved = (await core.eventsSince(0)).filter((event) => event.type === "model.resolved").at(-1);
+    // The trace shows what the endpoint was actually asked for, not the placeholder in the file.
+    assert.deepEqual(resolved?.properties.selected, { providerID: "competition", modelID: "endpoint-model" });
+    assert.deepEqual(resolved?.properties.requested, { providerID: "evaluator", modelID: "unknown-1" });
   } finally {
     await app.close(); await store.close(); await removeTree(root);
   }

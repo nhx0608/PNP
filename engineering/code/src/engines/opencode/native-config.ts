@@ -1,4 +1,5 @@
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import type { Json, PermissionEffect, PermissionPolicy, ResolvedModel } from "../../contracts/index.ts";
 import { PnpError } from "../../core/errors.ts";
@@ -6,12 +7,23 @@ import type { OpenCodeEngineConfig, OpenCodeNativePermissions } from "./config.t
 
 const OPENCODE_ROOT_SEGMENT = "opencode";
 const NATIVE_CONFIG_FILENAME = "opencode.json";
+const CONFIG_DIRECTORY_SEGMENT = "config";
 /**
- * OpenCode's documented "custom path" discovery step (opencode.ai/docs/config/): it names one exact file and
- * needs no guess about where a config home lives on Windows. Confirmed honoured by a real opencode 1.18.29
- * process. This is the primary route to the private config; the mirrored config homes are only a fallback.
+ * OpenCode's documented "custom path" discovery step (opencode.ai/docs/config/ "Custom path"): it names one
+ * exact file and needs no guess about where a config home lives on Windows. Confirmed honoured by a real
+ * opencode 1.18.29 process. This is the primary route to the private config; the mirrored config home is only
+ * a fallback.
  */
 export const OPENCODE_CONFIG_ENVIRONMENT_VARIABLE = "OPENCODE_CONFIG";
+/**
+ * The documented "Custom directory" step: "Specify a custom config directory using the `OPENCODE_CONFIG_DIR`
+ * environment variable. This directory will be searched for agents, commands, modes, and plugins just like the
+ * standard `.opencode` directory, and should follow the same structure." (opencode.ai/docs/config/, quoted from
+ * the upstream config reference). Together with the XDG redirects it replaces the former HOME/USERPROFILE/APPDATA
+ * redirects as the way this Pack keeps OpenCode's own discovery inside the session-private tree: the real user
+ * profile now stays visible to anything the model launches (Office COM, Outlook), which those redirects broke.
+ */
+export const OPENCODE_CONFIG_DIRECTORY_ENVIRONMENT_VARIABLE = "OPENCODE_CONFIG_DIR";
 const ALLOW_ALL: PermissionPolicy = { default: "allow", operations: {} };
 
 /** Environment-variable substitution understood by OpenCode's config loader. `$VAR` is NOT expanded. */
@@ -25,20 +37,31 @@ export function environmentToken(variableName: string): string {
  * the user's workspace (`Session.directory`) and never under the gateway host's real HOME/APPDATA.
  */
 export interface RedirectPlan {
-  /** Env var name -> absolute private directory. Applied on top of the shared host's baseEnvironment(), which
-   *  otherwise inherits the gateway's real HOME/USERPROFILE/APPDATA/LOCALAPPDATA (see src/runtime/process-host.ts). */
+  /** Env var name -> absolute private directory, from `config/engines/opencode.json#redirect.variables`. Applied
+   *  on top of the shared host's baseEnvironment(). HOME/USERPROFILE/APPDATA/LOCALAPPDATA are deliberately NOT
+   *  in that list any more: the child must see the operator's real profile so Office COM / Outlook and anything
+   *  else the model launches find their per-user state (docs/competition-readiness.md B8, D4). */
   env: Readonly<Record<string, string>>;
   /** The one deterministic file OPENCODE_CONFIG points at. Discovery does not depend on guessing a config home. */
   configFile: string;
   /**
-   * Fallback "config home" directories the same content is mirrored into. OpenCode's documented discovery order
-   * is remote `.well-known` -> global `~/.config/opencode/opencode.json` -> `OPENCODE_CONFIG` -> project
-   * `opencode.json` -> `.opencode` -> `OPENCODE_CONFIG_CONTENT` -> managed `%ProgramData%\opencode`; neither
-   * XDG_CONFIG_HOME nor %APPDATA% appears in it. The global entry is what these mirrors cover (HOME is
-   * redirected, so `~` is private), and the XDG mirror costs one extra file for the case where the loader turns
-   * out to honour XDG_CONFIG_HOME after all. See docs/engines/opencode.md section 3.
+   * The session-private directory OPENCODE_CONFIG_DIR points at, structured like a `.opencode` directory
+   * (`skills/`, `agents/`, `commands/`, `plugins/`, ...). Always inside the private native tree.
+   */
+  configDirectory: string;
+  /**
+   * "Config home" roots the same config content is mirrored into, one `opencode/opencode.json` per root. This is
+   * the second step of OpenCode's documented discovery order (remote `.well-known` -> global
+   * `<config home>/opencode/opencode.json` -> `OPENCODE_CONFIG` -> project `opencode.json` -> `.opencode` ->
+   * `OPENCODE_CONFIG_CONTENT` -> managed config), not a guess: the engine's global directory module resolves its
+   * config home as `XDG_CONFIG_HOME || ~/.config` with no platform branch, so a redirected XDG_CONFIG_HOME *is*
+   * the global config location. Verified on a real 1.18.29 process, which loaded this mirror with OPENCODE_CONFIG
+   * removed from its environment. Only redirected roots are listed: with HOME no longer redirected, the
+   * operator's real `~/.config` must never be written to. See docs/engines/opencode.md #3.
    */
   configRoots: readonly string[];
+  /** Every directory a projected skill is copied into, so assets.ts and this module agree without shared state. */
+  skillRoots: readonly string[];
 }
 export function buildRedirectPlan(nativeDataDirectory: string, config: OpenCodeEngineConfig): RedirectPlan {
   const base = path.join(nativeDataDirectory, OPENCODE_ROOT_SEGMENT);
@@ -46,10 +69,69 @@ export function buildRedirectPlan(nativeDataDirectory: string, config: OpenCodeE
   for (const [variable, subdirectory] of Object.entries(config.redirect.variables)) {
     env[variable] = path.join(base, subdirectory);
   }
-  const homeDirectory = env["HOME"] ?? path.join(base, "home");
-  const xdgConfigHome = env["XDG_CONFIG_HOME"] ?? path.join(base, "xdg-config");
-  const configRoots = [...new Set([path.join(homeDirectory, ".config"), xdgConfigHome])];
-  return { env, configFile: path.join(base, NATIVE_CONFIG_FILENAME), configRoots };
+  const configDirectory = path.join(base, CONFIG_DIRECTORY_SEGMENT);
+  // A config home is only a mirror target when this Pack owns it. `env["HOME"]` is present only if a deployment
+  // put HOME back into redirect.variables; the shipped config does not, so the sole mirror is the XDG one.
+  const redirectedHome = env["HOME"];
+  const configRoots = [...new Set([
+    ...(env["XDG_CONFIG_HOME"] === undefined ? [] : [env["XDG_CONFIG_HOME"]]),
+    ...(redirectedHome === undefined ? [] : [path.join(redirectedHome, ".config")]),
+  ])];
+  const skillRoots = [
+    path.join(configDirectory, "skills"),
+    ...configRoots.map((root) => path.join(root, OPENCODE_ROOT_SEGMENT, "skills")),
+  ];
+  return { env, configFile: path.join(base, NATIVE_CONFIG_FILENAME), configDirectory, configRoots, skillRoots };
+}
+
+/**
+ * How the generated config's `shell` value is decided. Injectable so both outcomes are covered by tests on any
+ * host OS: the probe never touches the real filesystem in a test, and the Windows branch is exercised on Linux.
+ */
+export interface NativeShellProbe {
+  platform: string;
+  environment: Readonly<Record<string, string | undefined>>;
+  /** True when the absolute path names an existing file. */
+  fileExists: (candidate: string) => boolean;
+}
+export function defaultShellProbe(): NativeShellProbe {
+  return { platform: process.platform, environment: process.env, fileExists: (candidate) => existsSync(candidate) };
+}
+/** Git for Windows' two shipped bash.exe locations, in the order Git's own installer creates them. */
+const WINDOWS_BASH_CANDIDATES: readonly string[] = [
+  "C:\\Program Files\\Git\\bin\\bash.exe",
+  "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+];
+const WINDOWS_POWERSHELL_SUFFIX = "System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+function withoutTrailingSeparators(value: string): string {
+  return value.replace(/[\\/]+$/, "");
+}
+/**
+ * Decides the `shell` entry of the generated opencode.json.
+ *
+ * Upstream reference, "Shell" section: "You can configure the shell used for the interactive terminal using the
+ * `shell` option. Compatible shells are also used for agent tool calls." and "If not specified, OpenCode will
+ * automatically discover and use a sensible default based on your operating system (e.g. `pwsh` or `cmd.exe` on
+ * Windows ...). You can provide an absolute path or a short name." (opencode.ai/docs/config/ #Shell.)
+ *
+ * The competition sandbox cannot be assumed to have Git Bash, and a `bash` tool call that lands on a missing
+ * shell is a lost task, not a recoverable error. So on win32 with no bash.exe in either Git for Windows
+ * location and none on PATH, the shell is pinned to the absolute path of Windows PowerShell 5.1, which ships
+ * with the OS. When bash.exe is present the field is left out and OpenCode keeps its own discovery; off win32
+ * the field is left out as well.
+ */
+export function resolveNativeShell(probe: NativeShellProbe = defaultShellProbe()): string | undefined {
+  if (probe.platform !== "win32") return undefined;
+  for (const candidate of WINDOWS_BASH_CANDIDATES) if (probe.fileExists(candidate)) return undefined;
+  // Windows PATH is ";"-separated regardless of the host this code is compiled on, and entries may be quoted.
+  const pathValue = probe.environment["PATH"] ?? probe.environment["Path"] ?? "";
+  for (const entry of pathValue.split(";")) {
+    const directory = withoutTrailingSeparators(entry.trim().replaceAll('"', ""));
+    if (directory.length === 0) continue;
+    if (probe.fileExists(`${directory}\\bash.exe`)) return undefined;
+  }
+  const systemRoot = probe.environment["SystemRoot"] ?? probe.environment["windir"] ?? "C:\\Windows";
+  return `${withoutTrailingSeparators(systemRoot)}\\${WINDOWS_POWERSHELL_SUFFIX}`;
 }
 
 function sanitizeEnvSuffix(name: string): string {
@@ -136,10 +218,10 @@ export function resolveProviderPackage(protocol: ResolvedModel["protocol"]): str
 
 /**
  * PNP permissions are resolved before the Engine Pack. OpenCode still needs a native permission block for any
- * operation that must reach the gateway: without it OpenCode's own default is allow, so the gateway would never
- * get a chance to apply an `ask` or `deny` policy. A PNP deny is therefore projected as native `ask`; the gateway
- * remains the authority and returns the denial. Core-specific operation names are preferred. A few stable aliases
- * are mapped to OpenCode's names so common settings can cover the obvious file/shell cases.
+ * operation that must reach the gateway: for most operations OpenCode's own default is allow, so the gateway
+ * would never get a chance to apply an `ask` or `deny` policy. A PNP deny is therefore projected as native
+ * `ask`; the gateway remains the authority and returns the denial. Core-specific operation names are preferred.
+ * A few stable aliases are mapped to OpenCode's names so common settings can cover the obvious file/shell cases.
  */
 function openCodePermissionName(operation: string): string {
   const aliases: Readonly<Record<string, string>> = {
@@ -158,6 +240,27 @@ function openCodePermissionName(operation: string): string {
 function nativeEffect(effect: PermissionEffect): "allow" | "ask" {
   return effect === "allow" ? "allow" : "ask";
 }
+/** OpenCode's permission key for touching paths outside the session directory (T03-opencode.md line 151). */
+const EXTERNAL_DIRECTORY_PERMISSION = "external_directory";
+/** OpenCode's name for the tool that asks the user a question; always disabled, see buildNativeConfigPayload. */
+export const QUESTION_TOOL = "question";
+/**
+ * Projects the effective PNP policy into OpenCode's `permission` block.
+ *
+ * "OpenCode allows everything by default" -- which is what the upstream config reference says under
+ * "Permissions" ("By default, opencode **allows all operations** without requiring explicit approval") -- is
+ * not literally true, and the difference decides whether an unattended run can do its job: `external_directory`
+ * and `doom_loop` default to `ask`, and reading `.env` defaults to `deny` (docs/research/T03-opencode.md line
+ * 151, cross-checked against opencode's permissions docs). `external_directory` is the one that matters here,
+ * because every evaluation task reads or writes absolute paths outside the session directory and there is
+ * nobody at the keyboard to answer. So whenever the effective policy default is `allow` and no operation names
+ * `external_directory`, it is written out explicitly as `allow`. A policy that does name that operation, or one
+ * whose default is not `allow`, is projected untouched: an operator who asked for prompting never gets it
+ * silently removed.
+ *
+ * `external_directory` is also the one name for which an explicit `allow` under an `allow` default is not
+ * redundant, so it is the one name the generic "same as the default, leave it out" rule does not drop.
+ */
 export function buildNativePermissionConfig(
   policy: PermissionPolicy,
   legacyNativePermissions: OpenCodeNativePermissions = "engine-default",
@@ -167,10 +270,15 @@ export function buildNativePermissionConfig(
   for (const [operation, effect] of Object.entries(policy.operations)) {
     const name = openCodePermissionName(operation);
     const value = nativeEffect(effect);
-    if (policy.default === "allow" && value === "allow") continue;
+    // Redundant with the default for every other key; for external_directory the engine default is `ask`, so
+    // dropping an explicit allow here would silently turn the operator's allow into a prompt nobody answers.
+    if (policy.default === "allow" && value === "allow" && name !== EXTERNAL_DIRECTORY_PERMISSION) continue;
     const existing = projected[name];
     projected[name] = existing === "ask" || value === "ask" ? "ask" : "allow";
   }
+  const namesExternalDirectory = Object.keys(policy.operations)
+    .some((operation) => openCodePermissionName(operation) === EXTERNAL_DIRECTORY_PERMISSION);
+  if (policy.default === "allow" && !namesExternalDirectory) projected[EXTERNAL_DIRECTORY_PERMISSION] = "allow";
   // Compatibility with the old deployment switch. It can force prompts on, but it can no longer turn off
   // prompts required by unified settings.
   if (legacyNativePermissions === "ask") {
@@ -192,9 +300,29 @@ export interface NativeConfigPayload {
  *
  * A custom OpenAI-compatible provider requires `npm`, a display `name`, `options.baseURL` and a display `name`
  * on each model, so all four are written. `share` is pinned to "disabled": nothing about a competition-session
- * prompt should leave the host via opencode's share links. `permission` is written only when the effective
- * policy asks for something (see buildNativePermissionConfig); OpenCode allows everything by default, and
- * without that block it never raises ACP `session/request_permission` at all.
+ * prompt should leave the host via opencode's share links. `permission` carries the projected policy plus the
+ * explicit `external_directory` allow (see buildNativePermissionConfig); with no block at all the engine never
+ * raises ACP `session/request_permission`, and `external_directory` would stay at its native `ask`.
+ *
+ * `tools` disables the `question` tool. Two independent sources fix the shape and the name. The upstream config
+ * reference, "Tools" section: "You can manage the tools an LLM can use through the `tools` option", with the
+ * example `"tools": { "write": false, "bash": false }` -- a map of tool name -> boolean (opencode.ai/docs/config/
+ * #Tools). And the config schema the 1.18.29 binary itself publishes, where `tools` is
+ * `{"type":"object","additionalProperties":{"type":"boolean"}}` and `question` is one of the named permission
+ * keys next to `external_directory`, `doom_loop`, `bash` and the rest; the TUI in the same binary registers a
+ * renderer under `{name:"question"}`, and the channel is `question.asked` + `POST /question/{id}/reply`
+ * (docs/research/T03-opencode.md lines 40, 151, 161). The gateway runs unattended: a question would block the run
+ * until the interaction deadline and then be answered as a refusal, so the tool must not exist for the model in
+ * the first place. This is a guard, not an observed removal -- a real 1.18.29 ACP run on Linux offered the model
+ * `bash, edit, glob, grep, read, skill, task, todowrite, webfetch, write` and no `question` with or without the
+ * key, so the ACP route may not register it at all; the config is accepted either way.
+ *
+ * `shell` is written only when resolveNativeShell decides one is needed (win32 without bash.exe).
+ *
+ * `instructions` lists the absolute path of every instruction asset this Pack projected, in the order the
+ * assets arrived, deduplicated. The paths are the copies under the private native directory
+ * (assets.ts#instructionAssetTargetPath), so the file the engine reads is one this Pack wrote and can vouch
+ * for -- never a path that only exists on the gateway host.
  */
 export function buildNativeConfigPayload(
   model: ResolvedModel,
@@ -202,6 +330,7 @@ export function buildNativeConfigPayload(
   headerEnvironmentPrefix: string,
   nativePermissions: OpenCodeNativePermissions = "engine-default",
   permissionPolicy: PermissionPolicy = ALLOW_ALL,
+  shell: string | undefined = undefined,
 ): NativeConfigPayload {
   if (model.endpoint === undefined || model.endpoint.length === 0) {
     throw new PnpError("ENGINE_MODEL_ENDPOINT_MISSING", "The resolved model has no endpoint; OpenCode requires provider.options.baseURL.", 502);
@@ -216,6 +345,9 @@ export function buildNativeConfigPayload(
     ...(Object.keys(headerMapping.configTokens).length > 0 ? { headers: { ...headerMapping.configTokens } } : {}),
   };
   const permission = buildNativePermissionConfig(permissionPolicy, nativePermissions);
+  // path.resolve normalizes and guarantees an absolute entry: a relative path in `instructions` would be
+  // resolved against the config file's directory by OpenCode, which is not where the asset was copied.
+  const instructions = [...new Set(instructionAbsolutePaths.map((entry) => path.resolve(entry)))];
   const json: Json = {
     "$schema": "https://opencode.ai/config.json",
     model: `${providerId}/${modelId}`,
@@ -229,23 +361,30 @@ export function buildNativeConfigPayload(
       },
     },
     ...(permission === undefined ? {} : { permission }),
-    ...(instructionAbsolutePaths.length > 0 ? { instructions: [...instructionAbsolutePaths] } : {}),
+    tools: { [QUESTION_TOOL]: false },
+    ...(shell === undefined ? {} : { shell }),
+    ...(instructions.length > 0 ? { instructions } : {}),
   };
   return { json, secretEnv: headerMapping.secretEnv };
 }
 
 export interface WrittenNativeConfig {
-  /** Redirect variables plus OPENCODE_CONFIG, which names primaryConfigPath. */
+  /** Redirect variables plus OPENCODE_CONFIG (names primaryConfigPath) and OPENCODE_CONFIG_DIR. */
   redirectEnv: Readonly<Record<string, string>>;
   secretEnv: Readonly<Record<string, string>>;
   /** The file OPENCODE_CONFIG points at. */
   primaryConfigPath: string;
+  /** The directory OPENCODE_CONFIG_DIR points at. */
+  configDirectory: string;
   /** Every path the config was written to: primaryConfigPath first, then the fallback mirrors. */
   configPaths: readonly string[];
 }
 /**
  * Ensures every redirected directory exists, writes the private config to the deterministic OPENCODE_CONFIG
  * path, and mirrors identical content into the fallback config homes.
+ *
+ * `shell` defaults to the real probe (resolveNativeShell), which reads the host platform and PATH; pass an
+ * explicit value -- including `undefined` via an injected probe result -- to keep a test off the real host.
  */
 export async function writeNativeConfig(
   nativeDataDirectory: string,
@@ -253,6 +392,7 @@ export async function writeNativeConfig(
   model: ResolvedModel,
   instructionAbsolutePaths: readonly string[],
   permissionPolicy: PermissionPolicy = ALLOW_ALL,
+  shell: string | undefined = resolveNativeShell(),
 ): Promise<WrittenNativeConfig> {
   const plan = buildRedirectPlan(nativeDataDirectory, engineConfig);
   const payload = buildNativeConfigPayload(
@@ -261,8 +401,10 @@ export async function writeNativeConfig(
     engineConfig.headerEnvironmentPrefix,
     engineConfig.nativePermissions,
     permissionPolicy,
+    shell,
   );
   for (const directory of Object.values(plan.env)) await mkdir(directory, { recursive: true });
+  await mkdir(plan.configDirectory, { recursive: true });
   const serialized = `${JSON.stringify(payload.json, null, 2)}\n`;
   await mkdir(path.dirname(plan.configFile), { recursive: true });
   await writeFile(plan.configFile, serialized, "utf8");
@@ -275,9 +417,14 @@ export async function writeNativeConfig(
     configPaths.push(file);
   }
   return {
-    redirectEnv: { ...plan.env, [OPENCODE_CONFIG_ENVIRONMENT_VARIABLE]: plan.configFile },
+    redirectEnv: {
+      ...plan.env,
+      [OPENCODE_CONFIG_ENVIRONMENT_VARIABLE]: plan.configFile,
+      [OPENCODE_CONFIG_DIRECTORY_ENVIRONMENT_VARIABLE]: plan.configDirectory,
+    },
     secretEnv: payload.secretEnv,
     primaryConfigPath: plan.configFile,
+    configDirectory: plan.configDirectory,
     configPaths,
   };
 }

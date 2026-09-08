@@ -21,7 +21,7 @@ function config(): OpenCodeEngineConfig {
       node: { configuredPath: null, environmentVariable: "PNP_OPENCODE_NODE_PATH", wellKnownPaths: [], fallbackToHostRuntime: true },
       script: { configuredPath: null, environmentVariable: "PNP_OPENCODE_SCRIPT_PATH", wellKnownPaths: [] },
     },
-    redirect: { variables: { XDG_CONFIG_HOME: "xdg-config", HOME: "home" } },
+    redirect: { variables: { XDG_CONFIG_HOME: "xdg-config" } },
     model: { policy: "launch" },
     headerEnvironmentPrefix: "PNP_OPENCODE_HEADER_",
     timeouts: { requestMs: 30000, cancelGraceMs: 2000, cancelAckMs: 1000 },
@@ -52,7 +52,7 @@ test("a required asset of an unsupported kind fails before anything is written",
       projectOpenCodeAssets(config(), { assets: [asset], session: fakeSession(path.join(root, "workspace")), nativeDataDirectory }),
       { code: "ENGINE_ASSET_KIND_UNSUPPORTED" },
     );
-    await assert.rejects(readFile(path.join(nativeDataDirectory, "opencode", "home", ".config", "opencode", "opencode.json")));
+    await assert.rejects(readFile(path.join(nativeDataDirectory, "opencode", "xdg-config", "opencode", "opencode.json")));
   } finally {
     await removeTree(root);
   }
@@ -72,7 +72,7 @@ test("an optional asset of an unsupported kind is skipped, not silently dropped 
   }
 });
 
-test("a skill asset is mirrored to every candidate config root, never into the workspace", async () => {
+test("a skill asset is mirrored to the private config directory and config home, never into the workspace", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "pnp-opencode-assets-"));
   try {
     const sourceRoot = path.join(root, "source");
@@ -81,7 +81,12 @@ test("a skill asset is mirrored to every candidate config root, never into the w
     await mkdir(workspace, { recursive: true });
     const asset = await makeAsset(sourceRoot, "skill-office", "skill", "SKILL.md", "# Office skill\n", true);
     const targets = skillAssetTargetPaths(nativeDataDirectory, config(), asset);
-    assert.equal(targets.length, 2);
+    // OPENCODE_CONFIG_DIR/skills/<id>/ (the documented .opencode structure) plus the private config home's
+    // opencode/skills/<id>/ (the documented global skill path). Both live inside the private native tree.
+    assert.deepEqual(targets, [
+      path.join(nativeDataDirectory, "opencode", "config", "skills", "skill-office", "SKILL.md"),
+      path.join(nativeDataDirectory, "opencode", "xdg-config", "opencode", "skills", "skill-office", "SKILL.md"),
+    ]);
     const result = await projectOpenCodeAssets(config(), { assets: [asset], session: fakeSession(workspace), nativeDataDirectory }) as { projected: { id: string; targets: string[] }[] };
     assert.equal(result.projected.length, 1);
     assert.deepEqual(result.projected[0]!.targets, targets);
