@@ -979,8 +979,8 @@
       "path": "code/tests/adapters/office-mcp/server.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 5983,
-      "sha256": "6aad26de2c59824eefdd16ffc5d78e4c99f76a35b3fba4aae30f3a0a0f7b9dda"
+      "bytes": 6455,
+      "sha256": "a50381a16fffd5e041126dc4335b58967d9a3b3aec43c424ad82ce5bf20f6b98"
     },
     {
       "path": "code/tests/adapters/office-mcp/xlsx.test.ts",
