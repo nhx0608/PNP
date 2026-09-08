@@ -21,6 +21,8 @@ test("pnp-local validates StrictMode package candidates and explicit Pi launch c
   });
   await writeFile(path.join(configRoot, "zero.json"), config([], "PNP_TEST_ZERO_PATH"));
   await writeFile(path.join(configRoot, "multiple.json"), config(["first", "second"], "PNP_TEST_MULTIPLE_PATH"));
+  // A pi.json with no distribution block: the launcher must refuse to guess an installer for it.
+  await writeFile(path.join(configRoot, "pi.json"), JSON.stringify({ id: "pi", engineVersion: null, capabilityEvidence: "unverified" }));
   const fakeExecutable = path.join(root, "fake-engine.cmd");
   await writeFile(fakeExecutable, "@echo off\r\necho %PNP_TEST_REPORTED_VERSION% & exit /b 0\r\n");
   const fakePiEntry = path.join(root, "fake-pi-entry.mjs");
@@ -93,6 +95,9 @@ try {
       if ($env:PNP_PI_EXECUTABLE -ne $env:PNP_TEST_FAKE_EXE) { throw "Pi executable configuration was not preserved" }
     }
     "missing-configuration" {
+      # The shipped pi.json declares an installable distribution; this case covers an engine
+      # config without one, so it runs against the fixture code root's bare pi.json.
+      $script:CodeRoot = $env:PNP_TEST_FIXTURE_CODE_ROOT
       Ensure-EngineDependency "pi" "unused-npm.cmd" $env:PNP_TEST_NODE
     }
     "invalid-executable" {

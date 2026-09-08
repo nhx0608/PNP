@@ -374,6 +374,6 @@ file, and the profile's `tools` are not read.
 `PNP_CONFIGURED_POLICY_OVERRIDES` remains a final deployment-side operation override and is applied
 after the resolved settings policy.
 
-`PNP_MODEL_STRICT=1` makes a request that names an unconfigured model fail with 403 instead of
-running on the effective default. Leave it unset unless the caller's model identifiers are known to
-match this file.
+A request that names an unconfigured model runs on the effective default (the `model.resolved`
+event records the substitution). This is deliberate for an evaluation run, where the caller's
+model identifiers are not under this file's control.

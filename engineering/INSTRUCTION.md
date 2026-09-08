@@ -190,10 +190,15 @@ pnp.cmd start
 
 ```json
 [
-  {"id":"msg_…","role":"user","content":"请基于 …","created_at":"…","parts":[{"type":"text","content":"请基于 …"}]},
+  {"id":"msg_…","role":"user","content":"请基于 …","created_at":"…"},
+  {"id":"msg_…","role":"assistant","content":"","created_at":"…",
+   "tool_calls":[{"id":"call_…","name":"office.docx_extract","arguments":{"path":"D:\\test_data\\x.docx"}}],
+   "info":{"role":"assistant","finish":"tool-calls"},
+   "parts":[{"type":"tool","tool":"office.docx_extract","callID":"call_…","state":{"status":"completed","title":"office.docx_extract"}}]},
+  {"id":"msg_…","role":"tool","tool_call_id":"call_…","tool_name":"office.docx_extract","content":"{…}","created_at":"…"},
   {"id":"msg_…","role":"assistant","content":"已生成 D:\\test_data\\task_违约风险分析.md",
    "created_at":"…","info":{"role":"assistant","finish":"stop"},
-   "parts":[{"type":"text","content":"已生成 …"},{"type":"step-finish"}]}
+   "parts":[{"type":"text","content":"已生成 …","text":"已生成 …"},{"type":"step-finish"}]}
 ]
 ```
 
