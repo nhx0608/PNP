@@ -189,6 +189,14 @@ export async function fsDelete(options: {
     matched.push(absolute);
   }
   if (hasSelector) {
+    // The root is checked before anything is scanned: pointing the tool at a drive root has to fail
+    // immediately, not after walking the whole filesystem looking for candidates.
+    const root = requireAbsolutePath("root", options.root as string);
+    const reason = protectedLocationReason(root);
+    if (reason !== null) {
+      throw new OfficeToolError("PROTECTED_LOCATION",
+        `拒绝以受保护目录为起点删除 / refusing to delete under a protected directory: ${root} (${reason})`);
+    }
     if ((options.nameContains === undefined || options.nameContains.length === 0)
       && (options.extensions === undefined || options.extensions.length === 0)) {
       throw new OfficeToolError("INVALID_ARGUMENT",

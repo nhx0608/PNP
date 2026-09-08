@@ -30,15 +30,15 @@ function powerShellExecutable(): string {
 }
 
 export async function appOpen(name: string, timeoutMs = 20_000): Promise<AppOpenResult> {
-  if (process.platform !== "win32") {
-    throw new OfficeToolError("PLATFORM_UNSUPPORTED",
-      `app_open 只能在 Windows 上使用（当前平台 ${process.platform}）/ app_open is Windows-only, current platform is ${process.platform}`);
-  }
   const trimmed = name.trim();
   if (!APPLICATION_NAME.test(trimmed)) {
     throw new OfficeToolError("INVALID_ARGUMENT",
       `name 只能是应用名（字母、数字、空格、. _ + -），不能包含路径分隔符或 shell 元字符 /` +
       ` name must be a bare application name without path separators or shell metacharacters: ${JSON.stringify(name)}`);
+  }
+  if (process.platform !== "win32") {
+    throw new OfficeToolError("PLATFORM_UNSUPPORTED",
+      `app_open 只能在 Windows 上使用（当前平台 ${process.platform}）/ app_open is Windows-only, current platform is ${process.platform}`);
   }
   const executable = powerShellExecutable();
   const argv = ["-NoProfile", "-NonInteractive", "-Command", `Start-Process -FilePath '${trimmed}'`];

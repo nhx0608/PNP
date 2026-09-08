@@ -118,6 +118,9 @@ export async function writeFixturePptx(file: string): Promise<void> {
     const slide = deck.addSlide();
     slide.addText(title, { x: 0.5, y: 0.4, w: 8.5, h: 1, fontSize: 28, bold: true });
     slide.addText([`要点 ${index + 1}A`, `要点 ${index + 1}B`].join("\n"), { x: 0.6, y: 1.7, w: 8.4, h: 3 });
+    // A second shape whose text shares a prefix with the title: an ambiguous match has to be an
+    // error, and a fixture where every shape is unique could never show that.
+    slide.addText(`第 ${index + 1} 页 页脚`, { x: 0.6, y: 4.8, w: 8.4, h: 0.4, fontSize: 12 });
     slide.addNotes(`备注 ${index + 1}`);
   });
   await deck.writeFile({ fileName: file });
