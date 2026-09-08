@@ -74,10 +74,3 @@ export async function prepareOutputPath(field: string, value: string, overwrite:
   await mkdir(path.dirname(absolute), { recursive: true });
   return absolute;
 }
-
-export function samePath(left: string, right: string): boolean {
-  const normalize = (value: string): string => path.normalize(value).replace(/[\\/]+$/, "");
-  const a = normalize(left);
-  const b = normalize(right);
-  return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
-}

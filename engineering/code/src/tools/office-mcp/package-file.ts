@@ -25,7 +25,7 @@ export async function openPackage(file: string): Promise<OfficePackage> {
   }
 }
 
-export async function readPart(pkg: OfficePackage, part: string): Promise<string> {
+async function readPart(pkg: OfficePackage, part: string): Promise<string> {
   const entry = pkg.zip.file(part);
   if (entry === null) {
     throw new OfficeToolError("UNSUPPORTED_FORMAT", `包内缺少部件 / package part missing: ${part} (${pkg.path})`);
@@ -33,7 +33,7 @@ export async function readPart(pkg: OfficePackage, part: string): Promise<string
   return entry.async("string");
 }
 
-export async function readOptionalPart(pkg: OfficePackage, part: string): Promise<string | null> {
+async function readOptionalPart(pkg: OfficePackage, part: string): Promise<string | null> {
   const entry = pkg.zip.file(part);
   return entry === null ? null : entry.async("string");
 }
@@ -87,7 +87,7 @@ export async function readRelationshipTree(pkg: OfficePackage, ownerPart: string
   return xml === null ? null : parseXml(xml);
 }
 
-export function relationshipElements(tree: XmlNode[]): XmlNode[] {
+function relationshipElements(tree: XmlNode[]): XmlNode[] {
   const root = tree.find((node) => tagName(node) === "Relationships");
   return root === undefined ? [] : childrenOf(root).filter((node) => tagName(node) === "Relationship");
 }

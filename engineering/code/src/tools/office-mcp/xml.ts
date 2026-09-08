@@ -11,8 +11,8 @@ import { XMLBuilder, XMLParser } from "fast-xml-parser";
 export type XmlAttributes = Record<string, string>;
 export type XmlNode = Record<string, unknown>;
 
-export const ATTRIBUTES_KEY = ":@";
-export const TEXT_KEY = "#text";
+const ATTRIBUTES_KEY = ":@";
+const TEXT_KEY = "#text";
 
 const PARSER_OPTIONS = {
   ignoreAttributes: false,
@@ -80,11 +80,11 @@ export function textNode(value: string): XmlNode {
   return { [TEXT_KEY]: value };
 }
 
-export function isText(node: XmlNode): boolean {
+function isText(node: XmlNode): boolean {
   return TEXT_KEY in node;
 }
 
-export function textValue(node: XmlNode): string {
+function textValue(node: XmlNode): string {
   const value = node[TEXT_KEY];
   return typeof value === "string" ? value : value === undefined || value === null ? "" : String(value);
 }
@@ -101,10 +101,6 @@ export function flattenText(nodes: XmlNode[]): string {
 
 export function findChild(nodes: XmlNode[], name: string): XmlNode | undefined {
   return nodes.find((node) => tagName(node) === name);
-}
-
-export function findChildren(nodes: XmlNode[], name: string): XmlNode[] {
-  return nodes.filter((node) => tagName(node) === name);
 }
 
 /** Deep copy of a node subtree; used when a kept `pPr`/`rPr` has to be reused on a new paragraph. */

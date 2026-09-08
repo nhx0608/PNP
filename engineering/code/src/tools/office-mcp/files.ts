@@ -15,7 +15,7 @@ export type FindResult = {
   truncated: boolean;
 };
 
-export const DEFAULT_MAX_RESULTS = 500;
+const DEFAULT_MAX_RESULTS = 500;
 
 function normalizeExtensions(extensions: readonly string[] | undefined): string[] | undefined {
   if (extensions === undefined || extensions.length === 0) return undefined;

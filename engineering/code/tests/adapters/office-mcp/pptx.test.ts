@@ -161,7 +161,12 @@ test("pptx_create builds a deck from an outline that pptx_extract reads back", a
       notes: `讲稿 ${index + 1}`,
     }));
     const created = structured<PptxCreateResult>(await client.callTool({
-      name: "pptx_create", arguments: { outputPath: target, slides, theme: { titleColor: "#1F4E79" } },
+      name: "pptx_create",
+      arguments: {
+        outputPath: target,
+        slides,
+        theme: { titleColor: "#1F4E79", bodyColor: "333333", backgroundColor: "FFFFFF", fontFace: "微软雅黑" },
+      },
     }));
     assert.equal(created.slideCount, 5);
     const extraction = structured<PptxExtraction>(await client.callTool({ name: "pptx_extract", arguments: { path: target } }));
@@ -169,6 +174,10 @@ test("pptx_create builds a deck from an outline that pptx_extract reads back", a
     assert.deepEqual(extraction.slides.map((slide) => slide.title), slides.map((slide) => slide.title));
     assert.equal(extraction.slides[0]?.notes, "讲稿 1");
     assert.ok(extraction.slides[4]?.texts.some((shape) => shape.text.includes("要点 5-2")));
+
+    expectError(await client.callTool({
+      name: "pptx_create", arguments: { outputPath: path.join(workspace, "坏色.pptx"), slides, theme: { titleColor: "红色" } },
+    }) as ToolResult, "INVALID_ARGUMENT");
   } finally {
     await removeTree(workspace);
   }

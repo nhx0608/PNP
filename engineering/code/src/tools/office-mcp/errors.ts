@@ -30,10 +30,6 @@ export class OfficeToolError extends Error {
   }
 }
 
-export function invalid(message: string): OfficeToolError {
-  return new OfficeToolError("INVALID_ARGUMENT", message);
-}
-
 export function describeError(error: unknown): { code: OfficeErrorCode; message: string } {
   if (error instanceof OfficeToolError) return { code: error.code, message: error.message };
   if (error instanceof Error) {

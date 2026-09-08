@@ -36,7 +36,7 @@ function cellValue(value: CellValue): SheetCell {
 }
 
 /** Excel forbids `: \ / ? * [ ]`, caps names at 31 characters and rejects blank names. */
-export function sanitizeSheetName(name: string, fallback: string): string {
+function sanitizeSheetName(name: string, fallback: string): string {
   let cleaned = name.replace(/[\\/?*[\]:]/g, " ").replace(/\s+/g, " ").trim();
   cleaned = cleaned.replace(/^'+|'+$/g, "").trim();
   if (cleaned.length === 0) cleaned = fallback;
@@ -44,7 +44,7 @@ export function sanitizeSheetName(name: string, fallback: string): string {
   return cleaned;
 }
 
-export function uniqueSheetNames(names: readonly string[]): string[] {
+function uniqueSheetNames(names: readonly string[]): string[] {
   const used = new Set<string>();
   return names.map((name, index) => {
     const base = sanitizeSheetName(name, `Sheet${index + 1}`);
