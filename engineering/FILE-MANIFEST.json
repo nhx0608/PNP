@@ -244,8 +244,8 @@
       "path": "code/scripts/e2e/live-check.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 45179,
-      "sha256": "3cdaf809a351021651f4cfdaf01a09a15ff336a805f711fce41701e1bbc41ae8"
+      "bytes": 45207,
+      "sha256": "ee7a4d77f6df74e6dd0189ac5c4699e377903a7926cca58c47345a9a203a2ef3"
     },
     {
       "path": "code/scripts/e2e/mock-model-server.mjs",
@@ -307,8 +307,8 @@
       "path": "code/scripts/pnp-local.ps1",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 51861,
-      "sha256": "c0268bac7fb5a6a30b2064728b1db12facdddce02b3624bdfa07b2d51d8683f5"
+      "bytes": 51867,
+      "sha256": "cbc6b034b62a2e7be2592c817a358607e55d5ee1cbfadd7a26071ab1455f221f"
     },
     {
       "path": "code/scripts/recover.mjs",
@@ -1392,8 +1392,8 @@
       "path": "INSTRUCTION.md",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 11990,
-      "sha256": "09fa4d9eed016f4b95224790ee450cb1177fc135077acbed01d9ea2c3cadcaee"
+      "bytes": 13229,
+      "sha256": "21f145e8754890f874a2373c3347283b834a42862d169b5f1dc5a61ff914283d"
     },
     {
       "path": "prompts/00-baseline-check.md",
@@ -1469,8 +1469,8 @@
       "path": "QUICKSTART.md",
       "owner": "共同",
       "category": "其他",
-      "bytes": 9138,
-      "sha256": "9f7bbc1088780a5608d1a4d5e3009e86ae59d47a7be92e8a4fa087f263b9b715"
+      "bytes": 9152,
+      "sha256": "29e508784cb3974886db0fe10502ef49fd6f4b9e715a0dabe02f6364c27b3dd7"
     },
     {
       "path": "README.md",

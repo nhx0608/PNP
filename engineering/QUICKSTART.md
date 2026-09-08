@@ -101,7 +101,7 @@ PNP_MODEL_API_KEY=<在 SiliconFlow 控制台申请的 Key>
 .\pnp.cmd start     --engine opencode    # 3. 起网关，自己按 INSTRUCTION.md 第 2 节手动调
 ```
 
-第 2 步的每项检查打印 `[PASS]`/`[FAIL]`/`[SKIP]`，最后是计数和 `[pnp] LIVECHECK PASS|FAIL`；证据（`events.jsonl`、`messages-<n>.json`、网关日志、`summary.json`）写在结尾打印的产物目录里，失败打印的是 HTTP 状态码与响应体。缺 `PNP_MODEL_ENDPOINT` 或 `PNP_MODEL_ID` 时它拒绝执行并提示先跑 `pnp.cmd config`。`--directory D:\test_data` 可以指定工作目录，检查项与产物文件的完整说明见 `INSTRUCTION.md` 的 1.4b。
+第 2 步的每项检查打印 `[PASS]`/`[FAIL]`/`[SKIP]`，最后是计数和 `[pnp] LIVECHECK PASS|FAIL`；证据（`events.jsonl`、`messages-<n>.json`、网关日志、`summary.json`）写在结尾打印的产物目录里，失败打印的是 HTTP 状态码与响应体。缺 `PNP_MODEL_ENDPOINT` 或 `PNP_MODEL_ID` 时它拒绝执行并提示先跑 `.\pnp.cmd config`。`--directory D:\test_data` 可以指定工作目录，检查项与产物文件的完整说明见 `INSTRUCTION.md` 的 1.4b。
 
 第 3 步手动调用用 `INSTRUCTION.md` 2.3 里现成的 curl / PowerShell 例子。想顺带把反问与授权那两条回路也走一遍，就在 `runtime\local.env` 里临时加上：
 
@@ -149,6 +149,6 @@ node scripts\package-release.mjs --bundle --zip
 4. .\pnp.cmd livecheck --engine opencode   # 真实模型
 5. .\pnp.cmd start --engine opencode --port 6217
 6. 按 INSTRUCTION.md 第 2 节的调用序列联调
-7. .\pnp.cmd stop，换 AGENT_ENGINE=pi 重来一遍
+7. .\pnp.cmd stop，然后 $env:AGENT_ENGINE = 'pi' 重来一遍
 8. node scripts\package-release.mjs --bundle --zip
 ```

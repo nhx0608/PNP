@@ -693,13 +693,13 @@ function Open-Follow([string]$Path) {
 function Start-Gateway([string]$NodeExe, [string]$SelectedEngine, [int]$SelectedPort, [string]$SelectedHost, [string]$LocalEnvFile) {
   $gatewayEntry = Join-Path $CodeRoot "dist\main.js"
   if (-not (Test-Path -LiteralPath $gatewayEntry -PathType Leaf)) {
-    Fail "Gateway build output is missing at $gatewayEntry. Run 'pnp.cmd bootstrap --engine $SelectedEngine' first."
+    Fail "Gateway build output is missing at $gatewayEntry. Run '.\pnp.cmd bootstrap --engine $SelectedEngine' first."
   }
 
   if (Test-Path -LiteralPath $PidFile -PathType Leaf) {
     $previous = (Get-Content -LiteralPath $PidFile -Raw).Trim()
     if ($previous -match '^\d+$' -and $null -ne (Get-Process -Id ([int]$previous) -ErrorAction SilentlyContinue)) {
-      Fail "A gateway process ($previous) is already recorded in $PidFile. Run 'pnp.cmd stop' first."
+      Fail "A gateway process ($previous) is already recorded in $PidFile. Run '.\pnp.cmd stop' first."
     }
     Remove-Item -LiteralPath $PidFile -Force
   }
@@ -713,7 +713,7 @@ function Start-Gateway([string]$NodeExe, [string]$SelectedEngine, [int]$Selected
     Write-Step "Local env source: $LocalEnvFile"
   }
   Write-Step "Log: $stdoutLog (errors: $stderrLog)"
-  Write-Step "Model secrets are not printed. Press Ctrl+C, or run 'pnp.cmd stop' from another console."
+  Write-Step "Model secrets are not printed. Press Ctrl+C, or run '.\pnp.cmd stop' from another console."
 
   # Start-Process joins -ArgumentList with spaces and quotes nothing, so an extraction path such as
   # C:\Program Files\pnp would otherwise split dist\main.js into two arguments.

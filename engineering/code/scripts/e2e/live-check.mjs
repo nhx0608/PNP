@@ -129,7 +129,7 @@ const missing = REQUIRED_MODEL_VARIABLES.filter((name) => !defined(name));
 if (missing.length > 0) {
   fail(`this check talks to a real model service, and ${missing.join(" and ")} ${missing.length === 1 ? "is" : "are"} not configured.`);
   fail(`Neither this console nor ${localEnvFile}${localEnv.present ? "" : " (which does not exist)"} defines ${missing.length === 1 ? "it" : "them"}.`);
-  fail("Run `pnp.cmd config` to write that file interactively, or set them for this console:");
+  fail("Run `.\\pnp.cmd config` (PowerShell) or `pnp.cmd config` (cmd) to write that file, or set them for this console:");
   fail("  set PNP_MODEL_ENDPOINT=<OpenAI-compatible base URL ending in /v1>");
   fail("  set PNP_MODEL_ID=<the model name that endpoint knows>");
   fail(`The same two lines written into ${localEnvFile} work just as well; the gateway loads that file itself.`);

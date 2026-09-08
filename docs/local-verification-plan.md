@@ -12,28 +12,30 @@
 
 前提：Windows 10/11 x64；能访问智谱开放平台（测试模型用智谱免费档 `glm-4-flash`，需要一个 API Key）；Office 已安装（部分任务要开 Outlook）。不需要 Python、Git Bash、管理员权限。
 
-在 `solution\code`（源码仓库里是 `engineering\code`）下打开 cmd：
+在 `solution\code`（源码仓库里是 `engineering\code`）下打开 PowerShell（资源管理器地址栏输入 `powershell` 回车）。注意 PowerShell 执行当前目录的程序要带 `.\`：
 
-```bat
-:: 1. 写入模型配置（交互式，四个问题；回车取默认值）
-pnp.cmd config
-::   PNP_MODEL_ENDPOINT [https://open.bigmodel.cn/api/paas/v4] → 回车
-::   PNP_MODEL_ID       [glm-4-flash]                          → 回车
-::   PNP_MODEL_API_KEY  → 粘贴智谱 API Key
-::   PNP_MODEL_HEADERS  → 回车（留空）
+```powershell
+Set-Location <solution>\code
 
-:: 2. 不用模型的自检（用内置模拟模型跑通全部接口机制）
-pnp.cmd selfcheck --engine opencode
-pnp.cmd selfcheck --engine pi
+# 1. 写入模型配置（交互式，四个问题；回车取默认值）
+.\pnp.cmd config
+#   PNP_MODEL_ENDPOINT [https://open.bigmodel.cn/api/paas/v4] → 回车
+#   PNP_MODEL_ID       [glm-4-flash]                          → 回车
+#   PNP_MODEL_API_KEY  → 粘贴智谱 API Key
+#   PNP_MODEL_HEADERS  → 回车（留空）
 
-:: 3. 用真实模型的自检（写文件、同会话第二轮、中止）
-pnp.cmd livecheck --engine opencode
-pnp.cmd livecheck --engine pi
+# 2. 不用模型的自检（用内置模拟模型跑通全部接口机制）
+.\pnp.cmd selfcheck --engine opencode
+.\pnp.cmd selfcheck --engine pi
+
+# 3. 用真实模型的自检（写文件、同会话第二轮、中止）
+.\pnp.cmd livecheck --engine opencode
+.\pnp.cmd livecheck --engine pi
 ```
 
 四条命令都必须以 `PASS` 结束才进入第 3 节。任何 `FAIL` 先记入报告（附终端输出与 `code\runtime\logs\` 下的日志）。
 
-从源码仓库而不是交付包运行时，第一次 `pnp.cmd` 会下载 Node 24.19.0、执行 `npm ci`、编译、安装引擎，需要联网，约 5 分钟。
+从源码仓库而不是交付包运行时，第一次 `.\pnp.cmd` 会下载 Node 24.19.0、执行 `npm ci`、编译、安装引擎，需要联网，约 5 分钟。
 
 ## 3. 准备测试数据
 
@@ -54,13 +56,13 @@ pnp.cmd livecheck --engine pi
 
 启动（每个引擎一轮，先 opencode 后 pi）：
 
-```bat
-cd /d <solution>\code
-set AGENT_ENGINE=opencode
-pnp.cmd start
+```powershell
+Set-Location <solution>\code
+$env:AGENT_ENGINE = 'opencode'
+.\pnp.cmd start
 ```
 
-另开一个 PowerShell 窗口作为"评测客户端"，等 `Invoke-RestMethod http://127.0.0.1:6217/health/ready` 返回 `status: ready`。
+网关会占住这个窗口；另开一个 PowerShell 窗口作为"评测客户端"，等 `Invoke-RestMethod http://127.0.0.1:6217/health/ready` 返回 `status: ready`。
 
 每个任务的标准流程（PowerShell）：
 
@@ -111,12 +113,12 @@ Invoke-RestMethod -Method Delete "$base/session/$($s.id)"
 1. **SSE 事件序列**：从 `office_014` 的事件文件核对顺序：`server.connected` → `session.status{busy}` → 若干 `message.part.updated` → `session.status{idle}` 与 `session.idle`；心跳 `server.heartbeat` 约每 15 秒一次。
 2. **同会话历史**：同一会话先问"把 D:\test_data\task.csv 的表头列出来"，再问"上一轮你列的第一列叫什么"，第二轮回答正确即通过；`GET /session/{id}` 的 `message_count` 递增。
 3. **中止**：发一个长任务（"从 1 数到 5000 每行一个写入 D:\test_data\count.txt 并逐行核对"），看到 `GET /session/status` 为 busy 后 2 秒内 `POST /session/{id}/abort`；预期 abort 返回 `{ok:true}`，阻塞中的 `prompt_async` 返回 204，轨迹最后 `info.finish="cancelled"`、无 `step-finish`，状态回到 idle。
-4. **授权流程**：停网关，`set PNP_CONFIGURED_POLICY_OVERRIDES={"write":"ask"}` 后重启；再跑 office_014：事件流应出现 `permission.asked`，`GET /permission` 有一条 `permission:"write"` 且 `patterns` 含目标路径；`POST /permission/{id}/reply {"reply":"once"}` 后任务继续并完成；再来一次用 `{"reply":"reject"}`，文件不应生成且任务以非成功结束。测完清掉该变量。
-5. **反问流程**：`set PNP_QUESTION_POLICY=ask` 重启，发"帮我写一份周报，先问我需要哪些板块"；若出现 `question.asked`，用 `POST /question/{id}/reply {"answers":[["方案 A"]]}` 回复并观察继续执行；默认 `auto` 模式下同一提示词不应阻塞（网关自动作答）。
+4. **授权流程**：停网关（`.\pnp.cmd stop`），执行 `$env:PNP_CONFIGURED_POLICY_OVERRIDES = '{"write":"ask"}'` 后重启；再跑 office_014：事件流应出现 `permission.asked`，`GET /permission` 有一条 `permission:"write"` 且 `patterns` 含目标路径；`POST /permission/{id}/reply {"reply":"once"}` 后任务继续并完成；再来一次用 `{"reply":"reject"}`，文件不应生成且任务以非成功结束。测完清掉该变量。
+5. **反问流程**：`$env:PNP_QUESTION_POLICY = 'ask'` 重启，发"帮我写一份周报，先问我需要哪些板块"；若出现 `question.asked`，用 `POST /question/{id}/reply {"answers":[["方案 A"]]}` 回复并观察继续执行；默认 `auto` 模式下同一提示词不应阻塞（网关自动作答）。
 6. **错误格式**：`GET /session/不存在` → 404 `{"code":"NOT_FOUND",...}`；`POST /session` 不带 `directory` → 400 `VALIDATION_ERROR`；同一会话并发第二个 `prompt_async` → 409 `SESSION_BUSY`。
 7. **并发与隔离**：两个会话（`directory` 分别为 `D:\test_data\ws1`、`D:\test_data\ws2`）同时各发一个写文件任务：都返回 204，文件各写在自己的目录里，`GET /session/status` 期间能看到 busy/idle。
-8. **引擎切换**：`pnp.cmd stop` → `set AGENT_ENGINE=pi` → `pnp.cmd start` → `/health/ready` 的 `engine` 字段为 `pi`；opencode 轮的会话在 pi 轮不可见属正常（数据目录按引擎分开）。
-9. **重启恢复**：一个会话正在执行时直接 `pnp.cmd stop`，再 `pnp.cmd start`：网关应能启动，该会话的 `prompt_async` 返回 409 `SESSION_UNAVAILABLE` 或正常 idle；`DELETE` 该会话后可继续新建会话。
+8. **引擎切换**：`.\pnp.cmd stop` → `$env:AGENT_ENGINE = 'pi'` → `.\pnp.cmd start` → `/health/ready` 的 `engine` 字段为 `pi`；opencode 轮的会话在 pi 轮不可见属正常（数据目录按引擎分开）。
+9. **重启恢复**：一个会话正在执行时直接 `.\pnp.cmd stop`，再 `.\pnp.cmd start`：网关应能启动，该会话的 `prompt_async` 返回 409 `SESSION_UNAVAILABLE` 或正常 idle；`DELETE` 该会话后可继续新建会话。
 
 ## 7. 报告格式
 

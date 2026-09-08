@@ -15,61 +15,87 @@ solution\
 
 ## 第 1 步：解压
 
-把 `solution.zip` 解压到一个**不含空格的短路径**，例如 `D:\pnp`。后面所有命令都在 `D:\pnp\solution\code` 下执行（cmd 窗口：`cd /d D:\pnp\solution\code`）。
+把 `solution.zip` 解压到一个**不含空格的短路径**，例如 `D:\pnp`。在资源管理器里进入 `D:\pnp\solution\code`，地址栏输入 `powershell` 回车（或按住 Shift 右键 →「在此处打开 PowerShell 窗口」），后面所有命令都在这个窗口里执行。
+
+```powershell
+Set-Location D:\pnp\solution\code
+```
+
+本文命令都写成 PowerShell 形式。PowerShell 里执行当前目录下的程序**必须带 `.\`**（`.\pnp.cmd`），设置环境变量用 `$env:名字 = '值'`。如果你用的是 cmd 窗口，把 `.\pnp.cmd` 写成 `pnp.cmd`、把 `$env:X = 'y'` 写成 `set X=y` 即可，其余相同。
 
 要求：Windows 10/11 x64，自带的 Windows PowerShell 5.1；不需要管理员、不需要联网、不需要安装 Node.js/Python/Git。
 
 ## 第 2 步：配置模型（一条命令）
 
-```bat
-pnp.cmd config
+```powershell
+.\pnp.cmd config
 ```
 
 它会问四个问题，回车用括号里的默认值：
 
 | 问题 | 填什么 |
 |---|---|
-| `PNP_MODEL_ENDPOINT` | 模型服务的 OpenAI 兼容地址，以 `/v1` 结尾（默认是智谱：`https://open.bigmodel.cn/api/paas/v4`） |
+| `PNP_MODEL_ENDPOINT` | 模型服务的 OpenAI 兼容**基地址**，不要带 `/chat/completions`（多数服务以 `/v1` 结尾；智谱是 `https://open.bigmodel.cn/api/paas/v4`，这也是默认值） |
 | `PNP_MODEL_ID` | 模型名称（默认 `glm-4-flash`） |
 | `PNP_MODEL_API_KEY` | API Key；没有就留空 |
 | `PNP_MODEL_HEADERS` | 额外请求头，JSON 格式，例如需要 appid 时填 `{"appid":"12345"}`；不需要留空 |
 
-答完它会把配置写进 `code\runtime\local.env`（以后想改，重新跑一遍或直接编辑这个文件）。脚本化时可以不交互：`pnp.cmd config --endpoint <地址> --model <模型名> [--api-key <密钥>]`；需要 `PNP_MODEL_HEADERS` 这种带引号的 JSON 时，用交互方式回答或直接编辑 `local.env`，cmd 命令行里传 JSON 容易被引号打断。评测系统如果习惯用环境变量，也可以不跑这条命令，直接在启动前 `set` 上面四个变量，效果相同；环境变量优先于文件。
+答完它会把配置写进 `code\runtime\local.env`（以后想改，重新跑一遍或直接编辑这个文件）。
 
-内网模型的两个常见情况：地址是 `http://` 而不是 `https://` → 再 `set PNP_ALLOW_HTTP_ENDPOINTS=1`；证书是自签的 → `set PNP_MODEL_CA_FILE=<证书PEM路径>`，实在来不及配证书可临时 `set PNP_MODEL_TLS_INSECURE=1`。
+脚本化时可以不交互（PowerShell 把 `<` `>` 当保留符号，占位值要用引号包起来）：
+
+```powershell
+.\pnp.cmd config --endpoint https://open.bigmodel.cn/api/paas/v4 --model glm-4-flash --api-key '你的密钥'
+```
+
+`PNP_MODEL_HEADERS` 这种带引号的 JSON 建议用交互方式回答或直接编辑 `local.env`，命令行里传 JSON 容易被引号层层转义打断。评测系统如果习惯用环境变量，也可以不跑这条命令，直接在启动前设置上面四个变量，效果相同；环境变量优先于文件：
+
+```powershell
+$env:PNP_MODEL_ENDPOINT = 'https://open.bigmodel.cn/api/paas/v4'
+$env:PNP_MODEL_ID       = 'glm-4-flash'
+$env:PNP_MODEL_API_KEY  = '你的密钥'
+```
+
+内网模型的两个常见情况：地址是 `http://` 而不是 `https://` → 再执行 `$env:PNP_ALLOW_HTTP_ENDPOINTS = '1'`；证书是自签的 → `$env:PNP_MODEL_CA_FILE = 'D:\certs\internal-ca.pem'`，实在来不及配证书可临时 `$env:PNP_MODEL_TLS_INSECURE = '1'`。
 
 ## 第 3 步：自检（两条命令）
 
-```bat
-pnp.cmd selfcheck --engine opencode
-pnp.cmd livecheck --engine opencode
+```powershell
+.\pnp.cmd selfcheck --engine opencode
+.\pnp.cmd livecheck --engine opencode
 ```
 
 - `selfcheck` 不用模型，用内置的模拟模型把全部接口跑一遍（建会话、事件流、任务、工具授权、中止、并发），最后打印 `[pnp] SELFCHECK PASS`。
 - `livecheck` 用第 2 步配置的真实模型跑 8 项检查：就绪、事件流、建会话、让模型写一个文件（验 204、完成规则、busy/idle 事件、文件真实生成）、同一会话第二轮读回它（验历史）、中途中止一个长任务（验 `cancelled`）、反问/授权列表、删除会话，最后打印 `[pnp] LIVECHECK PASS`；证据文件在终端最后一行给出的目录里。
 
-把 `opencode` 换成 `pi` 再各跑一次，就验证了第二个引擎。任何一条打印 `FAIL` 时，终端里会写明是哪一项、状态码和原因，日志在 `code\runtime\logs\`。
+把两条命令里的 `opencode` 换成 `pi` 再各跑一次，就验证了第二个引擎。任何一条打印 `FAIL` 时，终端里会写明是哪一项、状态码和原因，日志在 `code\runtime\logs\`。
 
 ## 第 4 步：启动、切换引擎、停止
 
 启动（引擎用环境变量 `AGENT_ENGINE` 指定，取值 `opencode` 或 `pi`）：
 
-```bat
-set AGENT_ENGINE=opencode
-pnp.cmd start
+```powershell
+$env:AGENT_ENGINE = 'opencode'
+.\pnp.cmd start
 ```
 
-`GET http://127.0.0.1:6217/health/ready` 返回 200 `{"status":"ready","engine":"opencode"}` 就可以开始调用（首次启动引擎需要十几秒到一分钟；启动中该接口返回 503）。`pnp.cmd start --engine opencode --port 6217` 与上面等价；两种方式同时给且不一致时会拒绝启动。
+网关会占住这个窗口。**另开一个 PowerShell 窗口**探测就绪：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:6217/health/ready
+```
+
+返回 `status : ready` 与 `engine : opencode` 就可以开始调用（首次启动引擎需要十几秒到一分钟；启动中该接口返回 503，PowerShell 会报「远程服务器返回错误」，属正常）。`.\pnp.cmd start --engine opencode --port 6217` 与上面等价；命令行参数与 `AGENT_ENGINE` 同时给且不一致时会拒绝启动。
 
 切换引擎 = 停止后换变量重启（不支持运行中切换）：
 
-```bat
-pnp.cmd stop
-set AGENT_ENGINE=pi
-pnp.cmd start
+```powershell
+.\pnp.cmd stop
+$env:AGENT_ENGINE = 'pi'
+.\pnp.cmd start
 ```
 
-停止：`pnp.cmd stop`（只结束网关自己的进程，不碰任务打开的 Office 等程序），或在网关窗口按 Ctrl+C。
+停止：在另一个窗口执行 `.\pnp.cmd stop`（只结束网关自己的进程，不碰任务打开的 Office 等程序），或在网关窗口按 Ctrl+C。
 
 ## 第 5 步：评测脚本怎么调用
 
@@ -149,18 +175,18 @@ pnp.cmd start
 ## 附录 A：常见问题
 
 - **启动就退出，提示 `MODEL_ENVIRONMENT_MISSING`**：第 2 步没做或 `local.env` 不在 `code\runtime\`；信息里会列出缺哪个变量名。
-- **提示 `INSECURE_MODEL_ENDPOINT`**：模型地址是 `http://`，`set PNP_ALLOW_HTTP_ENDPOINTS=1`。
-- **`livecheck` 失败但 `selfcheck` 通过**：网关没问题，是模型或网络：检查 Key、地址是否以 `/v1` 结尾、模型是否支持工具调用。
-- **提示 `INSTANCE_LOCKED`**：上一个网关还在跑，先 `pnp.cmd stop`。
-- **端口被占用**：`pnp.cmd start --port 6218`。
+- **提示 `INSECURE_MODEL_ENDPOINT`**：模型地址是 `http://`，执行 `$env:PNP_ALLOW_HTTP_ENDPOINTS = '1'` 后重启。
+- **`.\pnp.cmd livecheck` 失败但 `selfcheck` 通过**：网关没问题，是模型或网络：检查 Key 是否正确、地址是不是基地址（多带了 `/chat/completions` 就会失败）、模型是否支持工具调用。
+- **提示 `INSTANCE_LOCKED`**：上一个网关还在跑，先 `.\pnp.cmd stop`。
+- **端口被占用**：`.\pnp.cmd start --port 6218`。
 - **想看引擎到底做了什么**：`GET /session/{id}/message`，或 `code\runtime\logs\`。
 
 ## 附录 B：更多配置（都可选）
 
 配置文件是 `code\config\settings.json`，改完重启网关生效；格式说明在 `code\config\SETTINGS.md`。
 
-- **权限**：`common.permissions`，`default` 为 `allow`/`ask`/`deny`，`operations` 按操作覆盖，例如 `{"write":"ask","shell":"deny"}`。不改文件也行：启动前 `set PNP_CONFIGURED_POLICY_OVERRIDES={"write":"ask"}`，之后写文件前会发出 `permission.asked`，用第 5 步第 7 条的接口回复。
-- **反问**：`set PNP_QUESTION_POLICY=ask` 让反问真的等待回复（默认 `auto` 自动作答）。
+- **权限**：`common.permissions`，`default` 为 `allow`/`ask`/`deny`，`operations` 按操作覆盖，例如 `{"write":"ask","shell":"deny"}`。不改文件也行：启动前 `$env:PNP_CONFIGURED_POLICY_OVERRIDES = '{"write":"ask"}'`，之后写文件前会发出 `permission.asked`，用第 5 步第 7 条的接口回复。
+- **反问**：`$env:PNP_QUESTION_POLICY = 'ask'` 让反问真的等待回复（默认 `auto` 自动作答）。
 - **工具**：`common.mcp.servers`。随包的 Office 工具（docx/xlsx/pptx/csv 读写、文件查找删除、打开本机应用、网页抓取）已启用，两个引擎共用。接内网 MCP 服务时照样加一项，凭据只写环境变量名：
 
   ```json
@@ -174,4 +200,4 @@ pnp.cmd start
 
 ## 附录 C：从源码而不是交付包运行
 
-交付包里已含 Node 24.19.0、依赖和两个引擎，零联网。直接用源码仓库（`engineering\code`）时，第一次 `pnp.cmd` 会自动下载 Node、执行 `npm ci`、编译并安装引擎，需要联网；内网可用镜像：`npm_config_registry=<内网 npm 镜像>`、`PNP_NODE_DOWNLOAD_URL=<镜像上的 node-v24.19.0-win-x64.zip>`（仍按固定 SHA-256 校验）、`PNP_NODE_HOME=<本机已装的 Node 24.19+ 目录>`。这些变量也可以写进 `code\runtime\local.env`。制作交付包：`node scripts/package-release.mjs --bundle --zip`。
+交付包里已含 Node 24.19.0、依赖和两个引擎，零联网。直接用源码仓库（`engineering\code`）时，第一次 `.\pnp.cmd` 会自动下载 Node、执行 `npm ci`、编译并安装引擎，需要联网；内网可用镜像：`npm_config_registry=<内网 npm 镜像>`、`PNP_NODE_DOWNLOAD_URL=<镜像上的 node-v24.19.0-win-x64.zip>`（仍按固定 SHA-256 校验）、`PNP_NODE_HOME=<本机已装的 Node 24.19+ 目录>`。这些变量也可以写进 `code\runtime\local.env`。制作交付包：`node scripts/package-release.mjs --bundle --zip`。
