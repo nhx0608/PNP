@@ -10,15 +10,15 @@
 |---|---|---|
 | R01 | Windows 10/11 运行，提交源码及编译启动方式 | 原生 Windows；不要求 WSL、Docker、数据库服务 |
 | R02 | 至少两种不同 Agent 引擎 | OpenCode、Pi 为必过引擎，两者都通过正式验收才可发布；Hermes 为可选第三引擎，有证据加分，无证据不阻断发布 |
-| R03 | 启动网关时能够指定并切换 Agent 引擎 | 正式启动口径使用命令行参数 `--engine <engineId>`，例如 `gateway.cmd --engine opencode --port 6217`；不同评测轮次停止后用另一个 `--engine` 重新启动，不做运行时热切换。`AGENT_ENGINE` 仅保留兼容入口 |
+| R03 | 启动网关时能够指定并切换 Agent 引擎 | 环境变量 `AGENT_ENGINE` 与命令行参数 `--engine <engineId>` 等价，任选其一即可（`set AGENT_ENGINE=opencode && pnp.cmd start`，或 `gateway.cmd --engine opencode --port 6217`）；两者同时给出且不一致时以 `ENGINE_CONFIGURATION_CONFLICT` 启动失败，都不给出以 `ENGINE_NOT_FOUND` 失败。不同评测轮次停止后换另一个取值重新启动，不做运行时热切换 |
 | R04 | 两套网关规范任选一套 | 完整实现通用 6217 规范；MyAgent 仅作为参考材料 |
 | R05 | 主模型使用内部部署资源 | 每轮解析经过授权的内部模型配置，支持 API key、appid、自定义头及证书要求 |
 | R06 | Rollout 完整执行记录；LLM-as-Judge 评价 | 消息、工具状态、停止原因和产物引用可追溯；不伪造执行成功 |
 | R07 | 需要人工交互时必须提供自动提交接口 | 选择实现 Question/Permission 闭环；默认策略不覆盖组织权限拒绝 |
-| R08 | 提交 `solution.zip`，包含 `INSTRUCTION.md` 和 `code/` | 发布脚本排除运行数据、凭据、测试账号和依赖缓存 |
+| R08 | 提交 `solution.zip`，包含 `INSTRUCTION.md` 和 `code/` | 发布脚本的 `--bundle` 模式产出可离线运行的交付包：源码之外含编译产物、生产依赖、固定版本 Node Windows 运行时与两个引擎，并写出各组件版本与 SHA-256；自检排除凭据、运行数据、数据库、日志与私钥 |
 | R09 | 单个用例对所有参赛引擎分别执行并取最高分 | 评测路径每次只启动一个选定引擎，不在网关内双跑取优 |
 | R10 | FAQ：可以提交安装包，但安装后仍必须提供本地网关接口并接受源码审查 | 安装包/一键启动器只是部署便利；评测事实源仍是赛题 Gateway HTTP API，源码始终完整交付 |
-| R11 | FAQ：Agent/Harness 默认不会预装；不方便预置的环境依赖可由裁判手工安装 | PNP 同时支持两条部署路径：`pnp.cmd` 自动准备可自动安装依赖；裁判手工安装后可直接 `gateway.cmd --engine ...`，不把公网自动下载作为唯一启动前提 |
+| R11 | FAQ：Agent/Harness 默认不会预装；不方便预置的环境依赖可由裁判手工安装 | 交付包自带 Node 运行时、依赖与两个 Harness，`pnp.cmd` 按"显式变量 → 包内 → 安装"顺序查找，全部命中时零网络；裁判也可自行安装后用 `PNP_*` 变量指定位置，或依赖就绪后直接 `gateway.cmd --engine ...`。公网下载只是最后一档回退，不是启动前提 |
 | R12 | FAQ：评测系统按网关接口规范执行；评测文件会预置到沙箱 | 不增加评测私有入口；所有任务通过同一 Gateway API。测试文件只通过 Session `directory` 使用，不打包或硬编码数据集内容 |
 
 评分权重：客观 70%；架构合理性 20%；创新性 5%；鲁棒性 5%。初赛截止后统一评测一次；FAQ 说明不会提供实时得分，开发阶段以 Agent 执行链路、真实结果和本地验收为准。

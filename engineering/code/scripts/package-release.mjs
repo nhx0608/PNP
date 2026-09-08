@@ -100,9 +100,13 @@ if (args["include-tests"]) KEEP_DIRS.push("tests");
 // code/runtime/ directory is kept out by the allow-list above, which never copies it.
 const EXCLUDE_NAMES = new Set(["node_modules", "dist", "data", ".git", ".DS_Store"]);
 const EXCLUDE_FILE_PATTERN = /\.(db|db-wal|db-shm|sqlite|sqlite3|pem|key|pfx|p12|log|pid)$|^\.env(\..*)?$/i;
+// Repository-only example files. They are useful next to the code and have no place in a package an
+// external assessor reads: a second settings example naming a different deployment's variables is
+// one more thing to mistake for the configuration that actually applies.
+const EXCLUDE_DELIVERY_NAMES = new Set(["settings.his.example.json"]);
 
 function shouldExclude(entryName, isDirectory) {
-  if (EXCLUDE_NAMES.has(entryName)) return true;
+  if (EXCLUDE_NAMES.has(entryName) || EXCLUDE_DELIVERY_NAMES.has(entryName)) return true;
   if (!isDirectory && entryName !== ".env.example" && EXCLUDE_FILE_PATTERN.test(entryName)) return true;
   return false;
 }
@@ -157,6 +161,30 @@ const BINARY_EXTENSION = /\.(png|jpg|jpeg|gif|ico|dll|exe|pdb|so|node|zip|gz|tgz
 // an env file or a private key has no business in any of them either.
 const VENDOR_PREFIXES = ["code/node_modules/", "code/dist/", "code/runtime/bootstrap/"];
 const MAX_SCANNED_BYTES = 2 * 1024 * 1024;
+/**
+ * Two text rules for the package an external assessor reads.
+ *
+ * Blocking: a variable prefix that belongs to one particular internal deployment identifies that
+ * deployment and has no place in a submission, wherever it appears.
+ *
+ * Advisory: `PNP_MODEL_STRICT=1` answers 403 to exactly the model identifiers an evaluation sends,
+ * so the instructions, the readme and the variable reference must never put it in front of the
+ * assessor. Elsewhere in the configuration reference it is documentation of an existing switch, so
+ * it is reported as a warning for its owner rather than failing the build.
+ */
+// Assembled from parts so this checker does not itself carry the string it forbids.
+const INTERNAL_VARIABLE_PREFIX = ["PNP", "HIS", ""].join("_");
+const FORBIDDEN_TEXT_PATTERN = {
+  label: "internal deployment variable prefix",
+  pattern: new RegExp(`\\b${INTERNAL_VARIABLE_PREFIX}[A-Z0-9_]*`),
+};
+const DISCOURAGED_TEXT_PATTERN = { label: "strict-model switch (answers 403 to the identifiers an evaluation sends)", pattern: /\bPNP_MODEL_STRICT\b/ };
+const PRIMARY_INSTRUCTIONS = new Set(["INSTRUCTION.md", "code/README.md", "code/.env.example"]);
+/** Prose and configuration, where a switch is a recommendation; source code, where it is an
+ *  implementation, is not scanned for it. This checker holds both patterns as literals, so it is
+ *  never its own subject. */
+const DOCUMENTATION_FILE = (relative) => relative.endsWith(".md")
+  || relative.startsWith("code/config/") || relative === "code/.env.example";
 
 /**
  * Problems that must block a submission.
@@ -167,6 +195,7 @@ const MAX_SCANNED_BYTES = 2 * 1024 * 1024;
  */
 function selfCheck(root) {
   const problems = [];
+  const warnings = [];
   for (const file of walk(root)) {
     const relative = path.relative(root, file).split(path.sep).join("/");
     const name = path.basename(relative);
@@ -192,8 +221,14 @@ function selfCheck(root) {
     for (const { label, pattern } of CREDENTIAL_PATTERNS) {
       if (pattern.test(text)) problems.push(`possible credential (${label}) in ${relative}`);
     }
+    if (FORBIDDEN_TEXT_PATTERN.pattern.test(text)) problems.push(`${FORBIDDEN_TEXT_PATTERN.label} in ${relative}`);
+    if (DOCUMENTATION_FILE(relative) && DISCOURAGED_TEXT_PATTERN.pattern.test(text)) {
+      const message = `${DISCOURAGED_TEXT_PATTERN.label} in ${relative}`;
+      if (PRIMARY_INSTRUCTIONS.has(relative)) problems.push(message);
+      else warnings.push(message);
+    }
   }
-  return problems;
+  return { problems, warnings };
 }
 
 // --------------------------------------------------------------------------- bundle helpers
@@ -456,7 +491,7 @@ if (bundle) {
 
 // --------------------------------------------------------------------------- verify and report
 
-const problems = selfCheck(solutionDir);
+const { problems, warnings } = selfCheck(solutionDir);
 const files = walk(solutionDir);
 const totalBytes = files.reduce((total, file) => total + statSync(file).size, 0);
 
@@ -487,6 +522,7 @@ console.log(JSON.stringify({
   archive: archive === undefined ? null : { path: archive.path, size: humanSize(archive.bytes) },
   components: bundle ? manifestComponents.map((component) => `${component.component} ${component.version}`) : undefined,
   selfCheck: problems.length ? problems : "clean",
+  selfCheckWarnings: warnings.length ? warnings : undefined,
 }, null, 2));
 
 if (problems.length) {
