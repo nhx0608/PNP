@@ -16,12 +16,25 @@ import { JsonlDecoder } from "./jsonl.ts";
 /**
  * Minimal inheritance exists to keep credentials out of engine processes, not to starve the
  * engine of the system identity every Windows toolchain reads. None of these carry a secret.
+ *
+ * `PSExecutionPolicyPreference` is included for the same reason (found while independently
+ * verifying B's Pi RPC driver against the real Windows Job Object helper; affects every engine's
+ * real subprocess launch on win32, not just Pi). Without it, `LocalProcessHost.helper()` spawns
+ * `job-host.ps1` with an environment that drops any session-level PowerShell execution-policy
+ * override; on a machine whose effective policy is Restricted/AllSigned at the machine/user scope
+ * (session-level override is the only thing making scripts runnable there), the helper then fails
+ * at startup with `UnauthorizedAccess` before it can even read its first control line, and every
+ * real Windows process launch (`LocalProcessHost.start` on win32) fails with `HOST_EXITED`. Repro:
+ * spawn `native/windows/job-host.ps1` with only the allowlist below minus this key as its env and
+ * observe stderr `UnauthorizedAccess`/"running scripts is disabled on this system"; see
+ * `code/tests/adapters/pi/engine-contract.test.ts` for the regression coverage this unblocks.
  */
 const systemKeys = ["SystemRoot", "WINDIR", "SystemDrive", "PATH", "PATHEXT", "TEMP", "TMP",
   "USERPROFILE", "HOME", "LOCALAPPDATA", "APPDATA", "COMSPEC",
   "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "CommonProgramFiles", "ProgramData",
   "ALLUSERSPROFILE", "USERNAME", "USERDOMAIN", "HOMEDRIVE", "HOMEPATH",
-  "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS", "OS", "PUBLIC", "SESSIONNAME", "PSModulePath"];
+  "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS", "OS", "PUBLIC", "SESSIONNAME", "PSModulePath",
+  "PSExecutionPolicyPreference"];
 /** The source is injectable so a test can assert the allow-list without mutating the real process. */
 export function baseEnvironment(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
   return Object.fromEntries(systemKeys.flatMap((key) => source[key] === undefined ? [] : [[key, source[key]!]]));

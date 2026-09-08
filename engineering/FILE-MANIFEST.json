@@ -1,6 +1,6 @@
 {
   "contractVersion": "1.1.0",
-  "payloadFileCount": 174,
+  "payloadFileCount": 188,
   "files": [
     {
       "path": ".gitattributes",
@@ -41,8 +41,8 @@
       "path": "code/.env.example",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 5749,
-      "sha256": "1671c52488910481e4eff2a60ff84154dd44ea5c5d7ba37086eebf5b95532dd8"
+      "bytes": 7258,
+      "sha256": "cf317d12e1d8bf42c53b88f07ac625481bd1688908186892ecf67b5887def129"
     },
     {
       "path": "code/.gitignore",
@@ -90,8 +90,8 @@
       "path": "code/config/engines/pi.json",
       "owner": "B",
       "category": "入口与配置",
-      "bytes": 167,
-      "sha256": "e3c1ae57dd614c9ca127bae1363f3fdb99fd6744ea4aebd5f61bec91e23b41c2"
+      "bytes": 1484,
+      "sha256": "cbfc3a3ab789c26e94da63438fbc84d4415a456aba6ffa17b954b2ae0b5466b0"
     },
     {
       "path": "code/config/internal.example.json",
@@ -293,8 +293,8 @@
       "path": "code/scripts/pnp-local.ps1",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 16009,
-      "sha256": "51c87fb072bf2900eafd35e287c92aced930b06c8c9a4fdbe12fb2c60e1995dc"
+      "bytes": 19149,
+      "sha256": "077aa04f8904df260d65036e187f3609fc7c8b7db65a349454edd63dd886af49"
     },
     {
       "path": "code/scripts/recover.mjs",
@@ -458,6 +458,41 @@
       "sha256": "5e7a9c5032536ab035bda8103263c94b8e461319fde86010b7c3b02a449ab30f"
     },
     {
+      "path": "code/src/drivers/pi-rpc/channel.ts",
+      "owner": "B",
+      "category": "实现源码",
+      "bytes": 18125,
+      "sha256": "fd14781502db6092c19a80747483160c9a2765a21a1367e495c4db8eda5b6c2f"
+    },
+    {
+      "path": "code/src/drivers/pi-rpc/client.ts",
+      "owner": "B",
+      "category": "实现源码",
+      "bytes": 4298,
+      "sha256": "c101c1d183135ae151709f2c7f028a7b8e3ab2ebd655722ae9422ee9a8e1d001"
+    },
+    {
+      "path": "code/src/drivers/pi-rpc/launch.ts",
+      "owner": "B",
+      "category": "实现源码",
+      "bytes": 8595,
+      "sha256": "51a24ab10c0726a9ecf5fe9bfddc94f624853bd1ca7a032059d2876edeefb9ae"
+    },
+    {
+      "path": "code/src/drivers/pi-rpc/protocol.ts",
+      "owner": "B",
+      "category": "实现源码",
+      "bytes": 11728,
+      "sha256": "70f319fa5d825e1c377f64577b50a1ebe2922b5f7c0c67900ce0f32baab11d54"
+    },
+    {
+      "path": "code/src/drivers/pi-rpc/tool-bridge.ts",
+      "owner": "B",
+      "category": "实现源码",
+      "bytes": 5449,
+      "sha256": "1ebf15557b448830a6a87a8be1d776f606596296db16793e322472ab81726be3"
+    },
+    {
       "path": "code/src/engines/hermes/AGENTS.md",
       "owner": "A",
       "category": "实现源码",
@@ -531,8 +566,8 @@
       "path": "code/src/engines/pi/pack.ts",
       "owner": "B",
       "category": "实现源码",
-      "bytes": 694,
-      "sha256": "8e12cf3e92d2ca2545769cf6cb669acf7d4e6f5f2a695747d139055309e1fe43"
+      "bytes": 1711,
+      "sha256": "9a8098f164ab3996aea2508294e3a51b46f629f2f07e17c3e0ec9e3b7dac1bdf"
     },
     {
       "path": "code/src/gateway/AGENTS.md",
@@ -636,8 +671,8 @@
       "path": "code/src/runtime/process-host.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 41460,
-      "sha256": "05b9c00f692300e52c23da14aab16c60b3a8dbc7dbffe0cb2af3314d5c2afd73"
+      "bytes": 42557,
+      "sha256": "0feaffd758f87dd4b431bde7dd38729547845d1ce8507017ff0fecd66da5e4bb"
     },
     {
       "path": "code/src/runtime/recovery.ts",
@@ -808,6 +843,62 @@
       "sha256": "29b0ed336a548415a148a8648da04478a26241fb4b9cb4b77cc5d6aac4a31bfd"
     },
     {
+      "path": "code/tests/adapters/pi/channel.test.ts",
+      "owner": "B",
+      "category": "测试代码",
+      "bytes": 20105,
+      "sha256": "c9589b220de3753d6fb68aa4c2edade51c689a2cf887c4602a2b190d9c9044c1"
+    },
+    {
+      "path": "code/tests/adapters/pi/client.test.ts",
+      "owner": "B",
+      "category": "测试代码",
+      "bytes": 3503,
+      "sha256": "834d327fd1ee1bfa9b34afcbadc4ee9de94114732a971c09ab00355ad3f6a10d"
+    },
+    {
+      "path": "code/tests/adapters/pi/engine-contract.test.ts",
+      "owner": "B",
+      "category": "测试代码",
+      "bytes": 1499,
+      "sha256": "7c2fcc63e4660d0d28c88166603d19091b3baba0b22f652ff4b50af634a52a19"
+    },
+    {
+      "path": "code/tests/adapters/pi/fixtures/fake-pi-cli.mjs",
+      "owner": "B",
+      "category": "测试代码",
+      "bytes": 2230,
+      "sha256": "b82509b3571628db6f932988fc8932b1e63cd992866f0478c384191a3a0d2980"
+    },
+    {
+      "path": "code/tests/adapters/pi/fixtures/fake-process.ts",
+      "owner": "B",
+      "category": "测试代码",
+      "bytes": 2119,
+      "sha256": "78b626659e16f880bcd85f7bfe454f6d5c88396266f0f2f4801f25180c1dfc98"
+    },
+    {
+      "path": "code/tests/adapters/pi/launch.test.ts",
+      "owner": "B",
+      "category": "测试代码",
+      "bytes": 3330,
+      "sha256": "882dbcf8890ab7d61579defa54695dee6c8bfc8a6b46d45c45ebef18f56c3d69"
+    },
+    {
+      "path": "code/tests/adapters/pi/protocol.test.ts",
+      "owner": "B",
+      "category": "测试代码",
+      "bytes": 4233,
+      "sha256": "c41e00f5ce0ba59ea07fb1af3e7883456bb3d33c3ac24bbab1cac0a6533413fa"
+    },
+    {
+      "path": "code/tests/adapters/pi/tool-bridge.test.ts",
+      "owner": "B",
+      "category": "测试代码",
+      "bytes": 2986,
+      "sha256": "e58e7cc5cbae54431f52572e850dcdc5e5c0ee747fa82572c36dcba3997cd377"
+    },
+    {
       "path": "code/tests/contract/gateway.test.ts",
       "owner": "共同",
       "category": "测试代码",
@@ -871,6 +962,13 @@
       "sha256": "e2520ce89b33583efcb15bab70134a9310c6b6ab5f8fcce833989d6c822e11f1"
     },
     {
+      "path": "code/tests/unit/pnp-local.test.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 9533,
+      "sha256": "4deb71211e0b1c00b7bf9a77d70e9537e47700df164c17c3caf1803450179c04"
+    },
+    {
       "path": "code/tests/unit/process-host.test.ts",
       "owner": "共同",
       "category": "测试代码",
@@ -930,8 +1028,8 @@
       "path": "docs/engines/pi.md",
       "owner": "B",
       "category": "入口与配置",
-      "bytes": 1430,
-      "sha256": "67ab656579faf319bfbb14217756b8262b5c3f86d73c609b409cbeb47f3e1f22"
+      "bytes": 18141,
+      "sha256": "56be510aabb4847eaeb1d2708de4bf8e9d6324c744dd7ad1230710bd845ae6b3"
     },
     {
       "path": "docs/internal/README.md",
@@ -1161,8 +1259,8 @@
       "path": "verification/coverage.md",
       "owner": "共同",
       "category": "验证证据",
-      "bytes": 3632,
-      "sha256": "1c0fc8abed10c376b59d9332b4c07df0544e753af0499dd4b084c8f7ba251577"
+      "bytes": 5331,
+      "sha256": "34c523d6bb5d2785a2a442c209896a940afc5f77cd0ce58e9a1665b4625ba8d4"
     },
     {
       "path": "verification/internal/evidence.example.json",

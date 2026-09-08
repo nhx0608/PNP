@@ -79,6 +79,17 @@ function Resolve-LocalPath([string]$Value) {
   return [System.IO.Path]::GetFullPath((Join-Path $CodeRoot $Value))
 }
 
+function Get-OptionalProperty($Object, [string]$Name) {
+  if ($null -eq $Object) {
+    return $null
+  }
+  $property = $Object.PSObject.Properties[$Name]
+  if ($null -eq $property) {
+    return $null
+  }
+  return $property.Value
+}
+
 function Test-NodeVersion([string]$NodeExe) {
   if ([string]::IsNullOrWhiteSpace($NodeExe) -or -not (Test-Path -LiteralPath $NodeExe -PathType Leaf)) {
     return $null
@@ -253,7 +264,7 @@ function Resolve-PackageExecutable([string]$EngineHome, [string]$PackageName, [s
   return [System.IO.Path]::GetFullPath((Join-Path $packagePath $relative))
 }
 
-function Ensure-EngineDependency([string]$SelectedEngine, [string]$NpmCmd) {
+function Ensure-EngineDependency([string]$SelectedEngine, [string]$NpmCmd, [string]$NodeExe) {
   if ($SelectedEngine -eq "mock") {
     return
   }
@@ -264,7 +275,45 @@ function Ensure-EngineDependency([string]$SelectedEngine, [string]$NpmCmd) {
   }
 
   $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
-  $environmentVariable = [string]$config.executable.exe.environmentVariable
+  if ($SelectedEngine -eq "pi") {
+    $providedPiExecutable = [Environment]::GetEnvironmentVariable("PNP_PI_EXECUTABLE")
+    if (-not [string]::IsNullOrWhiteSpace($providedPiExecutable)) {
+      $providedPiExecutable = Resolve-LocalPath $providedPiExecutable
+      if (-not (Test-Path -LiteralPath $providedPiExecutable -PathType Leaf)) {
+        Fail "PNP_PI_EXECUTABLE points to a missing executable: $providedPiExecutable"
+      }
+      [Environment]::SetEnvironmentVariable("PNP_PI_EXECUTABLE", $providedPiExecutable, "Process")
+      Write-Step "Using the preconfigured Pi executable from PNP_PI_EXECUTABLE."
+      return
+    }
+
+    $providedPiEntry = [Environment]::GetEnvironmentVariable("PNP_PI_ENTRY")
+    if (-not [string]::IsNullOrWhiteSpace($providedPiEntry)) {
+      $providedPiEntry = Resolve-LocalPath $providedPiEntry
+      if (-not (Test-Path -LiteralPath $providedPiEntry -PathType Leaf)) {
+        Fail "PNP_PI_ENTRY points to a missing Node entry file: $providedPiEntry"
+      }
+      $providedPiNode = [Environment]::GetEnvironmentVariable("PNP_PI_NODE")
+      if ([string]::IsNullOrWhiteSpace($providedPiNode)) {
+        $providedPiNode = $NodeExe
+      } else {
+        $providedPiNode = Resolve-LocalPath $providedPiNode
+      }
+      if (-not (Test-Path -LiteralPath $providedPiNode -PathType Leaf)) {
+        Fail "PNP_PI_NODE points to a missing Node executable: $providedPiNode"
+      }
+      [Environment]::SetEnvironmentVariable("PNP_PI_ENTRY", $providedPiEntry, "Process")
+      [Environment]::SetEnvironmentVariable("PNP_PI_NODE", $providedPiNode, "Process")
+      Write-Step "Using the preconfigured Pi Node entry from PNP_PI_ENTRY."
+      return
+    }
+
+    Fail "Pi has no locked installer metadata, so this launcher will not guess or install a latest package. Preinstall Pi and set PNP_PI_EXECUTABLE, or set PNP_PI_ENTRY (and optionally PNP_PI_NODE)."
+  }
+
+  $executableConfig = Get-OptionalProperty $config "executable"
+  $exeConfig = Get-OptionalProperty $executableConfig "exe"
+  $environmentVariable = [string](Get-OptionalProperty $exeConfig "environmentVariable")
   $providedExecutable = if ([string]::IsNullOrWhiteSpace($environmentVariable)) { $null } else { [Environment]::GetEnvironmentVariable($environmentVariable) }
   if (-not [string]::IsNullOrWhiteSpace($providedExecutable)) {
     $providedExecutable = Resolve-LocalPath $providedExecutable
@@ -276,16 +325,25 @@ function Ensure-EngineDependency([string]$SelectedEngine, [string]$NpmCmd) {
     return
   }
 
-  if ([string]$config.distribution.kind -ne "npm-global-native-binary") {
-    Fail "Engine '$SelectedEngine' has no automatic local installer yet (distribution kind: $($config.distribution.kind)). Set its executable environment variable or use gateway.cmd after the judge/operator installs the required dependency."
+  $distribution = Get-OptionalProperty $config "distribution"
+  $distributionKind = [string](Get-OptionalProperty $distribution "kind")
+  if ($distributionKind -ne "npm-global-native-binary") {
+    $kindLabel = if ([string]::IsNullOrWhiteSpace($distributionKind)) { "not declared" } else { $distributionKind }
+    Fail "Engine '$SelectedEngine' has no automatic local installer yet (distribution kind: $kindLabel). Use its declared preconfigured executable or install the required dependency manually."
   }
 
-  $packageCandidates = @($config.distribution.packageNameCandidates)
+  $packageCandidatesValue = Get-OptionalProperty $distribution "packageNameCandidates"
+  # Keep the collection typed outside conditional/pipeline assignment: PowerShell unwraps a
+  # one-element result into a scalar, and StrictMode then rejects `.Count` on that scalar.
+  [object[]]$packageCandidates = @()
+  if ($null -ne $packageCandidatesValue) {
+    $packageCandidates = @($packageCandidatesValue)
+  }
   if ($packageCandidates.Count -eq 0) {
     Fail "Engine '$SelectedEngine' declares no npm package candidate for bootstrap."
   }
   $packageName = [string]$packageCandidates[0]
-  $version = [string]$config.engineVersion
+  $version = [string](Get-OptionalProperty $config "engineVersion")
   if ([string]::IsNullOrWhiteSpace($packageName) -or [string]::IsNullOrWhiteSpace($version)) {
     Fail "Engine '$SelectedEngine' is missing package or version bootstrap metadata."
   }
@@ -307,8 +365,13 @@ function Ensure-EngineDependency([string]$SelectedEngine, [string]$NpmCmd) {
     Fail "The $packageName package did not expose a usable executable after installation."
   }
 
-  $reportedVersion = (& $executable --version 2>$null | Select-Object -First 1).Trim()
-  if ($LASTEXITCODE -ne 0 -or $reportedVersion -notmatch [regex]::Escape($version)) {
+  # Let wrapper scripts exit before selecting the first output line. Piping a .cmd directly
+  # through Select-Object -First 1 can close its pipe early and surface a false -1 exit code.
+  $versionOutput = & $executable --version 2>$null
+  $versionExitCode = $LASTEXITCODE
+  $reportedVersion = [string]($versionOutput | Select-Object -First 1)
+  $reportedVersion = $reportedVersion.Trim()
+  if ($versionExitCode -ne 0 -or $reportedVersion -notmatch [regex]::Escape($version)) {
     Fail "$SelectedEngine executable version check failed. Expected $version, got '$reportedVersion'."
   }
 
@@ -402,7 +465,7 @@ try {
   Pop-Location
 }
 
-Ensure-EngineDependency $Engine $npmCmd
+Ensure-EngineDependency $Engine $npmCmd $nodeExe
 
 if ($Mode -eq "bootstrap") {
   Write-Step "Bootstrap complete for engine '$Engine'."

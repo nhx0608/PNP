@@ -4,5 +4,6 @@
   "owner": "B",
   "implementationEntry": "src/engines/pi/pack.ts",
   "engineVersion": null,
-  "capabilityEvidence": "unverified"
+  "capabilityEvidence": "declared",
+  "notes": "Driver code (code/src/drivers/pi-rpc/**) is implemented against docs/research/T02-pi-harness.md's documented `--mode rpc` wire format. A real `@earendil-works/pi-coding-agent` 0.85.1 was installed via `npm install -g` and manually exercised over `--mode rpc` (get_state, and a full prompt round-trip against a local OpenAI-Chat-Completions mock server) in this environment; that probe found and corrected two real bugs the earlier declared-only shapes had (see docs/engines/pi.md 'B08'): `agent_end` never carries a top-level `stopReason` (it is only ever on the last entry of `messages`; the old code read a field that never exists, so every real run — including genuine errors — was reported as `finish:\"stop\"`), and there is no generic `OPENAI_BASE_URL`/`ANTHROPIC_BASE_URL` override for a custom endpoint (verified: a real pi process ignored `OPENAI_BASE_URL` and called the real api.openai.com); model/endpoint/credential injection now goes through a session-private `~/.pi/agent/models.json` redirected via `PI_CODING_AGENT_DIR`, not environment variables. `engineVersion` stays null until a release is formally locked by SHA/version per team process; this was a manual, reproducible probe (commands recorded in docs/engines/pi.md), not yet an automated CI-gated test against the real binary."
 }
