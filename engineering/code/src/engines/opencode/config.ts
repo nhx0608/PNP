@@ -16,8 +16,9 @@ export interface OpenCodeNodeSource extends OpenCodeExecutableSource {
 }
 /**
  * Whether the generated private config asks OpenCode to request permission before editing or running commands.
- * OpenCode allows every operation by default, so "engine-default" writes no `permission` block and the engine
- * never raises ACP `session/request_permission`; "ask" writes `{"edit":"ask","bash":"ask"}` so the request
+ * OpenCode allows most operations by default -- not all of them, see buildNativePermissionConfig in
+ * native-config.ts -- so "engine-default" adds nothing beyond the explicit `external_directory: "allow"` and the
+ * engine never raises ACP `session/request_permission`; "ask" adds `{"edit":"ask","bash":"ask"}` so the request
  * actually reaches the gateway and its policy layer decides allow/ask/deny.
  */
 export type OpenCodeNativePermissions = "engine-default" | "ask";

@@ -190,6 +190,12 @@ export interface ResolvedModel {
   /** Never persist or log resolved model configuration. */
   headers: Readonly<Record<string, string>>;
   caFile?: string;
+  /**
+   * Last resort for an internal endpoint whose certificate cannot be verified even with `caFile`: an Engine
+   * Pack projects it as the engine process's TLS opt-out. Absent or false means normal verification; only an
+   * explicit deployment decision may set it, and it is never inferred from the environment of a child process.
+   */
+  tlsInsecure?: boolean;
   /** Absent means the provider does not report a resolution; callers treat that as `exact`. */
   resolution?: ModelResolution;
 }

@@ -8,24 +8,28 @@ import type { OpenCodeEngineConfig } from "./config.ts";
 const SUPPORTED_KINDS = new Set<AssetBinding["kind"]>(["skill", "instruction"]);
 
 /**
- * Canonical, single-copy location for a projected instruction asset. Also referenced verbatim by
- * native-config.ts's `instructions` array, so the two modules must agree on this path without sharing state.
+ * Canonical, single-copy location for a projected instruction asset, always absolute. Also referenced verbatim
+ * by native-config.ts's `instructions` array, so the two modules must agree on this path without sharing state:
+ * the path written into the generated config is the path of the copy made here, so the engine reads a file this
+ * Pack put there. `path.resolve` (not `join`) so a relative nativeDataDirectory can never produce a relative
+ * `instructions` entry, which OpenCode would resolve against the config file's own directory instead.
  */
 export function instructionAssetTargetPath(nativeDataDirectory: string, asset: AssetBinding): string {
-  return path.join(nativeDataDirectory, "opencode", "assets", "instructions", asset.id, path.basename(asset.path));
+  return path.resolve(nativeDataDirectory, "opencode", "assets", "instructions", asset.id, path.basename(asset.path));
 }
 /**
- * Skill assets are mirrored to every RedirectPlan.configRoots candidate under `opencode/skills/<id>/`, matching
- * the global skill path OpenCode documents (`~/.config/opencode/skills/<name>/SKILL.md`, T03-opencode.md #16).
- * The config *file* is reached through OPENCODE_CONFIG, but that variable names a file and says nothing about
- * where skills are scanned, so skills still depend on the redirected config homes -- which is exactly why those
- * mirrors are kept alongside the OPENCODE_CONFIG pointer (see native-config.ts). Project-level skill paths
- * (`.opencode/skills`, cwd-relative) are deliberately not used: writing into Session.directory would be writing
- * into the user's workspace, which contracts.md section 8 forbids.
+ * Skill assets are copied into every RedirectPlan.skillRoots directory under `<root>/<id>/`: the private
+ * OPENCODE_CONFIG_DIR (`<dir>/skills/<id>/SKILL.md`, the documented `.opencode` structure) and every redirected
+ * config home (`<home>/opencode/skills/<id>/SKILL.md`, the global skill path OpenCode documents --
+ * `~/.config/opencode/skills/<name>/SKILL.md`, T03-opencode.md #16). OPENCODE_CONFIG names a *file* and says
+ * nothing about where skills are scanned, which is why the config-directory route matters now that HOME is no
+ * longer redirected. Project-level skill paths (`.opencode/skills`, cwd-relative) are deliberately not used:
+ * writing into Session.directory would be writing into the user's workspace, which contracts.md section 8
+ * forbids.
  */
 export function skillAssetTargetPaths(nativeDataDirectory: string, config: OpenCodeEngineConfig, asset: AssetBinding): string[] {
   const plan = buildRedirectPlan(nativeDataDirectory, config);
-  return plan.configRoots.map((root) => path.join(root, "opencode", "skills", asset.id, path.basename(asset.path)));
+  return plan.skillRoots.map((root) => path.join(root, asset.id, path.basename(asset.path)));
 }
 
 export interface ProjectAssetsInput {
