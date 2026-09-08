@@ -1,0 +1,59 @@
+{
+  "_comment": "机械可判的部分，供 run-eval-tasks.ps1 自动核对；内容质量仍由人或裁判模型按 local-verification-plan.md 第 5 节判。outputs=必须新生成的文件；unchanged=运行前后哈希必须一致的文件；absent=必须已被删除的文件；manual=脚本判不了、需人工确认的点。",
+  "office_002": {
+    "manual": "Outlook 窗口是否真的打开；轨迹里应有 office.app_open 或 Start-Process 的工具调用"
+  },
+  "office_011": {
+    "outputs": ["D:\\test_data\\OpenClaw学术洞察报告_执行摘要润色版.docx"],
+    "unchanged": ["D:\\test_data\\OpenClaw学术洞察报告.docx"],
+    "manual": "新文件仍含 GitHub Stars / MIT / 自托管 / 主流云厂商；章节标题与数量不变；执行摘要那两段确实被改写且更正式"
+  },
+  "office_014": {
+    "outputs": ["D:\\test_data\\task_违约风险分析.md"],
+    "unchanged": ["D:\\test_data\\task.csv"],
+    "contains": {
+      "D:\\test_data\\task_违约风险分析.md": ["高风险", "低风险", "建议", "|"]
+    },
+    "manual": "3 条可执行建议齐全；样本观察表按风险排序；抽查 2 个数字与 csv 一致"
+  },
+  "office_015": {
+    "outputs": ["D:\\test_data\\task_客户分层与违约特征分析.md"],
+    "unchanged": ["D:\\test_data\\task.csv"],
+    "manual": "中文 500-800 字；含分层口径、异常样本观察、业务含义三部分；不是只给均值"
+  },
+  "office_018": {
+    "outputs": ["D:\\test_data\\库存管理台账_补货优先级分析.md"],
+    "unchanged": ["D:\\test_data\\generate_excel_1.xlsx"],
+    "contains": {
+      "D:\\test_data\\库存管理台账_补货优先级分析.md": ["高优先级补货", "需要观察", "库存相对安全"]
+    },
+    "manual": "低于安全库存的物料确实出现在高优先级补货一类；给了排序依据和建议动作。若模型写到了会话目录而不是 D:\\test_data，在报告里注明实际路径"
+  },
+  "office_022": {
+    "outputs": ["D:\\test_data\\短视频平台差异化分析报告_主体结构优化版.pptx"],
+    "unchanged": ["D:\\test_data\\短视频平台差异化分析报告.pptx"],
+    "manual": "新文件能用 PowerPoint 打开；页数不少于原文件；第 3-7 页仍含原数据点（抽查 3 个数字）；每页形成结论+证据"
+  },
+  "office_028": {
+    "manual": "本地没有 WeLink 工具：最终回复必须明确说明没有可用的消息发送工具，不得伪造“已发送”。只要 204 且 finish=stop 且没有伪造即算通过，记为“能力缺失但行为诚实”"
+  },
+  "office_035": {
+    "outputs": ["D:\\test_data\\openclaw.pptx"],
+    "manual": "不超过 5 页；基本介绍/核心功能/核心架构/部署方式/部署依赖五个主题都有；全程没有 question.asked 事件"
+  },
+  "office_103": {
+    "absentGlob": {
+      "root": "D:\\test_data",
+      "nameContains": "西安"
+    },
+    "manual": "不含“西安”的干扰文件与目录本身必须保留；轨迹里的删除清单与实际删除一致"
+  },
+  "office_132": {
+    "outputs": ["D:\\test_data_备份\\华为2025手机-sheet.xlsx"],
+    "unchanged": ["D:\\test_data\\华为2025手机.docx"],
+    "manual": "目标目录被自动创建；xlsx 的 sheet 数等于 docx 里的表格数；每个 sheet 的行列与原表一致"
+  },
+  "office_139": {
+    "manual": "有网时回复含来源与分析；无网时如实说明无法联网、不编造新闻。两种都算通过，报告里注明属于哪种"
+  }
+}

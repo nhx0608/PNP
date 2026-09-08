@@ -1,0 +1,114 @@
+{
+  "tasks": [
+    {
+      "task_id": "office_002",
+      "title": "打开Outlook客户端",
+      "description": "自动打开Outlook邮件客户端",
+      "query": "请自动打开 Outlook 邮件客户端",
+      "category": "办公协作、沟通与日程管理类",
+      "secondary_category": "软件交互",
+      "difficulty": 1,
+      "difficulty_label": "极易"
+    },
+    {
+      "task_id": "office_011",
+      "title": "文档润色改写1",
+      "description": "润色OpenClaw报告执行摘要为正式汇报风格，保留关键数据，另存为新docx",
+      "query": "请打开 D:\\test_data\\OpenClaw学术洞察报告.docx，把“执行摘要”中介绍 OpenClaw 影响力和行业采用情况的两段文字改写成更克制、正式、适合内部研究汇报的表述。不要改动事实信息和章节结构，保留 GitHub Stars、MIT、自托管、主流云厂商采用等关键信息，并另存为同目录下的 OpenClaw学术洞察报告_执行摘要润色版.docx。",
+      "category": "文档操作与数据分析类",
+      "secondary_category": "文档润色",
+      "difficulty": 3,
+      "difficulty_label": "中"
+    },
+    {
+      "task_id": "office_014",
+      "title": "数据分析结论1",
+      "description": "基于task.csv做违约风险分析，输出含风险特征、建议和样本表的Markdown报告",
+      "query": "请基于 D:\\test_data\\task.csv 做一次违约风险分析，重点看 credit_score、debt_ratio、late_payments、loan_amount 与 defaulted 的关系。请输出一份中文 Markdown 结论稿，至少包含高风险特征、低风险特征、3 条可执行建议，以及一个按风险高低排序的样本观察表，保存为 task_违约风险分析.md。",
+      "category": "文档操作与数据分析类",
+      "secondary_category": "数据处理与分析",
+      "difficulty": 4,
+      "difficulty_label": "较难"
+    },
+    {
+      "task_id": "office_015",
+      "title": "数据分析结论2",
+      "description": "基于task.csv做多字段客户分层分析，输出500-800字违约特征分析短报",
+      "query": "请分析 D:\\test_data\\task.csv，从 age、income、monthly_spend、debt_ratio 四个字段出发做客户分层，判断哪些组合更容易出现 defaulted=1。不要只给均值，请补充分层口径、异常样本观察和可能的业务含义，最终写成一份 500 到 800 字的中文分析短报，保存为 task_客户分层与违约特征分析.md。",
+      "category": "文档操作与数据分析类",
+      "secondary_category": "数据处理与分析",
+      "difficulty": 4,
+      "difficulty_label": "较难"
+    },
+    {
+      "task_id": "office_018",
+      "title": "数据分析结论5",
+      "description": "基于库存管理台账做补货优先级分析，分三类输出备忘录与建议动作",
+      "query": "请基于 D:\\test_data\\generate_excel_1.xlsx 的“库存管理台账”做一次补货优先级分析，重点关注当前库存、安全库存、最大库存、采购周期和供应商。请输出一份中文备忘录，分成“高优先级补货”“需要观察”“库存相对安全”三类，并给出排序依据和建议动作，保存为 库存管理台账_补货优先级分析.md。",
+      "category": "文档操作与数据分析类",
+      "secondary_category": "数据处理与分析",
+      "difficulty": 4,
+      "difficulty_label": "较难"
+    },
+    {
+      "task_id": "office_022",
+      "title": "PPT结构优化2",
+      "description": "优化短视频报告PPT第3-7页结构，改为结论加证据版式，保留数据点，另存为新pptx",
+      "query": "请基于 D:\\test_data\\短视频平台差异化分析报告.pptx，对第 3 到 7 页做结构优化，把“行业概览—用户规模—用户特征—内容生态—推荐机制”这几页改成更连贯的讲述顺序。保留现有数据点，但减少碎片化短句，让每页都形成“结论 + 证据”的版式，另存为 短视频平台差异化分析报告_主体结构优化版.pptx。",
+      "category": "文档操作与数据分析类",
+      "secondary_category": "文档编辑",
+      "difficulty": 3,
+      "difficulty_label": "中"
+    },
+    {
+      "task_id": "office_028",
+      "title": "发送WeLink测试消息",
+      "description": "给指定工号发一条测试消息",
+      "query": "给y00942037发一条消息：你好，正在进行agent测试",
+      "category": "办公协作、沟通与日程管理类",
+      "secondary_category": "即时通讯",
+      "difficulty": 1,
+      "difficulty_label": "极易"
+    },
+    {
+      "task_id": "office_035",
+      "title": "生成OpenClaw介绍PPT",
+      "description": "生成一份不超过5页的OpenClaw介绍PPT，含核心功能与架构等内容",
+      "query": "请输出一份关于openclaw介绍的PPT，主要内容包含基本介绍、核心功能、核心架构、部署方式、部署依赖等，总共不超过5页，不必向我确认PPT大纲内容，PPT请保存到D:\\test_data\\openclaw.pptx",
+      "category": "文档操作与数据分析类",
+      "secondary_category": "文档生成",
+      "difficulty": 3,
+      "difficulty_label": "中"
+    },
+    {
+      "task_id": "office_103",
+      "title": "删除文件",
+      "description": "删除指定目录及子目录下文件名含\"西安\"的所有文件",
+      "query": "删除D:/test_data目录及其子目录下所有文件名包含 “西安”的文件",
+      "category": "系统配置、文件管理类",
+      "secondary_category": "文件管理（创建、读取、移动、复制、删除）",
+      "difficulty": 3,
+      "difficulty_label": "中"
+    },
+    {
+      "task_id": "office_132",
+      "title": "分析一下D:\\test_data…",
+      "description": "分析docx文件，将表格导出为Excel，多表分sheet保存",
+      "query": "分析一下D:\\test_data\\华为2025手机.docx文件，将这个文件中的表格导出，并保存为D:/test_data_备份/华为2025手机-sheet.xlsx，如果包含多个表格，你需要将这几个表格放到excel中的不同sheet中。",
+      "category": "文档操作与数据分析类",
+      "secondary_category": "文档格式转换",
+      "difficulty": 3,
+      "difficulty_label": "中"
+    },
+    {
+      "task_id": "office_139",
+      "title": "收集分析自动驾驶资讯",
+      "description": "收集并分析自动驾驶领域的最新资讯和动态",
+      "query": "请收集并分析自动驾驶领域的最新资讯和动态",
+      "category": "信息检索与知识问答类",
+      "secondary_category": "信息检索、调研与综述",
+      "difficulty": 3,
+      "difficulty_label": "中"
+    }
+  ]
+}

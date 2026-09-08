@@ -1392,8 +1392,8 @@
       "path": "INSTRUCTION.md",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 13229,
-      "sha256": "21f145e8754890f874a2373c3347283b834a42862d169b5f1dc5a61ff914283d"
+      "bytes": 14379,
+      "sha256": "f96850995391f5dcb7a947779c765b567ecccdd118db7e4d4a3b43ca02232c66"
     },
     {
       "path": "prompts/00-baseline-check.md",

@@ -58,7 +58,7 @@ $env:PNP_MODEL_API_KEY  = '你的密钥'
 
 内网模型的两个常见情况：地址是 `http://` 而不是 `https://` → 再执行 `$env:PNP_ALLOW_HTTP_ENDPOINTS = '1'`；证书是自签的 → `$env:PNP_MODEL_CA_FILE = 'D:\certs\internal-ca.pem'`，实在来不及配证书可临时 `$env:PNP_MODEL_TLS_INSECURE = '1'`。
 
-## 第 3 步：自检（两条命令）
+## 第 3 步：自检（两条命令，可选但强烈建议）
 
 ```powershell
 .\pnp.cmd selfcheck --engine opencode
@@ -72,12 +72,24 @@ $env:PNP_MODEL_API_KEY  = '你的密钥'
 
 ## 第 4 步：启动、切换引擎、停止
 
-启动（引擎用环境变量 `AGENT_ENGINE` 指定，取值 `opencode` 或 `pi`）：
+赛题规定的启动方式是 `gateway --engine <引擎> --port 6217`，本包里它就是 `gateway.cmd`：
+
+```powershell
+.\gateway.cmd --engine opencode --port 6217
+```
+
+赛题要求的环境变量切换同样支持，二选一即可：
 
 ```powershell
 $env:AGENT_ENGINE = 'opencode'
-.\pnp.cmd start
+.\gateway.cmd
 ```
+
+参数：`--engine` 取 `opencode` 或 `pi`（不给时读 `AGENT_ENGINE`，两者都不给以 `ENGINE_NOT_FOUND` 退出，同时给且不一致以 `ENGINE_CONFIGURATION_CONFLICT` 退出）；`--port` 默认 `6217`；`--host` 默认 `localhost`（同时监听 `127.0.0.1` 与 `::1`，只允许回环地址）。
+
+`gateway.cmd` 直接启动网关本身，不做任何准备工作——交付包里 Node、依赖、两个引擎都已就位，所以可以直接用。**如果你是从源码仓库运行**（没有 `dist\` 目录），先执行一次 `.\pnp.cmd bootstrap --engine opencode` 把依赖装好，之后 `gateway.cmd` 就能用了。
+
+`.\pnp.cmd start --engine opencode --port 6217` 是等价的另一条路：它先补齐缺失的依赖再启动同一个网关，并额外把进程号写到 `runtime\gateway.pid`、把输出同时写进 `runtime\logs\`，所以想用 `.\pnp.cmd stop` 停止时用它。
 
 网关会占住这个窗口。**另开一个 PowerShell 窗口**探测就绪：
 
@@ -85,17 +97,19 @@ $env:AGENT_ENGINE = 'opencode'
 Invoke-RestMethod http://127.0.0.1:6217/health/ready
 ```
 
-返回 `status : ready` 与 `engine : opencode` 就可以开始调用（首次启动引擎需要十几秒到一分钟；启动中该接口返回 503，PowerShell 会报「远程服务器返回错误」，属正常）。`.\pnp.cmd start --engine opencode --port 6217` 与上面等价；命令行参数与 `AGENT_ENGINE` 同时给且不一致时会拒绝启动。
+返回 `status : ready` 与 `engine : opencode` 就可以开始调用（首次启动引擎需要十几秒到一分钟；启动中该接口返回 503，PowerShell 会报「远程服务器返回错误」，属正常）。
 
-切换引擎 = 停止后换变量重启（不支持运行中切换）：
+切换引擎 = 停止后换引擎重启（不支持运行中切换）：
 
 ```powershell
-.\pnp.cmd stop
+# 在网关窗口按 Ctrl+C 停止，或在另一个窗口执行 .\pnp.cmd stop
 $env:AGENT_ENGINE = 'pi'
-.\pnp.cmd start
+.\gateway.cmd
 ```
 
-停止：在另一个窗口执行 `.\pnp.cmd stop`（只结束网关自己的进程，不碰任务打开的 Office 等程序），或在网关窗口按 Ctrl+C。
+两个引擎的数据目录默认相互独立（见 4.3），互不影响。
+
+停止：在网关窗口按 Ctrl+C；用 `.\pnp.cmd start` 启动的还可以在另一个窗口执行 `.\pnp.cmd stop`（只结束 `runtime\gateway.pid` 记录的那一个进程，不碰任务打开的 Office 等程序）。
 
 ## 第 5 步：评测脚本怎么调用
 

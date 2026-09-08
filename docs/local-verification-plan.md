@@ -54,17 +54,33 @@ Set-Location <solution>\code
 
 ## 4. 怎么调用网关
 
-启动（每个引擎一轮，先 opencode 后 pi）：
+启动用赛题规定的形式（每个引擎一轮，先 opencode 后 pi）：
 
 ```powershell
 Set-Location <solution>\code
-$env:AGENT_ENGINE = 'opencode'
-.\pnp.cmd start
+.\gateway.cmd --engine opencode --port 6217
+# 等价：$env:AGENT_ENGINE = 'opencode'; .\gateway.cmd
 ```
 
-网关会占住这个窗口；另开一个 PowerShell 窗口作为"评测客户端"，等 `Invoke-RestMethod http://127.0.0.1:6217/health/ready` 返回 `status: ready`。
+从源码仓库跑且没有 `dist\` 时，先 `.\pnp.cmd bootstrap --engine opencode` 装好依赖，再用 `gateway.cmd`。
 
-每个任务的标准流程（PowerShell）：
+网关会占住这个窗口；另开一个 PowerShell 窗口作为"评测客户端"，等 `Invoke-RestMethod http://127.0.0.1:6217/health/ready` 返回 `status: ready` 且 `engine` 是本轮引擎。
+
+### 4.1 一条命令跑完 11 题（推荐）
+
+用例输入就是赛题格式的 `docs\eval-tasks.json`（字段与赛题给的 JSON 完全一致），驱动脚本按规范的调用序列逐条跑并留证据：
+
+```powershell
+Set-Location <仓库>\docs
+.\run-eval-tasks.ps1 -Engine opencode
+# 只跑其中几条：.\run-eval-tasks.ps1 -Engine opencode -Only office_014,office_103
+```
+
+它对每条用例做：`POST /session {title:task_id, directory}` → 后台 `curl.exe -sN /event` 录事件 → `POST prompt_async {parts,model,agent}`（query 原样、`model` 用任意取值验证映射）→ `GET /session/{id}/message` 存轨迹 → `DELETE /session/{id}`，然后核对：状态码 204、规范 8.4 完成规则、`docs\eval-expectations.json` 里声明的产物是否生成、输入文件是否被改动、该删的是否删干净。结果写在 `D:\pnp-evidence\<引擎>-<时间戳>\`：`report.md`（逐题表格 + 需人工确认的点）、`results.json`、每题的 `.events.txt` 与 `.messages.json`。
+
+脚本只判机械项；内容质量（改写是否更正式、分析是否站得住）按第 5 节的标准人工或用裁判模型填进 `report.md` 的最后一列。
+
+### 4.2 手工调用单条（排查时用）
 
 ```powershell
 $base = "http://127.0.0.1:6217"
@@ -88,7 +104,7 @@ Invoke-RestMethod -Method Delete "$base/session/$($s.id)"
 
 ## 5. 任务清单与判分标准
 
-每题记录：引擎、状态码、耗时、产物是否存在、内容是否达标、轨迹里调用了哪些工具、最终回复是否列出了产物路径。用例 query 原文如下（不要改写）。
+用例的机器可读输入在 `docs\eval-tasks.json`（赛题原格式），下表是同一批用例的人工判分标准；`query` 原文以 JSON 文件为准，不要改写。每题记录：引擎、状态码、耗时、产物是否存在、内容是否达标、轨迹里调用了哪些工具、最终回复是否列出了产物路径。
 
 | 用例 | query（原文） | 通过标准 |
 |---|---|---|
@@ -117,7 +133,7 @@ Invoke-RestMethod -Method Delete "$base/session/$($s.id)"
 5. **反问流程**：`$env:PNP_QUESTION_POLICY = 'ask'` 重启，发"帮我写一份周报，先问我需要哪些板块"；若出现 `question.asked`，用 `POST /question/{id}/reply {"answers":[["方案 A"]]}` 回复并观察继续执行；默认 `auto` 模式下同一提示词不应阻塞（网关自动作答）。
 6. **错误格式**：`GET /session/不存在` → 404 `{"code":"NOT_FOUND",...}`；`POST /session` 不带 `directory` → 400 `VALIDATION_ERROR`；同一会话并发第二个 `prompt_async` → 409 `SESSION_BUSY`。
 7. **并发与隔离**：两个会话（`directory` 分别为 `D:\test_data\ws1`、`D:\test_data\ws2`）同时各发一个写文件任务：都返回 204，文件各写在自己的目录里，`GET /session/status` 期间能看到 busy/idle。
-8. **引擎切换**：`.\pnp.cmd stop` → `$env:AGENT_ENGINE = 'pi'` → `.\pnp.cmd start` → `/health/ready` 的 `engine` 字段为 `pi`；opencode 轮的会话在 pi 轮不可见属正常（数据目录按引擎分开）。
+8. **引擎切换**：停掉网关 → `$env:AGENT_ENGINE = 'pi'` → `.\gateway.cmd`（或 `.\gateway.cmd --engine pi --port 6217`）→ `/health/ready` 的 `engine` 字段为 `pi`；opencode 轮的会话在 pi 轮不可见属正常（数据目录按引擎分开）。
 9. **重启恢复**：一个会话正在执行时直接 `.\pnp.cmd stop`，再 `.\pnp.cmd start`：网关应能启动，该会话的 `prompt_async` 返回 409 `SESSION_UNAVAILABLE` 或正常 idle；`DELETE` 该会话后可继续新建会话。
 
 ## 7. 报告格式
