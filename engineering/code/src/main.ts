@@ -23,15 +23,6 @@ function duration(name: string, fallback: number, minimum: number, maximum: numb
   return value;
 }
 
-// The deployment's own environment file, before anything reads a variable. `gateway.cmd`, `npm
-// start` and `pnp.cmd` then all see the same environment: the launcher used to be the only route
-// that loaded this file, so a gateway started any other way ran without the deployment's model
-// configuration. A variable the process already carries wins, and only NAMES are printed.
-const localEnvironment = await loadLocalEnvironment();
-if (localEnvironment.present) {
-  console.log(JSON.stringify({ event: "local-env.loaded", file: localEnvironment.file, names: localEnvironment.names }));
-}
-
 /**
  * Whether a `question` from the engine waits for a client reply. The delivery runs unattended, so
  * `auto` is the default: the question is still recorded and published, and the gateway answers it
@@ -43,6 +34,15 @@ function questionPolicy(): "auto" | "ask" {
   const value = raw.trim();
   if (value !== "auto" && value !== "ask") throw new PnpError("VALIDATION_ERROR", "Invalid PNP_QUESTION_POLICY.", 400);
   return value;
+}
+
+// The deployment's own environment file, before anything reads a variable. `gateway.cmd`, `npm
+// start` and `pnp.cmd` then all see the same environment: the launcher used to be the only route
+// that loaded this file, so a gateway started any other way ran without the deployment's model
+// configuration. A variable the process already carries wins, and only NAMES are printed.
+const localEnvironment = await loadLocalEnvironment();
+if (localEnvironment.present) {
+  console.log(JSON.stringify({ event: "local-env.loaded", file: localEnvironment.file, names: localEnvironment.names }));
 }
 
 const args = parseArgs({ options: { engine: { type: "string" }, port: { type: "string" }, host: { type: "string" } } });

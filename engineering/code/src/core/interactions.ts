@@ -156,16 +156,18 @@ export class InteractionBroker {
         ...body, sessionID: input.sessionId, runID: input.runId, id,
         ...(request.kind === "permission" ? { permission: request.operation, patterns: patternsOf(body) } : {}),
       });
+      if (signal.aborted) choice.resolve({ decision: "deny", source: "cancelled", reasonCode: "RUN_CANCELLED" });
       // An unattended deployment answers its own questions: the request above was recorded and
       // published first, so the trajectory carries the question exactly as an interactive run would,
       // and everything below -- storage, the resolution event, the waiting driver -- runs unchanged.
+      // A cancelled run keeps its cancellation: the first resolution above wins, and nothing is
+      // answered on behalf of a turn that is already stopping.
       if (request.kind === "question" && this.questionPolicy === "auto") {
         choice.resolve({
           decision: "answer", answers: automaticAnswers(payload), source: "auto",
           reasonCode: "QUESTION_AUTO_ANSWERED",
         });
       }
-      if (signal.aborted) choice.resolve({ decision: "deny", source: "cancelled", reasonCode: "RUN_CANCELLED" });
       let answer: InteractionResponse;
       try { answer = await bounded(choice.promise, this.timeoutMs); }
       catch { answer = { decision: "deny", source: "timeout", reasonCode: "INTERACTION_TIMEOUT" }; }
