@@ -1,0 +1,173 @@
+{
+  "schemaVersion": 1,
+  "fixtureSetId": "pnp-office-eval-synthetic-v1",
+  "fixtureSetVersion": "1.0.0",
+  "description": "PNP 办公评测的公开合成输入；不是组委会原始材料，也不包含真实账号或内部数据。",
+  "provenance": {
+    "synthetic": true,
+    "officialCompetitionMaterial": false,
+    "visualQaCompleted": true
+  },
+  "sentinel": {
+    "schema": "pnp-eval-fixture-owner/v1",
+    "fileName": ".pnp-evaluation-fixture.json",
+    "owner": "PNP_EVALUATION_FIXTURE"
+  },
+  "defaultRoots": {
+    "testData": "D:\\test_data",
+    "backup": "D:\\test_data_备份"
+  },
+  "inputs": [
+    {
+      "source": "inputs/OpenClaw学术洞察报告.docx",
+      "root": "testData",
+      "path": "OpenClaw学术洞察报告.docx",
+      "sha256": "394f345b82fb7fd7d74a9ae76213b31995bc35ae86a9cd395179ce73e4bb5756",
+      "tasks": ["office_011"]
+    },
+    {
+      "source": "inputs/task.csv",
+      "root": "testData",
+      "path": "task.csv",
+      "sha256": "27d0480f958bf6f3622fb09a911a459cb8f84e863f087ff1ea1dbdd725eef76a",
+      "tasks": ["office_014", "office_015"]
+    },
+    {
+      "source": "inputs/generate_excel_1.xlsx",
+      "root": "testData",
+      "path": "generate_excel_1.xlsx",
+      "sha256": "2d6d385cf5d6a71104f2f9981748a29ef49b5b131210f04534b50db5d5a56d2b",
+      "tasks": ["office_018"]
+    },
+    {
+      "source": "inputs/短视频平台差异化分析报告.pptx",
+      "root": "testData",
+      "path": "短视频平台差异化分析报告.pptx",
+      "sha256": "56669e69040f0a09a35c03bbd5afad7047d0932aa73d138aa92922722517a290",
+      "tasks": ["office_022"]
+    },
+    {
+      "source": "inputs/华为2025手机.docx",
+      "root": "testData",
+      "path": "华为2025手机.docx",
+      "sha256": "d4b229040f5f1daec518b1cf3d53b1be4486662840ace1f3f779261d0b9d84f5",
+      "tasks": ["office_132"]
+    },
+    {
+      "source": "delete-case/报告_西安分公司.txt",
+      "root": "testData",
+      "path": "报告_西安分公司.txt",
+      "sha256": "7722b30aacb27e3d616e741c92633991761a25ea093e8babdc3c864df8e7792c",
+      "tasks": ["office_103"]
+    },
+    {
+      "source": "delete-case/西安/西安项目清单.txt",
+      "root": "testData",
+      "path": "西安/西安项目清单.txt",
+      "sha256": "89cc68d113bea4a61287172af8f09c35889c648daf5691195e363df2e2f59933",
+      "tasks": ["office_103"]
+    },
+    {
+      "source": "delete-case/子目录/西安2025.docx",
+      "root": "testData",
+      "path": "子目录/西安2025.docx",
+      "sha256": "d4b229040f5f1daec518b1cf3d53b1be4486662840ace1f3f779261d0b9d84f5",
+      "tasks": ["office_103"]
+    },
+    {
+      "source": "delete-case/二级/资料/华北_西安_跟进.txt",
+      "root": "testData",
+      "path": "二级/资料/华北_西安_跟进.txt",
+      "sha256": "9ab8b61577cbc2429ff53b6773ef6ed5df1509deb50371b5bcfa2d33a7829362",
+      "tasks": ["office_103"]
+    },
+    {
+      "source": "delete-case/西安/保留_成都.txt",
+      "root": "testData",
+      "path": "西安/保留_成都.txt",
+      "sha256": "030b0573e1466e2cbb04640eaa965a9218e7a212972e4f74ee28638a183ae317",
+      "tasks": ["office_103"]
+    },
+    {
+      "source": "delete-case/子目录/深圳2025.docx",
+      "root": "testData",
+      "path": "子目录/深圳2025.docx",
+      "sha256": "d4b229040f5f1daec518b1cf3d53b1be4486662840ace1f3f779261d0b9d84f5",
+      "tasks": ["office_103"]
+    },
+    {
+      "source": "delete-case/二级/资料/西南说明.txt",
+      "root": "testData",
+      "path": "二级/资料/西南说明.txt",
+      "sha256": "4ddb4f8ee55d6af3a93db335c9b05361b96eed19a211fc1586ec2fa2a68365f8",
+      "tasks": ["office_103"]
+    },
+    {
+      "source": "delete-case/control/保留文件.txt",
+      "root": "testData",
+      "path": "保留文件.txt",
+      "sha256": "8852d7224a9b9c68da50a8f8b4ac5fee30c8f0402fa72ac2f86a0ea4798cc6ec",
+      "tasks": ["office_103"]
+    }
+  ],
+  "outputs": [
+    {
+      "root": "testData",
+      "path": "OpenClaw学术洞察报告_执行摘要润色版.docx",
+      "task": "office_011"
+    },
+    {
+      "root": "testData",
+      "path": "task_违约风险分析.md",
+      "task": "office_014"
+    },
+    {
+      "root": "testData",
+      "path": "task_客户分层与违约特征分析.md",
+      "task": "office_015"
+    },
+    {
+      "root": "testData",
+      "path": "库存管理台账_补货优先级分析.md",
+      "task": "office_018"
+    },
+    {
+      "root": "testData",
+      "path": "短视频平台差异化分析报告_主体结构优化版.pptx",
+      "task": "office_022"
+    },
+    {
+      "root": "testData",
+      "path": "openclaw.pptx",
+      "task": "office_035"
+    },
+    {
+      "root": "backup",
+      "path": "华为2025手机-sheet.xlsx",
+      "task": "office_132"
+    },
+    {
+      "root": "testData",
+      "path": "count.txt",
+      "task": "abort-special-check"
+    }
+  ],
+  "deleteCase": {
+    "task": "office_103",
+    "nameContains": "西安",
+    "minimumBefore": 4,
+    "mustDelete": [
+      "报告_西安分公司.txt",
+      "西安/西安项目清单.txt",
+      "子目录/西安2025.docx",
+      "二级/资料/华北_西安_跟进.txt"
+    ],
+    "mustRemain": [
+      ".pnp-evaluation-fixture.json",
+      "西安/保留_成都.txt",
+      "子目录/深圳2025.docx",
+      "二级/资料/西南说明.txt",
+      "保留文件.txt"
+    ]
+  }
+}

@@ -1,29 +1,23 @@
 <#
 .SYNOPSIS
-  按赛题给定的用例 JSON 驱动 PNP 网关跑一遍评测任务，逐条留证据并做机械判定。
+  用赛题格式的 JSON 驱动 PNP 网关执行评测任务，并保存可复核证据。
 
 .DESCRIPTION
-  输入就是赛题格式的用例文件（docs\eval-tasks.json，字段 task_id/title/description/query/
-  category/secondary_category/difficulty/difficulty_label）。每条用例走一遍规范定义的调用序列：
-  POST /session -> GET /event(SSE) -> POST prompt_async -> GET message -> DELETE /session，
-  然后核对规范 8.4 的完成规则和 docs\eval-expectations.json 里的产物。
+  默认只运行无外部副作用的用例。桌面启动、联网、递归删除和外部消息必须分别显式开启。
+  脚本把“协议正常结束”和“业务机械检查通过”分开记录；PASS(机械) 仍不替代人工内容复核。
 
-  本脚本只做“机械可判”的部分（状态码、完成规则、事件序列、产物文件是否生成、输入文件是否被改动）。
-  内容质量（改写是否更正式、分析是否站得住）仍由人或裁判模型按 docs\local-verification-plan.md
-  第 5 节判定，脚本会把每条的 manual 提示原样写进报告，方便逐条填。
-
-  运行前先启动网关（另一个窗口）：
+  运行前先在另一个窗口启动网关，例如：
       .\gateway.cmd --engine opencode --port 6217
 
 .EXAMPLE
   .\run-eval-tasks.ps1 -Engine opencode
 .EXAMPLE
-  .\run-eval-tasks.ps1 -Engine pi -Only office_014,office_103 -Evidence D:\pnp-evidence
+  .\run-eval-tasks.ps1 -Engine opencode -Only office_139 -IncludeNetwork
+.EXAMPLE
+  .\run-eval-tasks.ps1 -Engine pi -Only office_103 -IncludeDestructive
 #>
 [CmdletBinding()]
 param(
-  # 只用于给证据目录和报告命名；网关实际用的引擎由启动时的 --engine/AGENT_ENGINE 决定，
-  # 脚本会从 /health/ready 读回真实引擎并在不一致时拒绝运行。
   [Parameter(Mandatory = $true)][ValidateSet('opencode', 'pi')][string]$Engine,
   [string]$Base = 'http://127.0.0.1:6217',
   [string]$TasksFile = "$PSScriptRoot\eval-tasks.json",
@@ -31,30 +25,34 @@ param(
   [string]$Directory = 'D:\test_data',
   [string]$Evidence = 'D:\pnp-evidence',
   [string[]]$Only = @(),
-  [int]$PromptTimeoutSec = 900
+  [int]$PromptTimeoutSec = 900,
+  [switch]$IncludeInteractiveDesktop,
+  [switch]$IncludeNetwork,
+  [switch]$IncludeDestructive,
+  [switch]$IncludeExternalSideEffects
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
-
-$runRoot = Join-Path $Evidence "$Engine-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 function Write-Line([string]$Text) { Write-Host $Text }
+
+function Has-Property($Object, [string]$Name) {
+  return ($null -ne $Object -and $null -ne $Object.PSObject.Properties[$Name])
+}
 
 function Invoke-Json {
   param([string]$Method, [string]$Uri, $Body, [int]$TimeoutSec = 60)
   $arguments = @{ Method = $Method; Uri = $Uri; TimeoutSec = $TimeoutSec; UseBasicParsing = $true }
   if ($null -ne $Body) {
-    # UTF-8 字节而不是字符串：任务文本和文件名都是中文，交给 PowerShell 自己编码会变成乱码。
-    $json = $Body | ConvertTo-Json -Depth 8 -Compress
+    $json = $Body | ConvertTo-Json -Depth 12 -Compress
     $arguments['Body'] = [System.Text.Encoding]::UTF8.GetBytes($json)
     $arguments['ContentType'] = 'application/json; charset=utf-8'
   }
   try {
     $response = Invoke-WebRequest @arguments
-    $content = ''
-    if ($response.Content) { $content = [string]$response.Content }
+    $content = if ($response.Content) { [string]$response.Content } else { '' }
     $parsed = $null
     if ($content.Trim().Length -gt 0) { $parsed = $content | ConvertFrom-Json }
     return [pscustomobject]@{ Status = [int]$response.StatusCode; Body = $parsed; Raw = $content; Error = $null }
@@ -78,26 +76,176 @@ function Invoke-Json {
 
 function Get-Sha256([string]$Path) {
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
-  return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+  $stream = [System.IO.File]::OpenRead($Path)
+  try {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return ([System.BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '') }
+    finally { $sha.Dispose() }
+  } finally { $stream.Dispose() }
 }
 
-# --- 就绪与引擎确认 -------------------------------------------------------------
+function Get-ZipEntryText([string]$Path, [string]$EntryName) {
+  $archive = [System.IO.Compression.ZipFile]::OpenRead($Path)
+  try {
+    $entry = $archive.GetEntry($EntryName)
+    if ($null -eq $entry) { throw "压缩包中缺少 $EntryName" }
+    $stream = $entry.Open()
+    try {
+      $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8, $true)
+      try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
+    } finally { $stream.Dispose() }
+  } finally { $archive.Dispose() }
+}
+
+function Get-OpenXmlVisibleText([string]$Path) {
+  $archive = [System.IO.Compression.ZipFile]::OpenRead($Path)
+  try {
+    $entries = @()
+    $extension = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
+    if ($extension -eq '.docx') {
+      $entries = @($archive.Entries | Where-Object { $_.FullName -eq 'word/document.xml' })
+    } elseif ($extension -eq '.pptx') {
+      $entries = @($archive.Entries | Where-Object { $_.FullName -match '^ppt/slides/slide\d+\.xml$' } |
+        Sort-Object { [int]([regex]::Match($_.FullName, 'slide(\d+)\.xml').Groups[1].Value) })
+    } else {
+      throw "不支持从 $extension 提取 Open XML 文本"
+    }
+
+    $text = @()
+    foreach ($entry in $entries) {
+      $stream = $entry.Open()
+      try {
+        $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8, $true)
+        try { $xml = $reader.ReadToEnd() } finally { $reader.Dispose() }
+      } finally { $stream.Dispose() }
+      foreach ($match in [regex]::Matches($xml, '<(?:w|a):t(?:\s[^>]*)?>(.*?)</(?:w|a):t>', 'Singleline')) {
+        $text += [System.Net.WebUtility]::HtmlDecode($match.Groups[1].Value)
+      }
+    }
+    return ($text -join "`n")
+  } finally { $archive.Dispose() }
+}
+
+function Get-PptxSlideCount([string]$Path) {
+  $archive = [System.IO.Compression.ZipFile]::OpenRead($Path)
+  try { return @($archive.Entries | Where-Object { $_.FullName -match '^ppt/slides/slide\d+\.xml$' }).Count }
+  finally { $archive.Dispose() }
+}
+
+function Get-DocxTableCount([string]$Path) {
+  $xml = Get-ZipEntryText -Path $Path -EntryName 'word/document.xml'
+  return [regex]::Matches($xml, '<w:tbl(?:\s|>)').Count
+}
+
+function Get-XlsxSheetCount([string]$Path) {
+  $xml = Get-ZipEntryText -Path $Path -EntryName 'xl/workbook.xml'
+  return [regex]::Matches($xml, '<(?:\w+:)?sheet(?:\s|>)').Count
+}
+
+function Get-ToolTrace($Messages) {
+  $byId = @{}
+  $sequence = 0
+  foreach ($message in @($Messages)) {
+    if (Has-Property $message 'parts') {
+      foreach ($part in @($message.parts)) {
+        if (-not (Has-Property $part 'type') -or [string]$part.type -ne 'tool') { continue }
+        $sequence += 1
+        $callId = if (Has-Property $part 'callID') { [string]$part.callID } else { "anonymous-$sequence" }
+        if (-not $byId.ContainsKey($callId)) {
+          $byId[$callId] = [ordered]@{ call_id = $callId; name = ''; status = 'unknown'; input = $null; sequence = $sequence; error = '' }
+        }
+        $call = $byId[$callId]
+        if (Has-Property $part 'tool') { $call.name = [string]$part.tool }
+        if ((Has-Property $part 'input') -and $null -ne $part.input -and $part.input.PSObject.Properties.Count -gt 0) { $call.input = $part.input }
+        if ((Has-Property $part 'state') -and (Has-Property $part.state 'status')) { $call.status = [string]$part.state.status }
+        elseif (Has-Property $part 'nativeStatus') { $call.status = [string]$part.nativeStatus }
+        if ((Has-Property $part 'output') -and (Has-Property $part.output 'error')) {
+          $call.status = 'failed'
+          $call.error = [string]$part.output.error
+        }
+      }
+    }
+    if ((Has-Property $message 'role') -and [string]$message.role -eq 'tool' -and (Has-Property $message 'tool_call_id')) {
+      $callId = [string]$message.tool_call_id
+      if ($byId.ContainsKey($callId) -and (Has-Property $message 'content')) {
+        try {
+          $toolBody = ([string]$message.content) | ConvertFrom-Json
+          if (Has-Property $toolBody 'error') {
+            $byId[$callId].status = 'failed'
+            $byId[$callId].error = [string]$toolBody.error
+          }
+        } catch { }
+      }
+    }
+  }
+  return @($byId.Values | Sort-Object sequence | ForEach-Object { [pscustomobject]$_ })
+}
+
+function Test-RiskAllowed([string]$Risk) {
+  switch ($Risk) {
+    'safe' { return $true }
+    'interactive-desktop' { return [bool]$IncludeInteractiveDesktop }
+    'network' { return [bool]$IncludeNetwork }
+    'destructive-fixture-only' { return [bool]$IncludeDestructive }
+    'external-side-effect' { return [bool]$IncludeExternalSideEffects }
+    default { return $false }
+  }
+}
+
+# /health/ready 只证明共享执行控制可接任务；下面的真实 prompt 才验证引擎、模型与工具链。
 $ready = Invoke-Json -Method 'GET' -Uri "$Base/health/ready" -Body $null -TimeoutSec 15
 if ($ready.Status -ne 200) {
   throw "网关未就绪（$Base/health/ready 返回 $($ready.Status)）。先在另一个窗口执行 .\gateway.cmd --engine $Engine --port 6217"
 }
 $runningEngine = [string]$ready.Body.engine
 if ($runningEngine -ne $Engine) {
-  throw "网关跑的是 '$runningEngine'，但本次要测 '$Engine'。停掉网关后用 --engine $Engine 重启。"
+  throw "网关跑的是 '$runningEngine'，本次请求的是 '$Engine'。停掉网关后按目标引擎重启。"
 }
-Write-Line "[eval] 网关就绪，引擎 = $runningEngine，证据目录 = $runRoot"
 
-# --- 读入赛题用例 ---------------------------------------------------------------
-$tasks = (Get-Content -LiteralPath $TasksFile -Raw -Encoding UTF8 | ConvertFrom-Json).tasks
+$allTasks = @((Get-Content -LiteralPath $TasksFile -Raw -Encoding UTF8 | ConvertFrom-Json).tasks)
 $expectations = Get-Content -LiteralPath $ExpectationsFile -Raw -Encoding UTF8 | ConvertFrom-Json
-if ($Only.Count -gt 0) { $tasks = @($tasks | Where-Object { $Only -contains $_.task_id }) }
-if ($tasks.Count -eq 0) { throw "没有要跑的用例（检查 -Only 里的 task_id）。" }
-Write-Line "[eval] 用例 $($tasks.Count) 条，工作目录 $Directory"
+if ($Only.Count -gt 0) { $allTasks = @($allTasks | Where-Object { $Only -contains $_.task_id }) }
+if ($allTasks.Count -eq 0) { throw '没有匹配的用例（检查 -Only 里的 task_id）。' }
+
+$tasks = @()
+$skipped = @()
+foreach ($task in $allTasks) {
+  $id = [string]$task.task_id
+  $expectation = if ($expectations.PSObject.Properties[$id]) { $expectations.$id } else { $null }
+  $risk = 'unknown'
+  if ($null -ne $expectation -and (Has-Property $expectation 'execution') -and (Has-Property $expectation.execution 'risk')) {
+    $risk = [string]$expectation.execution.risk
+  }
+  if (Test-RiskAllowed $risk) {
+    if ($risk -eq 'external-side-effect' -and [string]$task.query -match 'TEST_RECIPIENT') {
+      throw "$id 仍使用公开占位符 TEST_RECIPIENT。请在忽略目录中创建私有 tasks JSON，并通过 -TasksFile 传入真实测试收件人。"
+    }
+    $tasks += $task
+  } else {
+    $skipped += [pscustomobject]@{ task_id = $id; risk = $risk; reason = "未提供风险类型 '$risk' 对应的显式开关" }
+  }
+}
+if ($tasks.Count -eq 0) {
+  $reasons = @($skipped | ForEach-Object { "$($_.task_id)[$($_.risk)]" }) -join ', '
+  throw "所选用例均因安全策略跳过：$reasons"
+}
+
+if (@($tasks | Where-Object { [string]$_.task_id -eq 'office_103' }).Count -gt 0) {
+  $sentinelPath = Join-Path $Directory '.pnp-evaluation-fixture.json'
+  if (-not (Test-Path -LiteralPath $sentinelPath -PathType Leaf)) {
+    throw "拒绝运行删除题：$Directory 缺少 .pnp-evaluation-fixture.json。请先运行 engineering\verification\eval\Prepare-EvalData.ps1。"
+  }
+  $sentinel = Get-Content -LiteralPath $sentinelPath -Raw -Encoding UTF8 | ConvertFrom-Json
+  if (-not (Has-Property $sentinel 'owner') -or [string]$sentinel.owner -ne 'PNP_EVALUATION_FIXTURE') {
+    throw "拒绝运行删除题：$sentinelPath 不是 PNP 评测包的所有权标记。"
+  }
+}
+
+$runRoot = Join-Path $Evidence "$Engine-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
+Write-Line "[eval] 网关就绪，引擎 = $runningEngine，证据目录 = $runRoot"
+Write-Line "[eval] 将运行 $($tasks.Count) / $($allTasks.Count) 条；跳过 $($skipped.Count) 条；工作目录 $Directory"
+foreach ($skip in $skipped) { Write-Line "[skip] $($skip.task_id) ($($skip.risk))：$($skip.reason)" }
 
 $results = @()
 
@@ -105,41 +253,62 @@ foreach ($task in $tasks) {
   $id = [string]$task.task_id
   Write-Line ''
   Write-Line "=== $id  $($task.title)  (难度 $($task.difficulty)/$($task.difficulty_label)) ==="
+  $expectation = if ($expectations.PSObject.Properties[$id]) { $expectations.$id } else { $null }
 
-  $expectation = $null
-  if ($expectations.PSObject.Properties[$id]) { $expectation = $expectations.$id }
-
-  # 运行前记录必须保持不变的输入文件的哈希
-  $before = @{}
-  if ($null -ne $expectation -and $expectation.PSObject.Properties['unchanged']) {
-    foreach ($file in $expectation.unchanged) { $before[$file] = Get-Sha256 $file }
+  $beforeInputs = @{}
+  $beforeOutputs = @{}
+  $beforeDeleteMatches = @()
+  if ($null -ne $expectation -and (Has-Property $expectation 'unchanged')) {
+    foreach ($file in @($expectation.unchanged)) { $beforeInputs[[string]$file] = Get-Sha256 ([string]$file) }
+  }
+  if ($null -ne $expectation -and (Has-Property $expectation 'outputs')) {
+    foreach ($file in @($expectation.outputs)) { $beforeOutputs[[string]$file] = Get-Sha256 ([string]$file) }
+  }
+  if ($null -ne $expectation -and (Has-Property $expectation 'absentGlob')) {
+    $root = [string]$expectation.absentGlob.root
+    $needle = [string]$expectation.absentGlob.nameContains
+    if (Test-Path -LiteralPath $root) {
+      $beforeDeleteMatches = @(Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like "*$needle*" } | ForEach-Object { $_.FullName })
+    }
   }
 
   $result = [ordered]@{
     task_id = $id; title = $task.title; engine = $Engine
     session_id = $null; prompt_status = $null; duration_s = $null
-    completion_rule = $null; outputs_created = @(); outputs_missing = @()
-    inputs_modified = @(); contains_missing = @(); leftovers = @()
-    events = @(); tools = @(); final_text = ''; manual = ''
+    protocol_pass = $false; task_mechanical_pass = $false; completion_rule = $null
+    outputs_fresh = @(); outputs_missing = @(); outputs_unchanged = @()
+    inputs_missing_before = @(); inputs_modified = @(); contains_missing = @()
+    delete_matches_before = @($beforeDeleteMatches); leftovers = @()
+    required_tools_missing = @(); tool_failures = @(); effect_checks_failed = @()
+    structure_failures = @(); final_text_failures = @(); event_failures = @()
+    events = @(); tool_calls = @(); tools = @(); final_text = ''; manual = ''
     verdict = 'FAIL'; note = ''
   }
-  if ($null -ne $expectation -and $expectation.PSObject.Properties['manual']) { $result.manual = [string]$expectation.manual }
+  if ($null -ne $expectation -and (Has-Property $expectation 'manual')) { $result.manual = [string]$expectation.manual }
+  foreach ($file in $beforeInputs.Keys) {
+    if ($null -eq $beforeInputs[$file]) { $result.inputs_missing_before += $file }
+  }
+  if ($null -ne $expectation -and (Has-Property $expectation 'absentGlob') -and (Has-Property $expectation.absentGlob 'minimumBefore')) {
+    $minimum = [int]$expectation.absentGlob.minimumBefore
+    if ($beforeDeleteMatches.Count -lt $minimum) {
+      $result.effect_checks_failed += "删除前只找到 $($beforeDeleteMatches.Count) 个匹配文件，少于要求的 $minimum 个"
+    }
+  }
 
   $eventsFile = Join-Path $runRoot "$id.events.txt"
   $sse = $null
+  $messagesBody = @()
   try {
-    # 1. 建会话
     $session = Invoke-Json -Method 'POST' -Uri "$Base/session" -Body @{ title = $id; directory = $Directory }
     if ($session.Status -ne 200) { throw "POST /session 返回 $($session.Status)：$($session.Raw)" }
     $sessionId = [string]$session.Body.id
     $result.session_id = $sessionId
 
-    # 2. 订阅事件流（curl.exe 是 Windows 10+ 自带的；-N 关闭缓冲）
     $sse = Start-Process -FilePath 'curl.exe' -ArgumentList @('-sN', "$Base/event") `
       -RedirectStandardOutput $eventsFile -NoNewWindow -PassThru
     Start-Sleep -Milliseconds 500
 
-    # 3. 发任务：赛题定义的请求体，query 原样，model 任意取值都会映射到网关配置的模型
     $body = @{
       parts = @(@{ type = 'text'; text = [string]$task.query })
       model = @{ providerID = 'evaluator'; modelID = 'default' }
@@ -151,24 +320,28 @@ foreach ($task in $tasks) {
     $result.prompt_status = $prompt.Status
     Write-Line "    prompt_async -> $($prompt.Status)，耗时 $($result.duration_s)s"
 
-    # 4. 取轨迹
     $messages = Invoke-Json -Method 'GET' -Uri "$Base/session/$sessionId/message" -Body $null -TimeoutSec 60
     if ($messages.Status -eq 200) {
-      $messages.Body | ConvertTo-Json -Depth 25 | Set-Content -LiteralPath (Join-Path $runRoot "$id.messages.json") -Encoding UTF8
-      $last = @($messages.Body)[-1]
-      $finish = ''
-      if ($null -ne $last -and $last.PSObject.Properties['info'] -and $null -ne $last.info) { $finish = [string]$last.info.finish }
-      $hasStepFinish = $false
-      if ($null -ne $last -and $last.PSObject.Properties['parts'] -and $null -ne $last.parts) {
-        $hasStepFinish = @($last.parts | Where-Object { $_.type -eq 'step-finish' }).Count -gt 0
+      $messagesBody = @($messages.Body)
+      $messagesBody | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $runRoot "$id.messages.json") -Encoding UTF8
+      $assistants = @($messagesBody | Where-Object { (Has-Property $_ 'role') -and [string]$_.role -eq 'assistant' })
+      $last = if ($assistants.Count -gt 0) { $assistants[-1] } else { $null }
+      $finish = if ($null -ne $last -and (Has-Property $last 'info') -and (Has-Property $last.info 'finish')) { [string]$last.info.finish } else { '' }
+      $hasStepFinish = ($null -ne $last -and (Has-Property $last 'parts') -and @($last.parts | Where-Object { (Has-Property $_ 'type') -and $_.type -eq 'step-finish' }).Count -gt 0)
+      $result.completion_rule = "role=$(if ($null -ne $last) { 'assistant' } else { 'missing' }); finish=$finish; step-finish=$hasStepFinish"
+      if ($null -ne $last -and (Has-Property $last 'content')) { $result.final_text = [string]$last.content }
+      if ([string]$result.final_text -eq '' -and $null -ne $last -and (Has-Property $last 'parts')) {
+        $result.final_text = @($last.parts | Where-Object { $_.type -eq 'text' } | ForEach-Object {
+          if (Has-Property $_ 'text') { [string]$_.text } elseif (Has-Property $_ 'content') { [string]$_.content }
+        }) -join "`n"
       }
-      $isAssistant = ($null -ne $last -and [string]$last.role -eq 'assistant')
-      $result.completion_rule = "role=$(if ($isAssistant) { 'assistant' } else { [string]$last.role }); finish=$finish; step-finish=$hasStepFinish"
-      if ($isAssistant -and $null -ne $last.PSObject.Properties['content']) { $result.final_text = [string]$last.content }
-      $result.tools = @($messages.Body | Where-Object { $_.role -eq 'tool' } | ForEach-Object { [string]$_.tool_name } | Select-Object -Unique)
+      $result.tool_calls = @(Get-ToolTrace $messagesBody)
+      $result.tools = @($result.tool_calls | ForEach-Object { $_.name } | Where-Object { $_ -ne '' } | Select-Object -Unique)
+    } else {
+      $result.note = "GET message 返回 $($messages.Status)：$($messages.Raw)"
     }
 
-    # 5. 清理会话（产物文件不受影响）
+    Start-Sleep -Milliseconds 250
     $null = Invoke-Json -Method 'DELETE' -Uri "$Base/session/$sessionId" -Body $null -TimeoutSec 60
   } catch {
     $result.note = $_.Exception.Message
@@ -177,39 +350,61 @@ foreach ($task in $tasks) {
     if ($null -ne $sse) { try { Stop-Process -Id $sse.Id -Force -ErrorAction SilentlyContinue } catch { } }
   }
 
-  # --- 机械判定 ---------------------------------------------------------------
   if (Test-Path -LiteralPath $eventsFile) {
-    $seen = @()
+    $eventObjects = @()
     foreach ($line in (Get-Content -LiteralPath $eventsFile -Encoding UTF8 -ErrorAction SilentlyContinue)) {
       if ($line -match '^data:\s*(\{.*\})\s*$') {
-        try { $seen += [string](($matches[1] | ConvertFrom-Json).type) } catch { }
+        try {
+          $event = $matches[1] | ConvertFrom-Json
+          $belongs = $true
+          if ((Has-Property $event 'properties') -and (Has-Property $event.properties 'sessionID')) {
+            $belongs = ([string]$event.properties.sessionID -eq [string]$result.session_id)
+          }
+          if ($belongs) { $eventObjects += $event }
+        } catch { }
       }
     }
-    $result.events = @($seen | Select-Object -Unique)
+    $result.events = @($eventObjects | ForEach-Object { [string]$_.type })
   }
 
   if ($null -ne $expectation) {
-    if ($expectation.PSObject.Properties['outputs']) {
-      foreach ($file in $expectation.outputs) {
-        if (Test-Path -LiteralPath $file -PathType Leaf) { $result.outputs_created += $file } else { $result.outputs_missing += $file }
+    if (Has-Property $expectation 'outputs') {
+      foreach ($rawFile in @($expectation.outputs)) {
+        $file = [string]$rawFile
+        $afterHash = Get-Sha256 $file
+        if ($null -eq $afterHash) { $result.outputs_missing += $file }
+        elseif ($null -ne $beforeOutputs[$file] -and $beforeOutputs[$file] -eq $afterHash) { $result.outputs_unchanged += $file }
+        else { $result.outputs_fresh += $file }
       }
     }
-    if ($expectation.PSObject.Properties['unchanged']) {
-      foreach ($file in $expectation.unchanged) {
-        if ($before[$file] -ne (Get-Sha256 $file)) { $result.inputs_modified += $file }
+    if (Has-Property $expectation 'unchanged') {
+      foreach ($rawFile in @($expectation.unchanged)) {
+        $file = [string]$rawFile
+        if ($null -ne $beforeInputs[$file] -and $beforeInputs[$file] -ne (Get-Sha256 $file)) { $result.inputs_modified += $file }
       }
     }
-    if ($expectation.PSObject.Properties['contains']) {
+    if (Has-Property $expectation 'contains') {
       foreach ($property in $expectation.contains.PSObject.Properties) {
-        $file = $property.Name
+        $file = [string]$property.Name
         if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
         $text = Get-Content -LiteralPath $file -Raw -Encoding UTF8
-        foreach ($needle in $property.Value) {
+        foreach ($needle in @($property.Value)) {
           if ($text -notlike "*$needle*") { $result.contains_missing += "$file :: $needle" }
         }
       }
     }
-    if ($expectation.PSObject.Properties['absentGlob']) {
+    if (Has-Property $expectation 'cjkLength') {
+      foreach ($property in $expectation.cjkLength.PSObject.Properties) {
+        $file = [string]$property.Name
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
+        $text = Get-Content -LiteralPath $file -Raw -Encoding UTF8
+        $count = [regex]::Matches($text, '[\u3400-\u9FFF]').Count
+        if ($count -lt [int]$property.Value.min -or $count -gt [int]$property.Value.max) {
+          $result.structure_failures += "$file :: 汉字数 $count，不在 $($property.Value.min)-$($property.Value.max)"
+        }
+      }
+    }
+    if (Has-Property $expectation 'absentGlob') {
       $root = [string]$expectation.absentGlob.root
       $needle = [string]$expectation.absentGlob.nameContains
       if (Test-Path -LiteralPath $root) {
@@ -217,22 +412,136 @@ foreach ($task in $tasks) {
           Where-Object { $_.Name -like "*$needle*" } | ForEach-Object { $_.FullName })
       }
     }
+    if (Has-Property $expectation 'requiredSuccessfulTools') {
+      $successfulNames = @($result.tool_calls | Where-Object { $_.status -eq 'completed' } | ForEach-Object { [string]$_.name })
+      foreach ($group in @($expectation.requiredSuccessfulTools)) {
+        $names = @($group | ForEach-Object { [string]$_ })
+        if (@($names | Where-Object { $successfulNames -contains $_ }).Count -eq 0) {
+          $result.required_tools_missing += ($names -join ' | ')
+        }
+      }
+    }
+    foreach ($call in @($result.tool_calls)) {
+      if ([string]$call.status -eq 'completed') { continue }
+      $recovered = @($result.tool_calls | Where-Object {
+        $_.name -eq $call.name -and $_.sequence -gt $call.sequence -and $_.status -eq 'completed'
+      }).Count -gt 0
+      if (-not $recovered) { $result.tool_failures += "$($call.name)[$($call.call_id)]=$($call.status) $($call.error)".Trim() }
+    }
+    if (Has-Property $expectation 'requiredNonDryRunTool') {
+      $toolName = [string]$expectation.requiredNonDryRunTool
+      $effectCall = @($result.tool_calls | Where-Object {
+        $_.name -eq $toolName -and $_.status -eq 'completed' -and $null -ne $_.input -and
+        (Has-Property $_.input 'dryRun') -and $_.input.dryRun -eq $false
+      })
+      if ($effectCall.Count -eq 0) { $result.effect_checks_failed += "$toolName 没有成功的 dryRun=false 调用" }
+    }
+    if (Has-Property $expectation 'docxRequiredText') {
+      foreach ($property in $expectation.docxRequiredText.PSObject.Properties) {
+        $file = [string]$property.Name
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
+        try {
+          $text = Get-OpenXmlVisibleText $file
+          foreach ($needle in @($property.Value)) {
+            if ($text -notlike "*$needle*") { $result.structure_failures += "$file :: 缺少文本 $needle" }
+          }
+        } catch { $result.structure_failures += "$file :: DOCX 无法解析：$($_.Exception.Message)" }
+      }
+    }
+    if (Has-Property $expectation 'pptxRequiredText') {
+      foreach ($property in $expectation.pptxRequiredText.PSObject.Properties) {
+        $file = [string]$property.Name
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
+        try {
+          $text = Get-OpenXmlVisibleText $file
+          foreach ($needle in @($property.Value)) {
+            if ($text -notlike "*$needle*") { $result.structure_failures += "$file :: 缺少文本 $needle" }
+          }
+        } catch { $result.structure_failures += "$file :: PPTX 无法解析：$($_.Exception.Message)" }
+      }
+    }
+    if (Has-Property $expectation 'pptxMaxSlides') {
+      foreach ($property in $expectation.pptxMaxSlides.PSObject.Properties) {
+        $file = [string]$property.Name
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
+        try {
+          $count = Get-PptxSlideCount $file
+          if ($count -gt [int]$property.Value) { $result.structure_failures += "$file :: $count 页，超过上限 $($property.Value)" }
+        } catch { $result.structure_failures += "$file :: PPTX 无法解析：$($_.Exception.Message)" }
+      }
+    }
+    if (Has-Property $expectation 'pptxMinSlidesFrom') {
+      foreach ($property in $expectation.pptxMinSlidesFrom.PSObject.Properties) {
+        $file = [string]$property.Name
+        $source = [string]$property.Value
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or -not (Test-Path -LiteralPath $source -PathType Leaf)) { continue }
+        try {
+          $actual = Get-PptxSlideCount $file
+          $expectedMinimum = Get-PptxSlideCount $source
+          if ($actual -lt $expectedMinimum) { $result.structure_failures += "$file :: $actual 页，少于源文件 $expectedMinimum 页" }
+        } catch { $result.structure_failures += "$file :: PPTX 页数无法解析：$($_.Exception.Message)" }
+      }
+    }
+    if (Has-Property $expectation 'xlsxSheetCountFromDocx') {
+      foreach ($property in $expectation.xlsxSheetCountFromDocx.PSObject.Properties) {
+        $file = [string]$property.Name
+        $source = [string]$property.Value
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or -not (Test-Path -LiteralPath $source -PathType Leaf)) { continue }
+        try {
+          $actual = Get-XlsxSheetCount $file
+          $expectedCount = Get-DocxTableCount $source
+          if ($actual -ne $expectedCount) { $result.structure_failures += "$file :: $actual 个 sheet，不等于源 DOCX 的 $expectedCount 个表格" }
+        } catch { $result.structure_failures += "$file :: 结构无法解析：$($_.Exception.Message)" }
+      }
+    }
+    if (Has-Property $expectation 'forbiddenEvents') {
+      foreach ($eventType in @($expectation.forbiddenEvents)) {
+        if ($result.events -contains [string]$eventType) { $result.event_failures += "出现禁止事件 $eventType" }
+      }
+    }
+    if ((Has-Property $expectation 'finalMustMentionOutputs') -and [bool]$expectation.finalMustMentionOutputs -and (Has-Property $expectation 'outputs')) {
+      foreach ($file in @($expectation.outputs)) {
+        $leaf = Split-Path -Leaf ([string]$file)
+        if ([string]$result.final_text -notlike "*$leaf*") { $result.final_text_failures += "最终回复未提及产物 $leaf" }
+      }
+    }
+    if ((Has-Property $expectation 'outputs') -and [string]$result.final_text -match '(?i)无法|未能|不能|失败|不存在|请提供|请确认|unable|cannot|failed|error') {
+      $result.final_text_failures += '最终回复包含未完成或失败信号'
+    }
   }
 
-  $completed = ($result.prompt_status -eq 204) -and ($result.completion_rule -like '*finish=stop*') -and ($result.completion_rule -like '*step-finish=True*')
-  $clean = ($result.outputs_missing.Count -eq 0) -and ($result.inputs_modified.Count -eq 0) -and
-           ($result.contains_missing.Count -eq 0) -and ($result.leftovers.Count -eq 0)
-  if ($completed -and $clean) { $result.verdict = 'PASS(机械)' } elseif ($completed) { $result.verdict = 'PARTIAL' } else { $result.verdict = 'FAIL' }
-  Write-Line "    判定 $($result.verdict)：$($result.completion_rule)"
+  $result.protocol_pass = ($result.prompt_status -eq 204) -and
+    ($result.completion_rule -like '*finish=stop*') -and ($result.completion_rule -like '*step-finish=True*')
+  $mechanicalViolationCount = $result.outputs_missing.Count + $result.outputs_unchanged.Count +
+    $result.inputs_missing_before.Count + $result.inputs_modified.Count + $result.contains_missing.Count +
+    $result.leftovers.Count + $result.required_tools_missing.Count + $result.tool_failures.Count +
+    $result.effect_checks_failed.Count + $result.structure_failures.Count + $result.final_text_failures.Count +
+    $result.event_failures.Count
+  $result.task_mechanical_pass = ($mechanicalViolationCount -eq 0)
+  if ($result.protocol_pass -and $result.task_mechanical_pass) { $result.verdict = 'PASS(机械)' }
+  elseif ($result.protocol_pass) { $result.verdict = 'PARTIAL' }
+  else { $result.verdict = 'FAIL' }
+
+  Write-Line "    协议完成 = $($result.protocol_pass)，任务机械检查 = $($result.task_mechanical_pass)，判定 = $($result.verdict)"
   if ($result.outputs_missing.Count -gt 0) { Write-Line "    缺产物：$($result.outputs_missing -join ', ')" }
-  if ($result.inputs_modified.Count -gt 0) { Write-Line "    输入被改动：$($result.inputs_modified -join ', ')" }
-  if ($result.leftovers.Count -gt 0) { Write-Line "    应删未删：$($result.leftovers -join ', ')" }
+  if ($result.outputs_unchanged.Count -gt 0) { Write-Line "    旧产物未变化：$($result.outputs_unchanged -join ', ')" }
+  if ($result.inputs_missing_before.Count -gt 0) { Write-Line "    运行前缺输入：$($result.inputs_missing_before -join ', ')" }
+  if ($result.required_tools_missing.Count -gt 0) { Write-Line "    缺成功工具：$($result.required_tools_missing -join ', ')" }
+  if ($result.tool_failures.Count -gt 0) { Write-Line "    未恢复工具失败：$($result.tool_failures -join '；')" }
+  if ($result.structure_failures.Count -gt 0) { Write-Line "    结构检查失败：$($result.structure_failures -join '；')" }
 
   $results += [pscustomobject]$result
 }
 
-# --- 汇总 ---------------------------------------------------------------------
-$results | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $runRoot 'results.json') -Encoding UTF8
+$machineOutput = [ordered]@{
+  generated_at = (Get-Date).ToString('o')
+  engine = $Engine
+  selected = @($results | ForEach-Object { $_.task_id })
+  skipped = $skipped
+  eligible_for_full_acceptance = ($skipped.Count -eq 0)
+  results = $results
+}
+$machineOutput | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $runRoot 'results.json') -Encoding UTF8
 
 $report = @()
 $report += "# PNP 评测任务运行报告（引擎 $Engine）"
@@ -240,33 +549,42 @@ $report += ''
 $report += "- 时间：$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 $report += "- 工作目录：$Directory"
 $report += "- 证据目录：$runRoot"
+$report += "- 覆盖：运行 $($results.Count) / 请求 $($allTasks.Count)，跳过 $($skipped.Count)"
+$report += "- 可作为完整验收：$(if ($skipped.Count -eq 0) { '是（仍须人工复核）' } else { '否' })"
 $report += "- 机械通过：$(@($results | Where-Object { $_.verdict -eq 'PASS(机械)' }).Count) / $($results.Count)"
 $report += ''
+if ($skipped.Count -gt 0) {
+  $report += '## 因安全策略跳过'
+  $report += ''
+  $report += '| 用例 | 风险 | 原因 |'
+  $report += '|---|---|---|'
+  foreach ($row in $skipped) { $report += "| $($row.task_id) | $($row.risk) | $($row.reason) |" }
+  $report += ''
+}
 $report += '## 逐题结果'
 $report += ''
-$report += '| 用例 | 状态码 | 耗时(s) | 完成规则 | 产物 | 机械判定 | 内容判定（人工填） |'
-$report += '|---|---|---|---|---|---|---|'
+$report += '| 用例 | 状态码 | 耗时(s) | 协议完成 | 任务机械检查 | 产物 | 判定 | 内容判定（人工填） |'
+$report += '|---|---:|---:|---|---|---|---|---|'
 foreach ($row in $results) {
-  $outputs = '—'
-  if ($row.outputs_created.Count -gt 0 -or $row.outputs_missing.Count -gt 0) {
-    $outputs = "有 $($row.outputs_created.Count) / 缺 $($row.outputs_missing.Count)"
+  $outputs = if (($row.outputs_fresh.Count + $row.outputs_missing.Count + $row.outputs_unchanged.Count) -eq 0) { '—' } else {
+    "新/变 $($row.outputs_fresh.Count)，缺 $($row.outputs_missing.Count)，旧 $($row.outputs_unchanged.Count)"
   }
-  $report += "| $($row.task_id) | $($row.prompt_status) | $($row.duration_s) | $($row.completion_rule) | $outputs | $($row.verdict) |  |"
+  $report += "| $($row.task_id) | $($row.prompt_status) | $($row.duration_s) | $($row.protocol_pass) | $($row.task_mechanical_pass) | $outputs | $($row.verdict) |  |"
 }
 $report += ''
-$report += '## 需要人工确认的点'
+$report += '## 人工复核与轨迹摘要'
 $report += ''
 foreach ($row in $results) {
-  if ([string]$row.manual -ne '') {
-    $report += "### $($row.task_id)"
-    $report += ''
-    $report += [string]$row.manual
-    $report += ''
-    $report += "最终回复：$($row.final_text)"
-    $report += ''
-    $report += "调用的工具：$(if ($row.tools.Count -gt 0) { $row.tools -join ', ' } else { '（无）' })"
-    $report += ''
-  }
+  $report += "### $($row.task_id)"
+  $report += ''
+  $report += "- 人工标准：$(if ([string]$row.manual -ne '') { $row.manual } else { '无补充项' })"
+  $report += "- 最终回复：$($row.final_text)"
+  $report += "- 工具：$(if ($row.tools.Count -gt 0) { $row.tools -join ', ' } else { '（无）' })"
+  if ($row.required_tools_missing.Count -gt 0) { $report += "- 缺成功工具：$($row.required_tools_missing -join ', ')" }
+  if ($row.tool_failures.Count -gt 0) { $report += "- 未恢复工具失败：$($row.tool_failures -join '；')" }
+  if ($row.structure_failures.Count -gt 0) { $report += "- 结构失败：$($row.structure_failures -join '；')" }
+  if ($row.final_text_failures.Count -gt 0) { $report += "- 最终回复失败信号：$($row.final_text_failures -join '；')" }
+  $report += ''
 }
 $reportPath = Join-Path $runRoot 'report.md'
 $report -join "`r`n" | Set-Content -LiteralPath $reportPath -Encoding UTF8
@@ -275,5 +593,5 @@ Write-Line ''
 Write-Line "[eval] 完成：机械通过 $(@($results | Where-Object { $_.verdict -eq 'PASS(机械)' }).Count) / $($results.Count)"
 Write-Line "[eval] 报告 $reportPath"
 Write-Line "[eval] 证据（事件流、轨迹、results.json）$runRoot"
-if (@($results | Where-Object { $_.verdict -eq 'FAIL' }).Count -gt 0) { exit 1 }
+if (@($results | Where-Object { $_.verdict -ne 'PASS(机械)' }).Count -gt 0) { exit 1 }
 exit 0
