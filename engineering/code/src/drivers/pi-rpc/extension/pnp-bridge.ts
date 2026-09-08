@@ -146,6 +146,7 @@ export interface PiToolDefinition {
 export interface PiExtensionApi {
   registerTool(definition: PiToolDefinition): void;
   on(event: "tool_call", handler: (event: PiToolCallEvent, ctx: PiEventContext) => Promise<PiToolCallDecision | undefined>): void;
+  on(event: "session_shutdown", handler: () => Promise<void>): void;
 }
 
 /**
@@ -306,6 +307,23 @@ export async function activateBridge(pi: PiExtensionApi, options: BridgeOptions 
     }
   }
   pi.on("tool_call", createToolCallHook(bridged));
+  // Upstream `docs/extensions.md` "Long-lived resources and shutdown": close session-scoped
+  // resources from an idempotent `session_shutdown` handler, which pi also fires on exit
+  // (Ctrl+C/Ctrl+D/SIGHUP/SIGTERM -- closing pi's stdin, which is exactly how `LocalProcessHost`
+  // asks a process to stop, counts as Ctrl+D). This is not tidiness: every MCP server the SDK
+  // started is a child in pi's own process group, and `LocalProcessHost` proves a stop on POSIX by
+  // checking that the whole group is gone the moment pi exits. Measured against real pi 0.85.1:
+  // without this handler a session with one bridged MCP server terminated as
+  // `{quiescent:false, method:"process-tree"}` because the server child had not yet noticed its
+  // stdin EOF; with it, the same session terminates as `{quiescent:true, method:"protocol"}`.
+  let closed = false;
+  pi.on("session_shutdown", async (): Promise<void> => {
+    if (closed) return;
+    closed = true;
+    for (const client of clients) {
+      try { await client.close(); } catch { /* Already gone: a failed close is not a reason to block pi's exit. */ }
+    }
+  });
   return clients;
 }
 

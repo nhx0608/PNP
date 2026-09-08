@@ -27,14 +27,18 @@ const SERVER_FIXTURE = fileURLToPath(new URL("./fixtures/fake-mcp-server.mjs", i
 interface FakePi extends PiExtensionApi {
   readonly tools: PiToolDefinition[];
   hook?: (event: PiToolCallEvent, ctx: PiEventContext) => Promise<PiToolCallDecision | undefined>;
+  shutdown?: () => Promise<void>;
 }
 function fakePi(): FakePi {
   const tools: PiToolDefinition[] = [];
-  const pi: FakePi = {
+  const pi = {
     tools,
-    registerTool(definition) { tools.push(definition); },
-    on(_event, handler) { pi.hook = handler; },
-  };
+    registerTool(definition: PiToolDefinition) { tools.push(definition); },
+    on(event: string, handler: unknown) {
+      if (event === "tool_call") pi.hook = handler as FakePi["hook"];
+      else pi.shutdown = handler as FakePi["shutdown"];
+    },
+  } as FakePi;
   return pi;
 }
 function uiContext(answer: boolean | Error, calls: { title: string; message: string }[] = []): PiEventContext {
@@ -179,4 +183,20 @@ test("bridged names are reduced to the character set both model wire formats acc
   assert.equal(sanitiseToolName("a b", "c/d"), "a_b_c_d");
   assert.equal(sanitiseToolName("_", "_"), "tool"); // Leading underscores trimmed; never empty.
   assert.equal(sanitiseToolName("x".repeat(80), "y").length, 64);
+});
+
+test("session_shutdown closes every MCP client, so pi's exit leaves no server child behind", async () => {
+  // Real-pi measurement: without this handler LocalProcessHost proved the stop only as
+  // {quiescent:false, method:"process-tree"} (the server child was still in pi's process group
+  // when pi exited); with it the same session terminates as {quiescent:true, method:"protocol"}.
+  const pi = fakePi();
+  const file = await sidecarFor(stdioBinding);
+  const projection = projectPiTools([stdioBinding]);
+  const clients = await activateBridge(pi, { env: { ...process.env, PNP_PI_BRIDGE_FILE: file, ...projection.env } });
+  assert.equal(clients.length, 1);
+  assert.notEqual(pi.shutdown, undefined);
+  await pi.shutdown!();
+  await pi.shutdown!(); // Idempotent, as the upstream guidance requires.
+  const read = pi.tools.find((tool) => tool.name === "office_read_file")!;
+  await assert.rejects(read.execute("call-after-shutdown", { path: "/tmp/a" })); // The transport is really gone.
 });

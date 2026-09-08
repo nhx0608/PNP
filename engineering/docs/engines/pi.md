@@ -5,7 +5,7 @@
 ## 实现状态（诚实声明，对应 `verification/coverage.md` 的分层）
 
 - **已有源码**：上述六个文件 + `engines/pi/pack.ts`；`descriptor.implementationProvided = true` 仅表示代码存在。
-- **`capabilityEvidence: "probed"`**（`code/config/engines/pi.json`，`engineVersion: "0.85.1"`）：本驱动依赖的每一个 pi 侧机制都已对真实安装的 `@earendil-works/pi-coding-agent` 0.85.1 手工核验过（命令与实测输出见下方 B08）：`--mode rpc` 帧格式、`agent_end` 的 stopReason 位置、`models.json` + `PI_CODING_AGENT_DIR` 是唯一可用的端点/凭据注入通道、`apiKey`/`headers` 的 `$VAR` 解析、`-e` 加载 `.ts` 与编译后的 `.js` 扩展、扩展在 pi 进程内用 MCP SDK 连接 stdio MCP 服务器并 `registerTool`、`tool_call` 钩子把内建 `bash` 调用变成 `extension_ui_request{title:"pnp:shell"}` 并按否定答复阻断。**"probed" 不是 "verified"**：这些都是手工命令行复现，没有一条固化成对真实二进制持续跑的 CI 测试。
+- **`capabilityEvidence: "probed"`**（`code/config/engines/pi.json`，`engineVersion: "0.85.1"`）：本驱动依赖的每一个 pi 侧机制都已对真实安装的 `@earendil-works/pi-coding-agent` 0.85.1 手工核验过（命令与实测输出见下方 B08）：`--mode rpc` 帧格式、`agent_end` 的 stopReason 位置、`models.json` + `PI_CODING_AGENT_DIR` 是唯一可用的端点/凭据注入通道、`apiKey`/`headers` 的 `$VAR` 解析、`-e` 加载 `.ts` 与编译后的 `.js` 扩展、扩展在 pi 进程内用 MCP SDK 连接 stdio MCP 服务器并 `registerTool`、`tool_call` 钩子把内建 `bash` 调用变成 `extension_ui_request{title:"pnp:shell"}` 并按否定答复阻断；以及整条 `PiPack` + 真实 `LocalProcessHost` + 真实 pi 的 open→run→terminate 端到端跑通（Linux）。**"probed" 不是 "verified"**：这些都是手工命令行复现，没有一条固化成对真实二进制持续跑的 CI 测试。
 - **自动化测试覆盖（Linux/Windows 均可执行）**：帧关联、乱序/损坏帧隔离、settled 语义状态机、取消语义、原生恢复标识、握手失败区分——验证对象是本仓库自带的 JSONL **fixture 进程**（`code/tests/adapters/pi/fixtures/fake-pi-cli.mjs`，经真实 `LocalProcessHost` 启动），不是真实 `pi` 可执行文件；MCP 桥则由本仓库自带的**真实 MCP 服务器 fixture**（`fixtures/fake-mcp-server.mjs`，`McpServer` + `StdioServerTransport`）在进程内驱动真实 MCP SDK 客户端，`pi` 对象是测试替身。这条证据链证明的是"驱动代码 + 公共 `LocalProcessHost`/`JsonlDecoder` + 真实 MCP SDK 按协议正确工作"，不是"已完成真实 Pi 版本验收"。
 - **仍未验证（不得据此宣称完成）**：真实内网模型端到端调用；Windows 上对真实 `pi` 进程的 Job Object 生命周期（B08 的复现都是手工前台进程，不经过 `LocalProcessHost`）；Windows 上 `defaultTools` 里 `powershell` 工具的真实执行（探测在 Linux 上做的，`buildPiSettings` 的 win32 分支只有单元测试证据）；`mcp-http` 传输对真实远端 MCP 服务器（自动化测试只覆盖 stdio fixture，HTTP 分支只有构造级证据）；`set_model`/`get_available_models` 在真实版本下的返回结构（本驱动已不再发送 `set_model`，见 B04）。
 
@@ -57,7 +57,7 @@
 
 **这条修的是一个真 bug**：旧代码只读 `model.headers.authorization`（小写），而交付的 `config/settings.json` 产出的是 `Authorization`，于是交付配置下 pi 拿不到任何凭据、以未鉴权方式调用模型端点（`docs/competition-readiness.md` A9）。回归测试见 `code/tests/adapters/pi/launch.test.ts` 第一条。
 
-协议映射：`openai-chat` → pi 的 `openai-completions`；`anthropic-messages` → pi 的 `anthropic-messages`；`custom`/`test` 没有已知的 pi 传输格式，**不写任何 provider 条目**（声明的已知限制，不是猜一个映射）。`ResolvedModel.caFile` → 进程环境的 `NODE_EXTRA_CA_CERTS`；`ResolvedModel.tlsInsecure`（本包为此在 `contracts/index.ts` 上追加的可选字段）→ `NODE_TLS_REJECT_UNAUTHORIZED=0`，仅在显式为真时设置。
+协议映射：`openai-chat` → pi 的 `openai-completions`；`anthropic-messages` → pi 的 `anthropic-messages`；`custom`/`test` 没有已知的 pi 传输格式，**不写任何 provider 条目**（声明的已知限制，不是猜一个映射）。`ResolvedModel.caFile` → 进程环境的 `NODE_EXTRA_CA_CERTS`；`ResolvedModel.tlsInsecure`（契约 1.1.0 的可选新增字段，由配置侧的 `PNP_MODEL_TLS_INSECURE=1` 置位）→ `NODE_TLS_REJECT_UNAUTHORIZED=0`，仅在显式为真时设置，绝不由握手失败推断。
 
 **模型不能中途换**：`LaunchSpec.env` 在 `open()` 时固定，`models.json` 里的 `$NAME` 指向的就是那一份环境，所以 `set_model` 无法让一个"环境里没有它的变量"的 provider 真正工作。因此 `open()` 时对模型绑定算一个 SHA-256 指纹（provider/model 选择、protocol、endpoint、caFile、tlsInsecure，以及**小写归一后排序的头名与头值**），后续任一轮不一致 → 409 `ENGINE_BINDINGS_CHANGED`（与 ACP 驱动同码；此前新造的 `ENGINE_TOOLS_IMMUTABLE` 已删除）。**本驱动因此不再发送 `set_model` 命令**——保留一条永远走不到的换模型代码路径，比诚实地拒绝更糟。会话里只保留摘要，用于比较的规范化字符串（含取值）从不留存、不记录。
 
@@ -99,6 +99,8 @@ pi 在 Windows 上默认用 Git Bash 跑 `bash`（上游 `docs/windows.md`："Ch
 
 1. **MCP 客户端桥**：读 sidecar → 对每个服务器用 MCP SDK 建连（stdio 用 `StdioClientTransport`，环境为"pi 进程环境 + 按 `envNames` 从 `process.env` 解析出的取值"覆盖；http 用 `StreamableHTTPClientTransport`，请求头按 `headerNames` 解析）→ `listTools()` → 对每个远端工具 `pi.registerTool`。`description` 取服务器给的描述，`parameters` 取该工具的 JSON Schema（`inputSchema`），缺失时用 `{type:"object"}`。`execute` 转发到 `client.callTool`，把 `content` 里的 text 部分按顺序拼回返回值（非 text 部分只如实标注类型，不丢也不编）；**`isError` 用抛异常来忠实传递**——上游 `docs/extensions.md` 明确写着"Returning a value never sets the error flag"，只有 `execute` 抛错才会把 tool result 标记为失败，返回一个成功形状的结果就正好是仓库禁止的伪造成功。某个服务器连不上只报告一次（默认 `console.error`；RPC 模式下 stdout 是协议通道，而且实测 0.85.1 在扩展加载期不允许调用 action 类方法，所以拿不到 `ctx.ui.notify`），其余服务器照常工作，扩展照常加载，绝不把整个 pi 启动带崩。
 2. **`tool_call` 策略钩子**（§16 A）：pi 自己没有权限系统，旧实现只对网关注入的工具做一次泛化 confirm，`bash`/`write`/`edit` 无条件执行——同一份 `write: ask` 在 OpenCode 下会产生一次权限请求，在 Pi 下会静默执行。现在钩子把工具名映射到网关的操作类：`bash`/`powershell`→`shell`，`write`/`edit`→`write`，`read`/`grep`/`find`/`ls`→`read`，桥接的 MCP 工具→其服务器 `sideEffect`（`read`→`read`、`write`→`write`、`external`→`external`），其余用工具名本身（"未知"意味着"不算 read"，绝不意味着"放行"）。操作类是 `read` 的直接静默放行；其余一律 `ctx.ui.confirm("pnp:<操作类>", JSON.stringify({tool, operation, patterns}))`，`patterns` 取自工具入参的 `path`/`file_path`/`command` 以及"看起来像路径"的字符串字段（最多 16 条、每条截断到 512 字符，保证一帧不会过大）。`ctx.hasUI` 为假（`-p`/`json` 模式）→ 直接阻断并给出原因；confirm 返回 `false` → `{block:true, reason:"denied by PNP policy"}`；confirm 本身抛错也阻断——一个答不了的策略通道绝不能读成批准。
+
+**关停**：扩展另注册一个幂等的 `session_shutdown` 处理器，把所有 MCP 客户端关掉（上游 `docs/extensions.md`"Long-lived resources and shutdown"；该事件在 Ctrl+C/Ctrl+D/SIGHUP/SIGTERM 退出时也会触发，而关闭 pi 的 stdin 正是 `LocalProcessHost` 请求停止的第一手段）。这不是整洁问题：MCP SDK 起的每个服务器进程都是 pi 自己进程组里的子进程，而 `LocalProcessHost` 在 POSIX 上正是通过"pi 退出的那一刻整个进程组是否已消失"来证明停止的。真机实测（下方 B08 第 6 条）：**没有**这个处理器时，带一个 MCP 服务器的会话 `terminate()` 返回 `{quiescent:false, method:"process-tree"}`；加上之后同一个会话返回 `{quiescent:true, method:"protocol"}`。
 
 **判定留在网关**：`channel.ts#bridgeInteraction` 看到 `title` 以 `pnp:` 开头时，从标题解析出 `operation`、从 message JSON 解析出 `patterns`/`tool`，走 `services.interact({kind:"permission", operation, payload:{patterns, tool}})`，于是 `allow` 自动放行、`deny` 自动拒绝、`ask` 才产生客户端 `permission` 请求，再用 `extension_ui_response` 把结果回给 pi。其他标题的 confirm 保持原来的泛化行为（`operation: "pi.extension.confirm"`）。
 
@@ -202,19 +204,29 @@ node "$env:APPDATA\npm\node_modules\@earendil-works\pi-coding-agent\dist\bundle\
 
    即：pi 的内建 `bash` 确实被钩子拦下来了、标题里的 `pnp:shell` 正是 `channel.ts` 解析的那个形状、否定答复真的把调用阻断成 `isError:true`，而且 `agent_settled` 照常到达（B02 删除兜底计时器的依据）。`extension_ui_response` 的关联字段就是 `id`（与请求的 `id` 相同），与 `client.ts`/`channel.ts#respondUi` 现有实现一致。
 
-**这两批核验证明了什么、没证明什么**：证明了 `--mode rpc` 的帧结构、`models.json`+`PI_CODING_AGENT_DIR`+`$VAR` 机制、扩展加载与 MCP 桥、`tool_call` 策略钩子的完整往返，在真实 0.85.1 二进制上确实按预期工作。**没有**证明：内网真实模型端到端可用（mock 服务器不是真实模型）、`mcp-http` 对真实远端服务器、Windows 上对真实 pi 进程的 Job Object 生命周期（两批复现都是手工前台进程，不经过 `LocalProcessHost`）、`powershell` 工具在真实 Windows 上的执行。这些仍然是"未验证"，见上文。全部核验都是手工命令行操作，未固化为仓库里自动跑真实二进制的 CI 测试（自动化测试仍然只用 fixture 进程 + fixture MCP 服务器，因为 CI 环境不保证有 `npm install -g` 权限/网络）。
+6. **整条驱动路径对真实 pi 的端到端跑通（本包最强的一条证据）。** 用一个一次性脚本（不入库，属于 `scripts/**` 另一个工作包的边界）直接驱动**真实的 `PiPack` + 真实的 `LocalProcessHost` + 真实的 pi 0.85.1**：`IntegrationContext` 里给一个 `openai-chat` 模型（endpoint 指向本地 SSE mock，头为 `Authorization: Bearer <值>` + `appid: <值>`）、一个 `mcp-stdio` 工具绑定（本仓库的 `fake-mcp-server.mjs`）、一个 `kind:"instruction"` 资产。观察到：
+
+   - `open()` 成功，`native.protocolVersion` 为 `pi-rpc (@earendil-works/pi-coding-agent 0.85.1, probed)`，`engineVersion` 为 `"unknown"`（与第 1 条一致）；
+   - 落盘的 `models.json` 是 `{"apiKey":"$PNP_PI_MODEL_API_KEY", "baseUrl":"http://127.0.0.1:<port>/v1", "headers":{"appid":"$PNP_PI_MODEL_HEADER_1"}, ...}`，**不含任何取值**（脚本对两个真值做了子串检查，结果 false）；
+   - mock 端点收到 **1** 次请求，且请求体里含 instruction 文件的标记文本——即 `--append-system-prompt` 真的把资产内容送进了系统提示；
+   - `run()` 返回 `{state:"completed", finish:"stop", quiescent:true, finalText:"probe-reply", nativeStopReason:"stop"}`；
+   - `terminate()` 返回 `{quiescent:true, method:"protocol"}`。
+
+   **这一条同时抓到并修掉了一个真问题**：在给扩展加 `session_shutdown` 关闭 MCP 客户端之前，同一个脚本的 `terminate()` 返回的是 `{quiescent:false, method:"process-tree"}`——`LocalProcessHost` 在 POSIX 上关掉 pi 的 stdin、等 pi 退出后立刻用 `process.kill(-pid, 0)` 检查进程组，而 MCP 服务器子进程那一刻还没来得及察觉自己的 stdin EOF，于是整组"还活着"，停止无法被证实。没有 MCP 工具的同一个脚本则一直是 `{quiescent:true, method:"protocol"}`，说明这确实是 MCP 桥引入的。修法完全在本包边界内（扩展自己在关停时关掉客户端），没有改公共 `runtime/process-host.ts`。
+
+**这两批核验证明了什么、没证明什么**：证明了 `--mode rpc` 的帧结构、`models.json`+`PI_CODING_AGENT_DIR`+`$VAR` 机制、扩展加载与 MCP 桥、`tool_call` 策略钩子的完整往返，在真实 0.85.1 二进制上确实按预期工作。第 6 条还证明了整条 `PiPack` → `LocalProcessHost` → 真实 pi 的路径（含 open/run/terminate 与停止证据）在 POSIX 上成立。**没有**证明：内网真实模型端到端可用（mock 服务器不是真实模型）、`mcp-http` 对真实远端服务器、**Windows** 上对真实 pi 进程的 Job Object 生命周期（第 6 条是 Linux，Windows 走的是完全不同的 supervisor 路径）、`powershell` 工具在真实 Windows 上的执行。这些仍然是"未验证"，见上文。全部核验都是手工命令行操作，未固化为仓库里自动跑真实二进制的 CI 测试（自动化测试仍然只用 fixture 进程 + fixture MCP 服务器，因为 CI 环境不保证有 `npm install -g` 权限/网络）。
 
 ## 验收（B07）
 
 本工作包在 Linux、Node v22（项目目标为 24，本环境无 24；差异只影响运行时版本门槛，不影响被测语义）上执行：
-`npm run typecheck`、`npm test`（386 项，382 通过 / 0 失败 / 4 跳过——跳过的是 win32 专属用例）、`npm run test:contract`（6 项全过）、`npm run check:boundaries`（PASS）、`npm run check:strip-only`（PASS）、`npm run build`。
+`npm run typecheck`、`npm test`（合入 master 的 WP1/WP2 之后共 423 项，419 通过 / 0 失败 / 4 跳过——跳过的是 win32 专属用例）、`npm run test:contract`（9 项全过）、`npm run check:boundaries`（PASS）、`npm run check:strip-only`（PASS）、`npm run build`。
 
 - `code/tests/adapters/pi/protocol.test.ts`：帧解析、未知事件降级、损坏帧报错。
 - `code/tests/adapters/pi/client.test.ts`：请求关联、乱序响应、损坏帧隔离不中断通道、进程退出拒绝所有挂起请求。
 - `code/tests/adapters/pi/channel.test.ts`（22 项）：ACK 早回不等于完成、取消 ACK 不等于停止证据、工具终态收敛、原生恢复、凭据不进事件/异常文本/`native`、进程异常退出转为可诊断错误；**新增**：`agent_end` 之后等满 2.5 秒仍不结算（删掉兜底计时器的回归）、握手期间进程退出 → `ENGINE_HANDSHAKE_FAILED`(502) 且带 `code=`/`signal=`、活着的进程上 `get_state` 失败被容忍、`get_state` 带版本时填 `native.engineVersion`、`pnp:` 标题解析成按操作类的 `permission` 请求而其他标题保持泛化、工具集与模型绑定变化都以 409 `ENGINE_BINDINGS_CHANGED` 拒绝。
 - `code/tests/adapters/pi/launch.test.ts`（10 项，重写）：大写 `Authorization` 的回归、`models.json` 只含 `$` 变量名而取值只在 env、非 Bearer 的 `Authorization` 不被拆成 apiKey、协议映射与不可映射协议不写文件、模型指纹对每个字段敏感且对头名大小写/顺序不敏感、win32 `defaultTools` 两种结果、会话私有 `settings.json` 落在 `PI_CODING_AGENT_DIR`、instruction 资产拼成一个 `--append-system-prompt` 参数（无资产则完全不加）、`LaunchSpec.env` 的 CA/TLS/代理变量、扩展路径在 `src`/`dist` 两棵树里的解析。
 - `code/tests/adapters/pi/tool-bridge.test.ts`（4 项，重写）：两种 MCP 传输都被投影、`cli`/`native` 被丢弃并给出理由、sidecar 只含变量名且不含任何取值、变量名跨服务器唯一。
-- `code/tests/adapters/pi/bridge-extension.test.ts`（9 项，新增）：用**真实 MCP 服务器 fixture**（`McpServer` + `StdioServerTransport`）在进程内驱动扩展——注册名与描述/schema、成功 `callTool` 的 text 拼接、`sideEffect` 环境变量确实到达服务器进程、`isError` 变成抛错、连不上的服务器只报告一次且不影响加载、没有 sidecar 也照样装钩子、钩子对 read/write/`hasUI:false`/confirm 抛错的四种决定、patterns 提取、工具名净化。
+- `code/tests/adapters/pi/bridge-extension.test.ts`（10 项，新增）：用**真实 MCP 服务器 fixture**（`McpServer` + `StdioServerTransport`）在进程内驱动扩展——注册名与描述/schema、成功 `callTool` 的 text 拼接、`sideEffect` 环境变量确实到达服务器进程、`isError` 变成抛错、连不上的服务器只报告一次且不影响加载、没有 sidecar 也照样装钩子、钩子对 read/write/`hasUI:false`/confirm 抛错的四种决定、patterns 提取、工具名净化、`session_shutdown` 幂等关闭所有客户端。
 - `code/tests/adapters/pi/engine-contract.test.ts`：接入公共 `tests/kit/engine-contract.ts`，通过真实 `LocalProcessHost` + `fake-pi-cli.mjs` fixture 跑通 open→run→再次 run→delete 全流程（本次改动后仍然通过）。
 
 未执行（诚实标记，不得据此认定"已完成"）：Windows 上的任何一项（本次全部在 Linux 上跑，`buildPiSettings` 的 win32 分支只有单元测试证据，`engine-contract` 的真实 PowerShell Job Object 路径本次没有被执行）、真实内网模型调用、真实远端 `mcp-http` 服务器、对真实 `pi` 二进制的自动化 CI 测试、`npm run release:check` 与清单刷新（本工作包按分工不执行）。
