@@ -45,11 +45,15 @@ jobs:
           # Fast real-engine signal.
           - os: ubuntu-latest
             engine: opencode
+          - os: ubuntu-latest
+            engine: pi
           - os: windows-latest
             engine: mock
-          # The leg that counts: the competition target platform.
+          # The legs that count: the competition target platform, both required engines.
           - os: windows-latest
             engine: opencode
+          - os: windows-latest
+            engine: pi
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     defaults:
@@ -68,12 +72,47 @@ jobs:
       - name: Report OpenCode version
         if: matrix.engine == 'opencode'
         run: opencode --version
+      # Pi has no native binary: the launch target is the package's own Node entry script, and a
+      # global install only leaves a .cmd shim on Windows, which the shared ProcessHost refuses to
+      # spawn. --ignore-scripts matches how the offline bundle installs it. The pair the driver
+      # reads is exported here so the smoke runs against a known entry rather than a guess.
+      - name: Install Pi
+        if: matrix.engine == 'pi'
+        run: npm install -g @earendil-works/pi-coding-agent@0.85.1 --ignore-scripts --loglevel=error
+      - name: Locate Pi and report its version (POSIX)
+        if: matrix.engine == 'pi' && runner.os != 'Windows'
+        run: |
+          entry="$(npm root -g)/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
+          node "$entry" --version
+          echo "PNP_PI_ENTRY=$entry" >> "$GITHUB_ENV"
+          echo "PNP_PI_NODE=$(command -v node)" >> "$GITHUB_ENV"
+      - name: Locate Pi and report its version (Windows)
+        if: matrix.engine == 'pi' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $entry = Join-Path (npm root -g) '@earendil-works\pi-coding-agent\dist\bundle\cli.js'
+          & node $entry --version
+          "PNP_PI_ENTRY=$entry" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "PNP_PI_NODE=$((Get-Command node).Source)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       # The one-command launcher's engine install path (npm install into the runtime cache, then the
-      # executable's own --version) has no other CI evidence: the smoke installs opencode globally.
+      # engine's own --version) has no other CI evidence. PNP_PI_ENTRY is cleared for this step on
+      # purpose: with it set the launcher would take the explicit-variable shortcut and never reach
+      # the installer. This step needs config/engines/pi.json to declare its locked npm-node-entry
+      # distribution; while it does not, the launcher fails here by design and says so.
       - name: Exercise the one-command bootstrap's engine install path
-        if: matrix.engine == 'opencode' && runner.os == 'Windows'
+        if: matrix.engine != 'mock' && runner.os == 'Windows'
         shell: cmd
-        run: pnp.cmd bootstrap --engine opencode
+        env:
+          PNP_PI_ENTRY: ''
+          PNP_PI_NODE: ''
+        run: pnp.cmd bootstrap --engine ${{ matrix.engine }}
+      # The judge-facing verification step from INSTRUCTION.md, end to end: bootstrap, then the same
+      # smoke harness through the launcher. The harness puts the mock engine's gateway into
+      # development mode itself, so no environment is set here.
+      - name: Exercise the launcher's self-check
+        if: matrix.engine == 'mock' && runner.os == 'Windows'
+        shell: cmd
+        run: pnp.cmd selfcheck --engine mock
       - name: Run engine smoke
         run: node scripts/e2e/ci-smoke.mjs --engine ${{ matrix.engine }} --artifacts ${{ runner.temp }}/e2e-artifacts
       - name: Upload smoke artifacts
