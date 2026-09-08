@@ -13,7 +13,7 @@ import { deferred } from "../../src/runtime/deadline.ts";
 import { LocalProcessHost, baseEnvironment } from "../../src/runtime/process-host.ts";
 import { Redactor } from "../../src/security/redaction.ts";
 import type { CoreOptions } from "../../src/core/gateway-core.ts";
-import type { EnginePack, IntegrationProvider, PromptRequest, Json } from "../../src/contracts/index.ts";
+import type { EnginePack, IntegrationProvider, PromptRequest, Json, PublicEvent } from "../../src/contracts/index.ts";
 import type { Operation, Operations } from "../../src/storage/protocol.ts";
 import { removeTree } from "../kit/fs.ts";
 const request: PromptRequest = { parts: [{ type: "text", text: "test" }], model: { providerID: "test", modelID: "test" } };
@@ -598,4 +598,86 @@ test("the same shared ProcessHost is injected into each native session open", as
   const f = await create(pack, new MockIntegration(), { processHost: injected });
   try { await f.core.run(f.session.id, request); assert.equal(seen, injected); }
   finally { await f.clean(); }
+});
+test("an unattended question is recorded, published and answered by the gateway itself", async () => {
+  const pack = new MockPack(); const open = pack.open.bind(pack); let observed: unknown;
+  pack.open = async (input) => { const channel = await open(input); const run = channel.run.bind(channel);
+    channel.run = async (runInput) => {
+      observed = await runInput.services.interact({ kind: "question", operation: "choose", payload: {
+        questions: [
+          { question: "Which folder?", options: [{ label: "Reports" }, { label: "Archive" }] },
+          { question: "Anything else?", options: [] },
+        ],
+      } });
+      return run(runInput);
+    }; return channel; };
+  // The default policy: nobody is watching, so a question that waits costs the whole case.
+  const f = await create(pack);
+  const events: PublicEvent[] = [];
+  f.core.journal.subscribe((event) => events.push(event));
+  try {
+    await f.core.run(f.session.id, request);
+    // The first offered option per question, and an empty answer where none was offered. The engine
+    // receives a normal answer; nothing about the subject of the question is invented.
+    assert.deepEqual(observed, {
+      decision: "answer", answers: [["Reports"], [""]], source: "auto", reasonCode: "QUESTION_AUTO_ANSWERED",
+    });
+    // The trajectory still shows that the engine asked, and what it asked.
+    const asked = events.find((event) => event.type === "question.asked");
+    assert.equal(asked?.properties.sessionID, f.session.id);
+    assert.match(JSON.stringify(asked?.properties.questions), /Which folder\?/);
+    const resolved = events.find((event) => event.type === "question.resolved");
+    assert.equal(resolved?.properties.decision, "answer");
+    assert.equal(resolved?.properties.source, "auto");
+    assert.equal(resolved?.properties.reasonCode, "QUESTION_AUTO_ANSWERED");
+    // It is answered, so nothing is left waiting for a reply that will never come.
+    assert.deepEqual(await f.core.interactions.list("question"), []);
+    assert.equal((await f.core.messages(f.session.id)).at(-1)?.info?.finish, "stop");
+  } finally { await f.clean(); }
+});
+test("a permission allowed always is remembered for that session and operation only", async () => {
+  const pack = new MockPack(); const open = pack.open.bind(pack); const observed: unknown[] = [];
+  pack.open = async (input) => { const channel = await open(input); const run = channel.run.bind(channel);
+    channel.run = async (runInput) => {
+      observed.push(await runInput.services.interact({ kind: "permission", operation: "write", payload: {} }));
+      observed.push(await runInput.services.interact({ kind: "permission", operation: "bash", payload: {} }));
+      return run(runInput);
+    }; return channel; };
+  const provider = new MockIntegration(); const prepare = provider.prepare.bind(provider);
+  provider.prepare = async (input) => ({ ...(await prepare(input)),
+    authorize: async (interaction) => interaction.operation === "bash"
+      ? { effect: "deny", reasonCode: "ORGANISATION_DENY" } : { effect: "ask", reasonCode: "ASK" } });
+  const f = await create(pack, provider);
+  try {
+    const first = f.core.run(f.session.id, request);
+    await waitFor(async () => (await f.core.interactions.list("permission")).length === 1);
+    const pending = (await f.core.interactions.list("permission"))[0]!;
+    await f.core.interactions.reply(pending.id, "permission", { decision: "allow" }, { remember: true });
+    await first;
+    // The engine is told "allowed", once, exactly as for `once`: no native allow-always is created.
+    assert.deepEqual(observed[0], { decision: "allow", source: "user" });
+    assert.deepEqual(observed[1], { decision: "deny", source: "policy", reasonCode: "ORGANISATION_DENY" });
+    const events: PublicEvent[] = [];
+    f.core.journal.subscribe((event) => events.push(event));
+    observed.length = 0;
+    // The next turn of the same session does not ask again for the same operation.
+    await f.core.run(f.session.id, request);
+    assert.deepEqual(observed[0], { decision: "allow", source: "remembered", reasonCode: "USER_ALLOWED_ALWAYS" });
+    assert.equal(events.some((event) => event.type === "permission.asked"), false);
+    const resolved = events.find((event) => event.type === "permission.resolved");
+    assert.equal(resolved?.properties.source, "remembered");
+    assert.equal(resolved?.properties.reasonCode, "USER_ALLOWED_ALWAYS");
+    // An organisational deny is decided before the memory and is never softened by it.
+    assert.deepEqual(observed[1], { decision: "deny", source: "policy", reasonCode: "ORGANISATION_DENY" });
+    // The memory belongs to the session that gave it.
+    const other = await f.core.createSession(f.workspace);
+    observed.length = 0;
+    const second = f.core.run(other.id, request);
+    await waitFor(async () => (await f.core.interactions.list("permission")).length === 1);
+    const asked = (await f.core.interactions.list("permission"))[0]!;
+    assert.equal(asked.sessionID, other.id);
+    await f.core.interactions.reply(asked.id, "permission", { decision: "deny" });
+    await second;
+    assert.deepEqual(observed[0], { decision: "deny", source: "user" });
+  } finally { await f.clean(); }
 });

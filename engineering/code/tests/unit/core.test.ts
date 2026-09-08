@@ -10,7 +10,7 @@ import { MockPack } from "../../src/engines/mock/pack.ts";
 import type { MockOptions } from "../../src/engines/mock/pack.ts";
 import { MockIntegration } from "../../src/integration/mock/provider.ts";
 import type { CoreOptions } from "../../src/core/gateway-core.ts";
-import type { PromptRequest } from "../../src/contracts/index.ts";
+import type { PromptRequest, PublicEvent } from "../../src/contracts/index.ts";
 import { removeTree } from "../kit/fs.ts";
 
 const prompt: PromptRequest = {
@@ -207,7 +207,8 @@ test("abort never produces a normal stop marker", async () => {
 test("deadline settles the HTTP-facing run and does not fabricate success", async () => {
   const f = await fixture({ delayMs: 500 }, 60);
   try {
-    await assert.rejects(f.core.run(f.session.id, prompt));
+    // A deadline is not a stop the caller asked for, so it keeps its own timeout status.
+    await assert.rejects(f.core.run(f.session.id, prompt), { code: "EXECUTION_TIMEOUT", status: 504 });
     assert.notEqual((await f.core.messages(f.session.id)).at(-1)?.info?.finish, "stop");
   } finally { await f.close(); }
 });
@@ -360,5 +361,47 @@ test("the driver receives the provider-resolved model, not the caller's default 
   } finally {
     await core.close();
     await f.close();
+  }
+});
+test("a user's own abort ends the blocked prompt normally, with a cancelled trajectory", async () => {
+  const f = await fixture({ delayMs: 500 }, generousDeadline);
+  try {
+    const events: PublicEvent[] = [];
+    f.core.journal.subscribe((event) => events.push(event));
+    const run = f.core.run(f.session.id, prompt);
+    await waitBusy(f);
+    await f.core.abort(f.session.id);
+    // The caller asked for the stop and the stop was proven, so the request itself is a normal 204
+    // (contracts.md section 3.3). Nothing about the turn is reported as successful.
+    await run;
+    const last = (await f.core.messages(f.session.id)).at(-1)!;
+    assert.equal(last.info?.finish, "cancelled");
+    assert.equal(last.parts?.some((part) => typeof part === "object" && part !== null && !Array.isArray(part)
+      && part.type === "step-finish"), false);
+    // The session is idle again, and it says so on the event stream as well as in its status.
+    assert.equal((await f.core.getSession(f.session.id)).status, "idle");
+    assert.ok(events.some((event) => event.type === "session.idle"));
+    const status = events.filter((event) => event.type === "session.status").at(-1)?.properties.status;
+    assert.deepEqual(status, { type: "idle" });
+  } finally { await f.close(); }
+});
+test("an unverified stop publishes its uncertainty so an event-only client is not left waiting", async () => {
+  const f = await fixture({ stuck: true, terminateQuiescent: false }, 60);
+  try {
+    const events: PublicEvent[] = [];
+    f.core.journal.subscribe((event) => events.push(event));
+    await assert.rejects(f.core.run(f.session.id, prompt), { code: "EXECUTION_UNCERTAIN", status: 503 });
+    // The run published `busy`, so it must publish an ending. `idle` would claim a stop it cannot
+    // prove; the uncertainty itself is published instead, under the code the HTTP caller receives.
+    const failure = events.filter((event) => event.type === "session.error").at(-1);
+    assert.deepEqual(failure?.properties.error, { message: "Execution stop is unverified.", code: "EXECUTION_UNCERTAIN" });
+    assert.equal(failure?.properties.sessionID, f.session.id);
+    assert.equal(typeof failure?.properties.runID, "string");
+    assert.equal(events.some((event) => event.type === "session.idle"), false);
+  } finally {
+    // The core refuses to report a clean shutdown here, so the store is closed directly and the
+    // runner can print this test's own result.
+    await f.store.close();
+    await removeTree(f.root);
   }
 });

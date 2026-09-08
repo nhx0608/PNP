@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { loadPnpSettings } from "../../src/config/settings.ts";
+import { CODE_ROOT, loadPnpSettings } from "../../src/config/settings.ts";
 import { loadIntegration } from "../../src/integration/index.ts";
 import type { Session, ToolBinding } from "../../src/contracts/index.ts";
 import { PnpError } from "../../src/core/errors.ts";
@@ -288,5 +288,87 @@ test("an explicit legacy profile with no explicit settings still supplies its ow
     assert.deepEqual(tools, [{
       id: "legacy-tool", transport: "cli", command: "/opt/pnp/legacy.exe", args: [], env: {}, sideEffect: "write",
     }]);
+  } finally { await removeTree(dir); }
+});
+
+test("MCP command, args and url expand the package-root and Node placeholders", async () => {
+  const { dir, file } = await settingsFile(withServers({
+    office: {
+      transport: "stdio",
+      command: "${PNP_NODE}",
+      args: ["${PNP_CODE_ROOT}/dist/tools/office-mcp/main.js", "--serve"],
+      sideEffect: "write",
+      enabled: true,
+    },
+  }));
+  try {
+    const effective = await loadPnpSettings({ engineId: "opencode", settingsPath: file });
+    const server = effective.mcp.servers[0]!;
+    assert.equal(server.transport === "stdio" && server.command, process.execPath);
+    // The package root comes from the settings module's own location, never from the working
+    // directory, so the same file resolves the same way whoever starts the gateway.
+    const expected = path.join(CODE_ROOT, "dist", "tools", "office-mcp", "main.js");
+    assert.equal(server.transport === "stdio" && path.normalize(server.args[0]!), expected);
+    assert.equal(server.transport === "stdio" && server.args[1], "--serve");
+    // The file itself is a build output: it is not required to exist when the settings load.
+    const tools = await preparedTools({ settingsPath: file, environment: {} });
+    assert.equal(tools.length, 1);
+    assert.equal(tools[0]?.transport, "mcp-stdio");
+  } finally { await removeTree(dir); }
+});
+
+test("an unsupported placeholder is refused rather than passed through", async () => {
+  for (const server of [
+    { transport: "stdio", command: "${PNP_HOME}/mcp", enabled: true },
+    { transport: "stdio", command: COMMAND, args: ["${ENV:PNP_MODEL_API_KEY}"], enabled: true },
+  ]) {
+    const { dir, file } = await settingsFile(withServers({ server }));
+    try {
+      // A credential belongs in `env` by variable NAME; expanding one into a command line would put
+      // its value into a process listing.
+      await assert.rejects(loadPnpSettings({ engineId: "opencode", settingsPath: file }), { code: "SETTINGS_INVALID" });
+    } finally { await removeTree(dir); }
+  }
+});
+
+test("the absolute-command rule applies to what the placeholder expanded to", async () => {
+  const { dir, file } = await settingsFile(withServers({
+    relative: { transport: "stdio", command: "dist/tools/office-mcp/main.js", enabled: true },
+  }));
+  try {
+    // A relative command still fails at integration load: PNP never searches PATH.
+    await assert.rejects(preparedTools({ settingsPath: file, environment: {} }), { code: "INTEGRATION_CONFIG_INVALID" });
+  } finally { await removeTree(dir); }
+});
+
+test("a remote MCP server follows the same http rule as a model endpoint", async () => {
+  const { dir, file } = await settingsFile(withServers({
+    knowledge: {
+      transport: "streamable-http", url: "http://mcp.intranet.invalid/mcp", enabled: true, sideEffect: "read",
+    },
+  }));
+  try {
+    await assert.rejects(loadPnpSettings({ engineId: "opencode", settingsPath: file, environment: {} }), { code: "SETTINGS_INVALID" });
+    const opened = await loadPnpSettings({
+      engineId: "opencode", settingsPath: file, environment: { PNP_ALLOW_HTTP_ENDPOINTS: "1" },
+    });
+    assert.equal(opened.mcp.servers[0]?.transport === "streamable-http" && opened.mcp.servers[0].url,
+      "http://mcp.intranet.invalid/mcp");
+    // A variable-backed address faces the rule when it resolves, with the same switch.
+    const byVariable = await settingsFile(withServers({
+      knowledge: {
+        transport: "streamable-http", urlEnvironment: "PNP_KNOWLEDGE_MCP_URL", enabled: true, sideEffect: "read",
+      },
+    }));
+    try {
+      await assert.rejects(preparedTools({
+        settingsPath: byVariable.file, environment: { PNP_KNOWLEDGE_MCP_URL: "http://mcp.intranet.invalid/mcp" },
+      }), { code: "INTEGRATION_CONFIG_INVALID" });
+      const tools = await preparedTools({
+        settingsPath: byVariable.file,
+        environment: { PNP_KNOWLEDGE_MCP_URL: "http://mcp.intranet.invalid/mcp", PNP_ALLOW_HTTP_ENDPOINTS: "1" },
+      });
+      assert.equal(tools[0]?.transport === "mcp-http" && tools[0].url, "http://mcp.intranet.invalid/mcp");
+    } finally { await removeTree(byVariable.dir); }
   } finally { await removeTree(dir); }
 });

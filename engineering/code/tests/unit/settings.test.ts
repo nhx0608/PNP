@@ -211,3 +211,150 @@ test("settings reject Core defaults missing from the effective catalog", async (
     await assert.rejects(loadPnpSettings({ engineId: "opencode", settingsPath: file }), { code: "SETTINGS_INVALID" });
   } finally { await removeTree(dir); }
 });
+
+test("a model entry names its identifier, credential, extra headers and certificate by variable", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "pnp-settings-model-"));
+  try {
+    const entry = {
+      selection: { providerID: "competition", modelID: "default" },
+      modelIDEnvironment: "PNP_MODEL_ID",
+      endpointEnvironment: "PNP_MODEL_ENDPOINT",
+      protocol: "openai-chat",
+      apiKeyEnvironment: "PNP_MODEL_API_KEY",
+      headersEnvironment: "PNP_MODEL_HEADERS",
+      caFileEnvironment: "PNP_MODEL_CA_FILE",
+    };
+    const file = await writeSettings(dir, {
+      version: 1,
+      common: {
+        model: { default: { providerID: "competition", modelID: "default" }, models: [entry] },
+        permissions: { default: "allow", operations: {} },
+      },
+      cores: {},
+    });
+    const effective = await loadPnpSettings({ engineId: "opencode", settingsPath: file });
+    const model = effective.model.models[0]!;
+    assert.equal(model.modelIDEnvironment, "PNP_MODEL_ID");
+    assert.equal(model.apiKeyEnvironment, "PNP_MODEL_API_KEY");
+    assert.equal(model.headersEnvironment, "PNP_MODEL_HEADERS");
+    assert.equal(model.caFileEnvironment, "PNP_MODEL_CA_FILE");
+    // headerEnvironment stays optional and keeps its meaning: one required variable per header.
+    assert.deepEqual(model.headerEnvironment, {});
+    // The new fields are part of the exact-key rule, so a misspelling is refused rather than ignored.
+    const misspelled = await writeSettings(dir, {
+      version: 1,
+      common: {
+        model: { default: { providerID: "competition", modelID: "default" }, models: [{ ...entry, apiKeyEnviroment: "PNP_MODEL_API_KEY" }] },
+        permissions: { default: "allow", operations: {} },
+      },
+      cores: {},
+    });
+    await assert.rejects(loadPnpSettings({ engineId: "opencode", settingsPath: misspelled }), { code: "SETTINGS_INVALID" });
+  } finally { await removeTree(dir); }
+});
+
+test("a default may name only its provider when that provider has exactly one model", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "pnp-settings-default-"));
+  try {
+    const model = (modelID: string) => ({
+      selection: { providerID: "competition", modelID },
+      endpointEnvironment: "PNP_MODEL_ENDPOINT", protocol: "openai-chat", headerEnvironment: {},
+    });
+    const write = async (name: string, models: unknown[]) => writeSettings(await mkdtemp(path.join(dir, name)), {
+      version: 1,
+      common: {
+        model: { default: { providerID: "competition" }, models },
+        permissions: { default: "allow", operations: {} },
+      },
+      cores: {},
+    });
+    const single = await write("one", [model("default")]);
+    const effective = await loadPnpSettings({ engineId: "opencode", settingsPath: single });
+    assert.deepEqual(effective.model.default, { providerID: "competition", modelID: "default" });
+    // Two entries: the file has not said which one, and guessing would bind the deployment silently.
+    const several = await write("several", [model("a"), model("b")]);
+    await assert.rejects(loadPnpSettings({ engineId: "opencode", settingsPath: several }), { code: "SETTINGS_INVALID" });
+    const none = await write("none", [{
+      selection: { providerID: "other", modelID: "a" },
+      endpointEnvironment: "PNP_MODEL_ENDPOINT", protocol: "openai-chat", headerEnvironment: {},
+    }]);
+    await assert.rejects(loadPnpSettings({ engineId: "opencode", settingsPath: none }), { code: "SETTINGS_INVALID" });
+  } finally { await removeTree(dir); }
+});
+
+test("instruction files resolve against the settings file and a Core list replaces the common one", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "pnp-settings-instructions-"));
+  try {
+    await writeFile(path.join(dir, "common.md"), "common");
+    await writeFile(path.join(dir, "pi-only.md"), "pi");
+    const base = {
+      model: { default: { providerID: "shared", modelID: "m1" }, models: [commonModels[0]] },
+      permissions: { default: "allow", operations: {} },
+    };
+    const file = await writeSettings(dir, {
+      version: 1,
+      common: { ...base, instructions: ["common.md"] },
+      cores: { opencode: {}, pi: { instructions: ["pi-only.md"] }, hermes: { instructions: [] } },
+    });
+    const opencode = await loadPnpSettings({ engineId: "opencode", settingsPath: file });
+    assert.deepEqual(opencode.instructions, [path.join(dir, "common.md")]);
+    const pi = await loadPnpSettings({ engineId: "pi", settingsPath: file });
+    assert.deepEqual(pi.instructions, [path.join(dir, "pi-only.md")]);
+    // A Core list replaces rather than extends, so a Core can also state "no instructions".
+    const hermes = await loadPnpSettings({ engineId: "hermes", settingsPath: file });
+    assert.deepEqual(hermes.instructions, []);
+    // A path the deployment wrote is configuration, not a caller's input: the failure names it.
+    const missing = await writeSettings(await mkdtemp(path.join(dir, "missing")), {
+      version: 1, common: { ...base, instructions: ["absent.md"] }, cores: {},
+    });
+    await assert.rejects(loadPnpSettings({ engineId: "opencode", settingsPath: missing }), (error: unknown) => {
+      const failure = error as { code: string; message: string };
+      assert.equal(failure.code, "SETTINGS_INVALID");
+      assert.match(failure.message, /absent\.md/);
+      return true;
+    });
+  } finally { await removeTree(dir); }
+});
+
+test("a plain http endpoint outside loopback needs the deployment switch", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "pnp-settings-transport-"));
+  try {
+    const file = await writeSettings(dir, {
+      version: 1,
+      common: {
+        model: {
+          default: { providerID: "intranet", modelID: "m" },
+          models: [{
+            selection: { providerID: "intranet", modelID: "m" },
+            endpoint: "http://model.intranet.invalid/v1", protocol: "openai-chat", headerEnvironment: {},
+          }],
+        },
+        permissions: { default: "allow", operations: {} },
+      },
+      cores: {},
+    });
+    await assert.rejects(loadPnpSettings({ engineId: "opencode", settingsPath: file, environment: {} }), { code: "SETTINGS_INVALID" });
+    const opened = await loadPnpSettings({
+      engineId: "opencode", settingsPath: file, environment: { PNP_ALLOW_HTTP_ENDPOINTS: "1" },
+    });
+    assert.equal(opened.model.models[0]?.endpoint, "http://model.intranet.invalid/v1");
+    // Credentials in the URL stay refused whatever the switch says.
+    const credentials = await writeSettings(await mkdtemp(path.join(dir, "credentials")), {
+      version: 1,
+      common: {
+        model: {
+          default: { providerID: "intranet", modelID: "m" },
+          models: [{
+            selection: { providerID: "intranet", modelID: "m" },
+            endpoint: "http://user:pass@model.intranet.invalid/v1", protocol: "openai-chat", headerEnvironment: {},
+          }],
+        },
+        permissions: { default: "allow", operations: {} },
+      },
+      cores: {},
+    });
+    await assert.rejects(loadPnpSettings({
+      engineId: "opencode", settingsPath: credentials, environment: { PNP_ALLOW_HTTP_ENDPOINTS: "1" },
+    }), { code: "SETTINGS_INVALID" });
+  } finally { await removeTree(dir); }
+});
