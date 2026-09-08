@@ -68,7 +68,7 @@ async function waitBusy(f: Awaited<ReturnType<typeof fixture>>) {
   assert.fail("run did not enter busy");
 }
 test("normal execution commits final message before idle is visible", async () => {
-  const f = await fixture();
+  const f = await fixture({}, generousDeadline);
   try {
     const types: string[] = [];
     f.core.journal.subscribe((e) => types.push(e.type));

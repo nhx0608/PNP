@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { instructionAssetTargetPath, projectOpenCodeAssets, skillAssetTargetPaths } from "../../../src/engines/opencode/assets.ts";
+import { assetDirectoryName, instructionAssetTargetPath, projectOpenCodeAssets, skillAssetTargetPaths } from "../../../src/engines/opencode/assets.ts";
 import { parseOpenCodeEngineConfig, type OpenCodeEngineConfig } from "../../../src/engines/opencode/config.ts";
 import type { AssetBinding, Session } from "../../../src/contracts/index.ts";
 import { removeTree } from "../../kit/fs.ts";
@@ -113,4 +113,16 @@ test("an instruction asset is copied to its canonical target and matches instruc
   } finally {
     await removeTree(root);
   }
+});
+
+test("an asset id with characters Windows rejects in a path still gets a portable target directory", () => {
+  // The shipped instruction ids carry a colon (`instruction:competition`); a directory named after the raw
+  // id cannot be created on Windows.
+  const shipped = assetDirectoryName("instruction:competition");
+  assert.doesNotMatch(shipped, /[:<>"|?*\\/]/);
+  assert.match(shipped, /^instruction_competition-[0-9a-f]{8}$/);
+  assert.equal(assetDirectoryName("inst-1"), "inst-1");
+  assert.notEqual(assetDirectoryName("a:b"), assetDirectoryName("a_b"));
+  const target = instructionAssetTargetPath(path.resolve("native"), { id: "instruction:competition", kind: "instruction", path: "/x/competition.md", sha256: "0", required: true });
+  assert.ok(target.includes(shipped));
 });

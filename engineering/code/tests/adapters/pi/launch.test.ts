@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   buildLaunchSpec, buildPiSettings, fingerprintPiModel, proxyEnvironment, readInstructionText,
   resolveBridgeExtensionPath, resolveSessionPaths, writePiModelsConfig, writePiSettings,
@@ -191,10 +191,12 @@ test("the launch environment carries the model/tool values, the TLS knobs and th
 });
 
 test("the bridge extension path follows the tree the driver itself was loaded from", () => {
-  const fromSource = resolveBridgeExtensionPath("file:///opt/app/src/drivers/pi-rpc/launch.ts");
-  assert.equal(fromSource, path.normalize("/opt/app/src/drivers/pi-rpc/extension/pnp-bridge.ts"));
-  const fromBuild = resolveBridgeExtensionPath("file:///opt/app/dist/drivers/pi-rpc/launch.js");
-  assert.equal(fromBuild, path.normalize("/opt/app/dist/drivers/pi-rpc/extension/pnp-bridge.js"));
+  // Built from a resolved path so the URL is valid on every platform (a Windows file URL needs a drive).
+  const app = path.resolve("/opt/app");
+  const fromSource = resolveBridgeExtensionPath(pathToFileURL(path.join(app, "src", "drivers", "pi-rpc", "launch.ts")).href);
+  assert.equal(fromSource, path.join(app, "src", "drivers", "pi-rpc", "extension", "pnp-bridge.ts"));
+  const fromBuild = resolveBridgeExtensionPath(pathToFileURL(path.join(app, "dist", "drivers", "pi-rpc", "launch.js")).href);
+  assert.equal(fromBuild, path.join(app, "dist", "drivers", "pi-rpc", "extension", "pnp-bridge.js"));
   // The default (this test's own import graph) resolves to a file that really exists in `src/`.
   assert.equal(resolveBridgeExtensionPath(), fileURLToPath(new URL("../../../src/drivers/pi-rpc/extension/pnp-bridge.ts", import.meta.url)));
 });

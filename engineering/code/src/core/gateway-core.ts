@@ -11,7 +11,7 @@ import { LocalProcessHost } from "../runtime/process-host.ts";
 import { StateStore } from "../storage/store.ts";
 import { EventJournal } from "./journal.ts";
 import { InteractionBroker, type QuestionPolicy } from "./interactions.ts";
-import { PnpError, asPnpError } from "./errors.ts";
+import { PnpError, asPnpError, describeInternalFailure } from "./errors.ts";
 import { bounded, deferred } from "../runtime/deadline.ts";
 import { OwnedResourceScope } from "../runtime/resource-scope.ts";
 import { normalizeWorkspace } from "../security/workspace.ts";
@@ -85,6 +85,9 @@ export class GatewayCore {
 
   private observeFailure(error: unknown): PnpError {
     const failure = asPnpError(error);
+    // A throwable that was not ours becomes INTERNAL_ERROR on the wire; say what it was, redacted,
+    // so a 500 in a smoke or a judge's run is diagnosable from the gateway's own log.
+    if (!(error instanceof PnpError)) console.error(describeInternalFailure(error));
     // `healthy` expresses storage availability only. A single failed operation is not unavailability,
     // otherwise one busy-timeout would remove the gateway for the rest of the round.
     if (failure.code.startsWith("STORAGE_") && !this.store.available) this.healthy = false;

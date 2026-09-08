@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CODE_ROOT } from "../../src/config/settings.ts";
@@ -193,7 +193,9 @@ test("switching off certificate verification is carried on the binding, never as
 });
 
 test("instruction files become one required instruction asset each, in order", async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), "pnp-model-instructions-"));
+  // Compared against the real path: on Windows tmpdir() may be the 8.3 short form, and the asset
+  // resolver publishes the canonical (long) path.
+  const dir = await realpath(await mkdtemp(path.join(tmpdir(), "pnp-model-instructions-")));
   try {
     await writeFile(path.join(dir, "competition.md"), "unattended run\n");
     await writeFile(path.join(dir, "extra.md"), "second\n");

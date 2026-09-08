@@ -372,7 +372,9 @@ test("the child gets the model's CA file, the TLS opt-out only when the model as
       HTTP_PROXY: "http://proxy.internal.example.invalid:8080",
       HTTPS_PROXY: "http://proxy.internal.example.invalid:8080",
       NO_PROXY: "localhost,127.0.0.1",
-      http_proxy: undefined, https_proxy: undefined, no_proxy: undefined,
+      // On win32 the environment is case-insensitive: clearing the lowercase names would clear the
+      // uppercase values just set, so the lowercase absence is only arranged (and asserted) elsewhere.
+      ...(process.platform === "win32" ? {} : { http_proxy: undefined, https_proxy: undefined, no_proxy: undefined }),
     }, async () => {
       // A CA file alone must never imply the opt-out: a deployment that supplied a CA still wants verification.
       await withLaunchSpec(root, path.join(root, "native-ca"), fakeIntegration({ model: modelWith({ caFile }) }), async (spec) => {
@@ -382,7 +384,7 @@ test("the child gets the model's CA file, the TLS opt-out only when the model as
         assert.equal(spec.env["HTTP_PROXY"], "http://proxy.internal.example.invalid:8080");
         assert.equal(spec.env["HTTPS_PROXY"], "http://proxy.internal.example.invalid:8080");
         assert.equal(spec.env["NO_PROXY"], "localhost,127.0.0.1");
-        assert.equal("http_proxy" in spec.env, false, "an unset variable must not be exported as an empty string");
+        if (process.platform !== "win32") assert.equal("http_proxy" in spec.env, false, "an unset variable must not be exported as an empty string");
       });
       // tlsInsecure is the only thing that turns verification off, and only when it is exactly true.
       await withLaunchSpec(root, path.join(root, "native-insecure"),

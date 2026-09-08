@@ -58,8 +58,12 @@ export async function appOpen(name: string, timeoutMs = 20_000): Promise<AppOpen
       clearTimeout(timer);
       reject(new OfficeToolError("REQUEST_FAILED", `无法启动 PowerShell / cannot start PowerShell: ${error.message}`));
     });
-    child.on("close", (code) => {
+    // `exit`, not `close`: the launched application inherits PowerShell's output handles, so the
+    // pipes stay open for as long as it runs and a `close` would only arrive when the user quits it.
+    child.on("exit", (code) => {
       clearTimeout(timer);
+      child.stdout.destroy();
+      child.stderr.destroy();
       const result: AppOpenResult = {
         name: trimmed,
         command: `${executable} ${argv.map((piece) => (piece.includes(" ") ? `"${piece}"` : piece)).join(" ")}`,

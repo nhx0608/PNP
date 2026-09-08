@@ -1,4 +1,5 @@
 import { copyFile, mkdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import type { AssetBinding, Json, Session } from "../../contracts/index.ts";
 import { PnpError } from "../../core/errors.ts";
@@ -15,7 +16,19 @@ const SUPPORTED_KINDS = new Set<AssetBinding["kind"]>(["skill", "instruction"]);
  * `instructions` entry, which OpenCode would resolve against the config file's own directory instead.
  */
 export function instructionAssetTargetPath(nativeDataDirectory: string, asset: AssetBinding): string {
-  return path.resolve(nativeDataDirectory, "opencode", "assets", "instructions", asset.id, path.basename(asset.path));
+  return path.resolve(nativeDataDirectory, "opencode", "assets", "instructions", assetDirectoryName(asset.id), path.basename(asset.path));
+}
+/**
+ * An asset id is a label, not a file name: the shipped ids look like `instruction:competition`, and a colon is
+ * not a legal path character on Windows (mkdir fails with an unwrapped error, which surfaced as a 500 on the
+ * first Windows run). The directory name keeps every portable character and replaces the rest; when anything
+ * was replaced a short digest of the original id is appended so two ids that differ only in replaced
+ * characters never share a directory.
+ */
+export function assetDirectoryName(id: string): string {
+  const portable = id.replace(/[^A-Za-z0-9._-]/g, "_");
+  if (portable === id) return id;
+  return `${portable}-${createHash("sha256").update(id).digest("hex").slice(0, 8)}`;
 }
 /**
  * Skill assets are copied into every RedirectPlan.skillRoots directory under `<root>/<id>/`: the private
@@ -29,7 +42,7 @@ export function instructionAssetTargetPath(nativeDataDirectory: string, asset: A
  */
 export function skillAssetTargetPaths(nativeDataDirectory: string, config: OpenCodeEngineConfig, asset: AssetBinding): string[] {
   const plan = buildRedirectPlan(nativeDataDirectory, config);
-  return plan.skillRoots.map((root) => path.join(root, asset.id, path.basename(asset.path)));
+  return plan.skillRoots.map((root) => path.join(root, assetDirectoryName(asset.id), path.basename(asset.path)));
 }
 
 export interface ProjectAssetsInput {
@@ -55,15 +68,11 @@ export async function projectOpenCodeAssets(config: OpenCodeEngineConfig, input:
   for (const asset of input.assets) {
     if (asset.kind === "instruction") {
       const target = instructionAssetTargetPath(input.nativeDataDirectory, asset);
-      await mkdir(path.dirname(target), { recursive: true });
-      await copyFile(asset.path, target);
+      await place(asset, target);
       projected.push({ id: asset.id, kind: asset.kind, targets: [target] });
     } else if (asset.kind === "skill") {
       const targets = skillAssetTargetPaths(input.nativeDataDirectory, config, asset);
-      for (const target of targets) {
-        await mkdir(path.dirname(target), { recursive: true });
-        await copyFile(asset.path, target);
-      }
+      for (const target of targets) await place(asset, target);
       projected.push({ id: asset.id, kind: asset.kind, targets });
     } else {
       skipped.push(asset.id);
@@ -71,4 +80,15 @@ export async function projectOpenCodeAssets(config: OpenCodeEngineConfig, input:
   }
   const result: Json = { projected: projected.map((entry) => ({ id: entry.id, kind: entry.kind, targets: entry.targets })), skipped };
   return result;
+}
+/** A copy that cannot be made is an engine-side projection failure with a code, never an anonymous 500. */
+async function place(asset: AssetBinding, target: string): Promise<void> {
+  try {
+    await mkdir(path.dirname(target), { recursive: true });
+    await copyFile(asset.path, target);
+  } catch (error) {
+    const code = error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "UNKNOWN";
+    throw new PnpError("ENGINE_ASSET_PROJECTION_FAILED",
+      `OpenCode Pack could not place asset ${asset.id} (${code}).`, 502);
+  }
 }
