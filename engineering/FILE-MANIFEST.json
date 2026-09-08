@@ -1,6 +1,6 @@
 {
   "contractVersion": "1.1.0",
-  "payloadFileCount": 219,
+  "payloadFileCount": 220,
   "files": [
     {
       "path": ".gitattributes",
@@ -111,8 +111,8 @@
       "path": "code/config/local.env.example",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 1614,
-      "sha256": "fdc56906b2007c2d807fafd08dcabb23feaddefa36bcf1cdf3631b1f9c8fcb88"
+      "bytes": 2049,
+      "sha256": "b35764f961e5e8d80e5a1dcdfd3eae02a957b4790c9dee3073d43e066c54aea1"
     },
     {
       "path": "code/config/release-profile.json",
@@ -209,8 +209,8 @@
       "path": "code/pnp.cmd",
       "owner": "共同",
       "category": "其他",
-      "bytes": 3482,
-      "sha256": "cc0cbdc7d8ae065767187f1dcfc28b943dd1048fdceb8a8e7d032d17ed808bb5"
+      "bytes": 5247,
+      "sha256": "549dd6c5752d31662ae56b43cb57f55939db73d3662eeb756fcf4828c67c3bde"
     },
     {
       "path": "code/README.md",
@@ -239,6 +239,13 @@
       "category": "执行脚本",
       "bytes": 26508,
       "sha256": "40d96f3276324c3d0f3a0c849cfea5670dd0b3d749576266a328ac11803e1f89"
+    },
+    {
+      "path": "code/scripts/e2e/live-check.mjs",
+      "owner": "共同",
+      "category": "执行脚本",
+      "bytes": 45179,
+      "sha256": "3cdaf809a351021651f4cfdaf01a09a15ff336a805f711fce41701e1bbc41ae8"
     },
     {
       "path": "code/scripts/e2e/mock-model-server.mjs",
@@ -300,8 +307,8 @@
       "path": "code/scripts/pnp-local.ps1",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 39729,
-      "sha256": "b06bc8ead23c9d456eeff179d38ff0d7770a3d6f4daa69d0f3f44ec190b8deda"
+      "bytes": 51861,
+      "sha256": "c0268bac7fb5a6a30b2064728b1db12facdddce02b3624bdfa07b2d51d8683f5"
     },
     {
       "path": "code/scripts/recover.mjs",
@@ -1385,8 +1392,8 @@
       "path": "INSTRUCTION.md",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 15013,
-      "sha256": "711350e67b549dfd3d19ac0cbf9f4d0b562d4703f6c60b87b983f4b84787413a"
+      "bytes": 11990,
+      "sha256": "09fa4d9eed016f4b95224790ee450cb1177fc135077acbed01d9ea2c3cadcaee"
     },
     {
       "path": "prompts/00-baseline-check.md",
@@ -1462,8 +1469,8 @@
       "path": "QUICKSTART.md",
       "owner": "共同",
       "category": "其他",
-      "bytes": 5086,
-      "sha256": "38934244606609831c3bc21922fe8ee19664094a5c3fd0f158c14b870a24cb26"
+      "bytes": 9138,
+      "sha256": "9f7bbc1088780a5608d1a4d5e3009e86ae59d47a7be92e8a4fa087f263b9b715"
     },
     {
       "path": "README.md",

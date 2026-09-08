@@ -1,162 +1,90 @@
-# PNP Agent 网关：部署、执行与交付说明
+# PNP Agent 网关使用说明
 
-本文件是评测方的操作手册，自足、可脚本化。四个部分依次是：环境准备、执行方式、执行完成判定、生成结果交付件说明。
+PNP 是一个运行在 Windows 上的 Agent 网关：评测脚本通过 HTTP 接口下发任务，网关把任务交给所选的 Agent 引擎（OpenCode 或 Pi）执行，再把执行轨迹和产物交回。本说明按"从来没装过"的读者写，照顺序做即可；每一步都有一条命令和一个"看到什么算成功"。
 
-解压后的目录结构：
+目录结构（解压后）：
 
 ```text
 solution\
   INSTRUCTION.md          本文件
-  code\                   全部源码与运行所需内容
-    pnp.cmd               启动器（准备依赖 + 启动 / 自检 / 停止）
-    gateway.cmd           直连入口（依赖已就绪时使用）
-    config\settings.json  模型、权限、工具（MCP）的唯一配置文件
-    config\instructions\competition.md   交给引擎的行为指令
-    dist\                 已编译的网关程序
-    node_modules\         已安装的运行期依赖
-    runtime\bootstrap\    包内自带的 Node 运行时与两个引擎
-    BUNDLE-MANIFEST.json  包内各组件的版本与校验值
+  code\                   全部源码 + 运行所需的一切（Node、依赖、两个引擎、已编译程序）
+    pnp.cmd               唯一需要用的命令
+    config\settings.json  权限、工具、指令的配置（模型不在这里配，见第 2 步）
+    runtime\              运行时产生：local.env（模型配置）、logs\、data\
 ```
 
-## 1. 环境准备
+## 第 1 步：解压
 
-### 1.1 系统要求
+把 `solution.zip` 解压到一个**不含空格的短路径**，例如 `D:\pnp`。后面所有命令都在 `D:\pnp\solution\code` 下执行（cmd 窗口：`cd /d D:\pnp\solution\code`）。
 
-- Windows 10/11 x64；自带的 Windows PowerShell 5.1 即可，无需安装 PowerShell 7。
-- 不需要管理员权限、不需要 WSL、Docker、数据库或 Python。
-- **不需要联网**：Node.js、依赖、两个 Agent 引擎都已打入本包。
-- 建议解压到不含空格的短路径，例如 `D:\pnp`；后文以 `D:\pnp\solution\code` 为工作目录。
+要求：Windows 10/11 x64，自带的 Windows PowerShell 5.1；不需要管理员、不需要联网、不需要安装 Node.js/Python/Git。
 
-### 1.2 包内已含内容
-
-| 组件 | 版本 | 位置 |
-|---|---|---|
-| Node.js 运行时（Windows x64） | 24.19.0 | `code\runtime\bootstrap\node-v24.19.0-win-x64\` |
-| 运行期依赖 | 见 `package-lock.json` | `code\node_modules\` |
-| 已编译网关 | 本包源码 | `code\dist\` |
-| Agent 引擎 OpenCode | 1.18.29 | `code\runtime\bootstrap\engines\opencode\1.18.29\` |
-| Agent 引擎 Pi | 0.85.1 | `code\runtime\bootstrap\engines\pi\0.85.1\` |
-| Office 文档工具服务（MCP） | 随包 | `code\dist\tools\office-mcp\main.js` |
-
-启动器优先使用上述包内组件，全部命中时不访问网络。各组件的 SHA-256 见 `code\BUNDLE-MANIFEST.json`。
-
-### 1.3 配置模型服务（唯一必做的准备工作）
-
-网关本身不携带任何模型地址或凭据，只认下列环境变量：
-
-| 变量 | 必填 | 含义 |
-|---|---|---|
-| `PNP_MODEL_ENDPOINT` | 是 | OpenAI 兼容服务的**基地址**，以 `/v1` 结尾（不要写 `/chat/completions`） |
-| `PNP_MODEL_ID` | 是 | 该服务认识的模型名称，例如 `Qwen2.5-72B-Instruct` |
-| `PNP_MODEL_API_KEY` | 否 | 有值时以 `Authorization: Bearer <值>` 发送 |
-| `PNP_MODEL_HEADERS` | 否 | 额外请求头，JSON 对象，例如 appid：`{"appid":"12345"}` |
-| `PNP_MODEL_CA_FILE` | 否 | 私有 CA 的 PEM 文件路径（自签名证书时使用） |
-
-三种设置方式，任选其一：
+## 第 2 步：配置模型（一条命令）
 
 ```bat
-:: 方式一：cmd 窗口                      :: 方式二：PowerShell 窗口
-set PNP_MODEL_ENDPOINT=https://主机/v1   ::   $env:PNP_MODEL_ENDPOINT = 'https://主机/v1'
-set PNP_MODEL_ID=模型名称                ::   $env:PNP_MODEL_ID       = '模型名称'
-set PNP_MODEL_API_KEY=凭据               ::   $env:PNP_MODEL_API_KEY  = '凭据'
+pnp.cmd config
 ```
 
-方式三：把它们写进 `code\runtime\local.env`（每行 `名称=值`，`#` 开头为注释）。网关启动时自动加载该文件，日志只打印变量**名字**，不打印取值；进程里已存在的同名变量优先。模板见 `code\config\local.env.example`，用 `PNP_LOCAL_ENV_FILE` 可指向别的文件。
+它会问四个问题，回车用括号里的默认值：
 
-两个特殊开关：
+| 问题 | 填什么 |
+|---|---|
+| `PNP_MODEL_ENDPOINT` | 模型服务的 OpenAI 兼容地址，以 `/v1` 结尾（默认是智谱：`https://open.bigmodel.cn/api/paas/v4`） |
+| `PNP_MODEL_ID` | 模型名称（默认 `glm-4-flash`） |
+| `PNP_MODEL_API_KEY` | API Key；没有就留空 |
+| `PNP_MODEL_HEADERS` | 额外请求头，JSON 格式，例如需要 appid 时填 `{"appid":"12345"}`；不需要留空 |
 
-- 模型服务是内网 `http://`（非回环地址）时，设置 `PNP_ALLOW_HTTP_ENDPOINTS=1`，否则启动会以 `INSECURE_MODEL_ENDPOINT` 失败。
-- 证书无法通过校验且来不及配置 CA 时，可设 `PNP_MODEL_TLS_INSECURE=1`（关闭引擎进程的 TLS 校验，最后手段，优先用 `PNP_MODEL_CA_FILE`）。
+答完它会把配置写进 `code\runtime\local.env`（以后想改，重新跑一遍或直接编辑这个文件）。脚本化时可以不交互：`pnp.cmd config --endpoint <地址> --model <模型名> [--api-key <密钥>]`；需要 `PNP_MODEL_HEADERS` 这种带引号的 JSON 时，用交互方式回答或直接编辑 `local.env`，cmd 命令行里传 JSON 容易被引号打断。评测系统如果习惯用环境变量，也可以不跑这条命令，直接在启动前 `set` 上面四个变量，效果相同；环境变量优先于文件。
 
-必填变量缺失时，网关在监听端口**之前**以 `MODEL_ENVIRONMENT_MISSING` 退出，并列出缺哪个变量名。
+内网模型的两个常见情况：地址是 `http://` 而不是 `https://` → 再 `set PNP_ALLOW_HTTP_ENDPOINTS=1`；证书是自签的 → `set PNP_MODEL_CA_FILE=<证书PEM路径>`，实在来不及配证书可临时 `set PNP_MODEL_TLS_INSECURE=1`。
 
-### 1.4 验证部署
+## 第 3 步：自检（两条命令）
 
 ```bat
-cd /d D:\pnp\solution\code
 pnp.cmd selfcheck --engine opencode
-```
-
-该命令准备依赖后，用**内置的本地模拟模型服务**跑一遍完整链路（建会话、发提示词、工具调用、权限回环、中止、并发），最后打印 `[pnp] SELFCHECK PASS` 或 `FAIL`，退出码 0 表示通过。它不使用上面配置的真实模型，也不联网，可先于模型配置执行。把 `--engine opencode` 换成 `--engine pi` 可同样验证第二个引擎。
-
-### 1.4b 用真实模型自测（可选）
-
-1.4 的 `selfcheck` 用的是内置模拟模型，不碰真实模型服务。按 1.3 配好变量之后，可以再跑一次真实模型的自测，确认"网关 + 引擎 + 这个模型"整条链路能跑通：
-
-```bat
-cd /d D:\pnp\solution\code
 pnp.cmd livecheck --engine opencode
 ```
 
-它按 1.3 的变量启动网关（进程环境或 `code\runtime\local.env`；两处都缺 `PNP_MODEL_ENDPOINT` 或 `PNP_MODEL_ID` 时直接拒绝执行并指出缺哪个变量），然后对**真实模型**依次验证：
+- `selfcheck` 不用模型，用内置的模拟模型把全部接口跑一遍（建会话、事件流、任务、工具授权、中止、并发），最后打印 `[pnp] SELFCHECK PASS`。
+- `livecheck` 用第 2 步配置的真实模型跑 8 项检查：就绪、事件流、建会话、让模型写一个文件（验 204、完成规则、busy/idle 事件、文件真实生成）、同一会话第二轮读回它（验历史）、中途中止一个长任务（验 `cancelled`）、反问/授权列表、删除会话，最后打印 `[pnp] LIVECHECK PASS`；证据文件在终端最后一行给出的目录里。
 
-1. `/health/ready` 就绪；事件流可连接（收到 `server.connected`，所有帧写入 `events.jsonl`）。
-2. 建会话（默认新建一个临时工作目录，`--directory D:\test_data` 可指定）与 `GET /session/status` 的 `{会话号:{"type":"idle"}}` 形状。
-3. 让模型在工作目录里写一个带随机标记的文件：`prompt_async` 返回 204、文件确实存在且内容含该标记、轨迹满足第 3 节的完成三条件、事件流出现 `session.status` 的 busy → idle、`session.idle` 与 `message.part.updated`。
-4. 在**同一个会话**里追问该文件的内容：返回 204、最终回复里含那个标记（同时证明会话历史连续和模型确实读了文件）、`GET /session/{id}` 的 `message_count` 增长、`GET /session/{id}/message` 的 user/assistant/tool 记录顺序正确。
-5. 发一个长任务并中止：`POST /session/{id}/abort` 返回 `{"ok":true}`、被中止的 `prompt_async` 返回 204（若该轮尚未开始则是 `409 EXECUTION_CANCELLED`，报告里会写明是哪一种）、轨迹最后一条 assistant 为 `finish:"cancelled"` 且无 `step-finish`、会话回到 idle。模型在中止到达前就把长任务做完时，这一项记 `[SKIP]` 并说明原因。
-6. `GET /question` 与 `GET /permission` 返回数组（默认配置下为空）。
-7. `DELETE /session/{id}` 返回 `{"ok":true}`，且任务产物文件仍在。
+把 `opencode` 换成 `pi` 再各跑一次，就验证了第二个引擎。任何一条打印 `FAIL` 时，终端里会写明是哪一项、状态码和原因，日志在 `code\runtime\logs\`。
 
-每项打印一行 `[PASS]` / `[FAIL]` / `[SKIP]`，最后打印 `{"total":…,"passed":…,"failed":…}` 与 `[pnp] LIVECHECK PASS`（或 `FAIL`），退出码 0 表示通过。失败打印的是 HTTP 状态码与响应体或断言证据，不会只说一句"失败"。证据（`events.jsonl`、每轮轨迹 `messages-<n>.json`、网关日志、`summary.json`）写在结尾打印的产物目录里；单轮提示词上限 10 分钟（`--prompt-timeout-ms` 可调）。换引擎同样用 `--engine pi`。
+## 第 4 步：启动、切换引擎、停止
 
-这一项同时也在考察模型本身：模型不支持工具调用、或不按提示词把文件写到指定路径时，第 3、4 项会 `[FAIL]`，那说明的是该模型不适合本任务，而不是网关故障。
-
-模型变量还没写好时，可以先用交互式的 `pnp.cmd config` 把它们写进 `code\runtime\local.env`（密钥输入不回显，只打印变量名，文件里其他行保持不动）；也可以一次写完：
+启动（引擎用环境变量 `AGENT_ENGINE` 指定，取值 `opencode` 或 `pi`）：
 
 ```bat
-pnp.cmd config --endpoint https://主机/v1 --model 模型名称 --api-key 凭据
-```
-
-### 1.5 只有从源码运行时才需要的镜像变量
-
-本包已自带全部依赖，正常无需下列变量；仅当在**未打包的源码**上运行时才需要：`npm_config_registry`（内网 npm 镜像）、`PNP_NODE_DOWNLOAD_URL`（内网镜像上的 `node-v24.19.0-win-x64.zip`，仍按固定 SHA-256 校验）、`PNP_NODE_HOME`（本机已装的 Node.js 24.19+ 目录，用它代替下载）。
-
-## 2. 执行方式
-
-### 2.1 启动命令
-
-引擎用环境变量 `AGENT_ENGINE` 选择，取值 `opencode` 或 `pi`：
-
-```bat
-cd /d D:\pnp\solution\code
 set AGENT_ENGINE=opencode
 pnp.cmd start
 ```
 
-等价写法（两者同时给出且不一致时启动失败，不会二选一）：
+`GET http://127.0.0.1:6217/health/ready` 返回 200 `{"status":"ready","engine":"opencode"}` 就可以开始调用（首次启动引擎需要十几秒到一分钟；启动中该接口返回 503）。`pnp.cmd start --engine opencode --port 6217` 与上面等价；两种方式同时给且不一致时会拒绝启动。
+
+切换引擎 = 停止后换变量重启（不支持运行中切换）：
 
 ```bat
-pnp.cmd start --engine opencode --port 6217 --host localhost
+pnp.cmd stop
+set AGENT_ENGINE=pi
+pnp.cmd start
 ```
 
-参数：`--port` 默认 `6217`；`--host` 默认 `localhost`（同时监听 `127.0.0.1` 与 `::1`，只允许回环地址）。
+停止：`pnp.cmd stop`（只结束网关自己的进程，不碰任务打开的 Office 等程序），或在网关窗口按 Ctrl+C。
 
-依赖已就绪时也可直接用 `gateway.cmd --engine opencode --port 6217`，它跳过准备步骤，启动的是同一个网关。
+## 第 5 步：评测脚本怎么调用
 
-### 2.2 就绪判定
+地址 `http://127.0.0.1:6217`，请求体和响应体都是 JSON（UTF-8）。一次任务的完整顺序：
 
-反复请求 `GET /health/ready`，返回 **200**（`{"status":"ready","engine":"opencode"}`）即可开始调用；启动中返回 503。首次启动引擎需要十几秒到一分钟。
-
-### 2.3 调用序列
-
-以 `$base = http://127.0.0.1:6217` 为例，全部请求体与响应体均为 JSON（UTF-8）。
-
-1. **建会话**（`directory` 必填，绝对路径；不存在时自动创建）
-
-   `POST /session`
+1. **建会话**：`POST /session`，`directory` 必填、绝对路径、不存在会自动创建。
 
    ```json
    {"title": "office_014", "directory": "D:\\test_data"}
    ```
+   → `200 {"id":"ses_…","title":"office_014","created_at":"…","status":"idle"}`
 
-   → `200`：`{"id":"ses_5f6c…","title":"office_014","created_at":"2026-09-08T06:54:07.343Z","status":"idle"}`
+2. **订阅事件流**（推荐）：`GET /event`，`text/event-stream`，每帧 `data: {"type":…,"properties":{…}}`。
 
-2. **订阅事件流**（可选但推荐）：`GET /event`，`text/event-stream`，每帧 `data: {"type":…,"properties":{…}}`。
-
-3. **发送任务**（阻塞直到本轮执行结束）
-
-   `POST /session/{id}/prompt_async`
+3. **发任务**：`POST /session/{id}/prompt_async`
 
    ```json
    {
@@ -165,134 +93,85 @@ pnp.cmd start --engine opencode --port 6217 --host localhost
      "agent": "assistant"
    }
    ```
+   → `204 No Content` 表示本轮**全部执行完毕**（含所有工具调用）。这个请求会一直阻塞到结束，默认上限 15 分钟（`PNP_RUN_TIMEOUT_MS` 可调），请在后台线程调用。`model` 填任何值都可以，网关一律映射到第 2 步配置的模型；`parts[].text` 也可写成 `content`。
 
-   → `204 No Content`（无响应体）表示本轮**已经全部执行完毕**并已落库。
-
-   `model` 里的 `providerID`/`modelID` 取任意值都可以：网关把它映射到上面配置的那一个模型，不会因为名字对不上而拒绝。省略 `model` 字段同样使用该模型。`parts[]` 的文本字段写 `text` 或 `content` 都接受。
-
-   该请求**同步阻塞整轮执行**（含全部工具调用），默认上限 15 分钟，可用 `PNP_RUN_TIMEOUT_MS`（毫秒）调整。建议在后台线程调用，同时在主线程读事件流。
-
-4. **取轨迹**：`GET /session/{id}/message` → 消息数组，见第 3 节。
+4. **取轨迹**：`GET /session/{id}/message` → 消息数组（见第 6 步）。
 
 5. **查状态**：`GET /session/{id}` → `{"id":…,"status":"idle"|"busy","message_count":N}`；`GET /session/status` → `{"ses_…":{"type":"idle"}}`。
 
-6. **中止**：`POST /session/{id}/abort`（等价路径 `.../stop`）→ `{"ok":true}`；被中止的那次 `prompt_async` 返回 `204`，轨迹记 `finish:"cancelled"` 且无 `step-finish`。
+6. **中止**：`POST /session/{id}/abort`（或 `/stop`）→ `{"ok":true}`；被中止的那次 `prompt_async` 返回 `204`，轨迹记 `finish:"cancelled"`。
 
-7. **反问与授权**（默认不会用到，见 2.6）：
-   - `GET /question` → `[{"id":"qst_…","sessionID":"ses_…","questions":[{"question":"…","options":[{"label":"方案 A"}]}],"created_at":"…"}]`；`POST /question/{id}/reply` 请求体 `{"answers": [["方案 A"]]}` → `{"ok":true}`。
-   - `GET /permission` → `[{"id":"prm_…","sessionID":"ses_…","permission":"write","patterns":["D:\\test_data\\out.md"],"created_at":"…"}]`；`POST /permission/{id}/reply` 请求体 `{"reply":"once"}`（可选 `always`、`reject`）→ `{"ok":true}`。
+7. **反问与授权**（默认用不到）：`GET /question`、`POST /question/{id}/reply {"answers":[["方案 A"]]}`；`GET /permission`、`POST /permission/{id}/reply {"reply":"once"}`（`once`/`always`/`reject`）。默认引擎的反问由网关自动用第一个选项作答（`PNP_QUESTION_POLICY=auto`），权限默认全部放行，所以这两个列表通常为空；需要评测方逐项审批时见附录 B。
 
-8. **清理**：`DELETE /session/{id}` → `{"ok":true}`。
+8. **清理**：`DELETE /session/{id}` → `{"ok":true}`。只删网关侧记录和引擎会话数据，不删 `directory` 和任务产物。
 
-### 2.4 切换引擎
+## 第 6 步：怎么判断完成、去哪拿结果
 
-不支持运行中热切换。停止当前网关 → 改 `AGENT_ENGINE`（或 `--engine`）→ 重新启动：
+**一轮成功结束**同时满足三条：
 
-```bat
-pnp.cmd stop
-set AGENT_ENGINE=pi
-pnp.cmd start
-```
+1. `prompt_async` 返回 204；
+2. 事件流出现 `session.status`（`{"status":{"type":"idle"}}`）与 `session.idle`（失败时是 `session.error`）；
+3. 轨迹最后一条 `role` 为 `assistant`、`info.finish` 为 `"stop"`、`parts` 含 `{"type":"step-finish"}`。`info.finish` 为 `tool-calls` 表示还在中间步骤；`cancelled`/`error`/`length`/`interrupted` 是真实的非成功终态，不会伪装成功。
 
-两个引擎的数据目录默认相互独立（见 4.3），互不影响。
-
-### 2.5 停止
-
-`pnp.cmd stop` 结束 `code\runtime\gateway.pid` 里记录的那一个进程并删除该文件；在网关自己的控制台按 `Ctrl+C` 同样是正常停止。两种方式都不会按进程名批量结束进程，也不会关闭任务打开的 Office 应用。
-
-### 2.6 反问与授权的默认行为
-
-- 默认 `PNP_QUESTION_POLICY=auto`：引擎反问时网关立即用第一个选项自动作答并继续执行，不阻塞。需要人工/脚本作答时设为 `ask`，再用 2.3 第 7 条的接口回复。
-- 权限默认全部放行，`GET /permission` 通常为空数组。需要评测方逐项审批时设置 `PNP_CONFIGURED_POLICY_OVERRIDES={"write":"ask"}`（取值 `allow`/`ask`/`deny`），网关就会在写文件前发出授权请求并等待回复。
-
-## 3. 执行完成判定
-
-### 3.1 正常完成
-
-同时满足以下三条即为本轮成功结束：
-
-1. `POST /session/{id}/prompt_async` 返回 **204**；
-2. 事件流出现 `session.status`（`{"status":{"type":"idle"}}`）与 `session.idle`；失败时出现 `session.error`；
-3. `GET /session/{id}/message` 的最后一条消息 `role` 为 `assistant`、`info.finish` 为 `"stop"`，且 `parts` 中含 `{"type":"step-finish"}`。
-
-只有 `step-finish` 而 `info.finish` 不是 `stop` 不算完成。消息形状：
+轨迹长这样：
 
 ```json
 [
   {"id":"msg_…","role":"user","content":"请基于 …","created_at":"…"},
   {"id":"msg_…","role":"assistant","content":"","created_at":"…",
-   "tool_calls":[{"id":"call_…","name":"office.docx_extract","arguments":{"path":"D:\\test_data\\x.docx"}}],
+   "tool_calls":[{"id":"call_…","name":"office.csv_read","arguments":{"path":"D:\\test_data\\task.csv"}}],
    "info":{"role":"assistant","finish":"tool-calls"},
-   "parts":[{"type":"tool","tool":"office.docx_extract","callID":"call_…","state":{"status":"completed","title":"office.docx_extract"}}]},
-  {"id":"msg_…","role":"tool","tool_call_id":"call_…","tool_name":"office.docx_extract","content":"{…}","created_at":"…"},
+   "parts":[{"type":"tool","tool":"office.csv_read","callID":"call_…","state":{"status":"completed","title":"office.csv_read"}}]},
+  {"id":"msg_…","role":"tool","tool_call_id":"call_…","tool_name":"office.csv_read","content":"{…}","created_at":"…"},
   {"id":"msg_…","role":"assistant","content":"已生成 D:\\test_data\\task_违约风险分析.md",
    "created_at":"…","info":{"role":"assistant","finish":"stop"},
    "parts":[{"type":"text","content":"已生成 …","text":"已生成 …"},{"type":"step-finish"}]}
 ]
 ```
 
-工具调用记录在 `"role":"tool"` 的消息与 `{"type":"tool","tool":"write","state":{"status":"completed","title":"…"}}` 的 part 中。`info.finish` 的其他取值：`tool-calls`（中间步骤）、`cancelled`（被中止）、`error`、`length`、`interrupted`（停止未证实）。失败的轮次不会伪装成功。
+**产物**：写在任务里点名的绝对路径上；任务没说位置时写在会话的 `directory`，最终回复里会列出每个产物的绝对路径。
 
-### 3.2 事件类型
+**日志与数据**：网关日志 `code\runtime\logs\gateway-<引擎>.log`（错误另有 `.err.log`），进程号 `code\runtime\gateway.pid`，会话数据库与引擎会话数据 `code\runtime\data\<引擎>\`。日志里只有变量名，没有凭据。
 
-`server.connected`、`server.heartbeat`（每 15 秒）、`session.status`、`session.idle`、`session.error`、`message.part.updated`、`question.asked`、`permission.asked`、`model.resolved`。
+**错误格式**统一为 `{"code":"…","message":"…"}`：
 
-### 3.3 错误格式与状态码
-
-错误响应统一为 `{"code":"…","message":"…"}`：
-
-| 状态码 | `code` | 含义 |
+| 状态码 | code | 含义 |
 |---|---|---|
 | 400 | `VALIDATION_ERROR` | 请求体不合法（如 `directory` 不是绝对路径） |
-| 403 | `WORKSPACE_FORBIDDEN` | 目录不可用（无权创建，或位于 Windows 系统目录下） |
+| 403 | `WORKSPACE_FORBIDDEN` | 目录不可用（无权创建或位于系统目录） |
 | 404 | `NOT_FOUND` | 会话或路由不存在 |
-| 409 | `SESSION_BUSY` | 同一会话已有执行中或排队中的请求 |
-| 409 | `GATEWAY_BUSY` | 全局执行队列已满，响应带 `Retry-After: 5`，稍后重试 |
-| 409 | `SESSION_UNAVAILABLE` | 该会话的上一轮停止未证实，被围栏阻断；`DELETE` 该会话即可解除 |
-| 500 | `INTERNAL_ERROR` | 未归类的内部错误 |
+| 409 | `SESSION_BUSY` / `GATEWAY_BUSY` / `SESSION_UNAVAILABLE` | 同会话已有任务在跑 / 全局队列满（带 `Retry-After: 5`）/ 该会话上一轮停止未证实，`DELETE` 它即可解除 |
+| 500 | `INTERNAL_ERROR` | 内部错误，日志里有一行脱敏说明 |
 | 502 | `BAD_GATEWAY` | 引擎返回了不可解析的结果 |
-| 503 | `EXECUTION_UNCERTAIN` 等 | 停止未证实、引擎不可用、模型环境缺失 |
+| 503 | `EXECUTION_UNCERTAIN` 等 | 停止未证实、引擎不可用、模型配置缺失 |
 | 504 | `EXECUTION_TIMEOUT` | 本轮超过 `PNP_RUN_TIMEOUT_MS` |
 
-409/503/504 不属于接口规范的基础错误集，是本网关为"不伪造成功"而保留的真实状态，评测脚本按上表处理即可。
+## 附录 A：常见问题
 
-## 4. 生成结果交付件说明
+- **启动就退出，提示 `MODEL_ENVIRONMENT_MISSING`**：第 2 步没做或 `local.env` 不在 `code\runtime\`；信息里会列出缺哪个变量名。
+- **提示 `INSECURE_MODEL_ENDPOINT`**：模型地址是 `http://`，`set PNP_ALLOW_HTTP_ENDPOINTS=1`。
+- **`livecheck` 失败但 `selfcheck` 通过**：网关没问题，是模型或网络：检查 Key、地址是否以 `/v1` 结尾、模型是否支持工具调用。
+- **提示 `INSTANCE_LOCKED`**：上一个网关还在跑，先 `pnp.cmd stop`。
+- **端口被占用**：`pnp.cmd start --port 6218`。
+- **想看引擎到底做了什么**：`GET /session/{id}/message`，或 `code\runtime\logs\`。
 
-### 4.1 任务产物
+## 附录 B：更多配置（都可选）
 
-任务产物就是提示词里点名的那些文件，写在提示词给出的**绝对路径**上（例如 `D:\test_data\task_违约风险分析.md`），不会被复制或移动到别处。提示词未指定位置时写入会话的 `directory`，并在最终回复里列出每个产物的绝对路径。会话 `directory` 之外的绝对路径同样允许访问。
+配置文件是 `code\config\settings.json`，改完重启网关生效；格式说明在 `code\config\SETTINGS.md`。
 
-### 4.2 执行轨迹
-
-`GET /session/{id}/message` 返回本会话完整轨迹（用户消息、模型文本、工具调用与结果、终态），即评分所需的 rollout 记录。建议在 `DELETE` 之前取走并保存。
-
-### 4.3 日志与数据目录
-
-| 内容 | 路径 |
-|---|---|
-| 网关标准输出日志 | `code\runtime\logs\gateway-<引擎>.log` |
-| 网关错误输出日志 | `code\runtime\logs\gateway-<引擎>.err.log` |
-| 运行中的进程号 | `code\runtime\gateway.pid` |
-| 会话数据库与原生会话数据 | `code\runtime\data\<引擎>\`（可用 `PNP_DATA_DIR` 改到别处） |
-
-日志与数据目录里不会出现模型凭据：凭据只存在于进程环境变量中，日志只记录变量名。
-
-### 4.4 `DELETE /session/{id}` 删除什么
-
-只删除本系统自己的东西：网关侧的会话记录、该会话的原生引擎会话数据、临时授权记忆。**不会**删除会话 `directory`、不会删除任务产物文件、不会关闭任何应用程序。
-
-## 5. 扩展工具与指令（可选）
-
-- **内置 Office 工具**：`code\dist\tools\office-mcp\main.js` 提供 docx / xlsx / pptx / csv 的读取、生成与修改，以及文件查找删除、启动本机应用等能力，默认已在 `settings.json` 中启用，两个引擎共用。
-- **增加内网 MCP 工具**：在 `code\config\settings.json` 的 `common.mcp.servers` 里新增一项即可。`${PNP_CODE_ROOT}`、`${PNP_NODE}` 分别解析为 `code\` 目录与当前 Node 可执行文件；凭据写变量名（`env` / `headerEnvironment`），不写取值。远端 MCP 若是内网 `http://`，同样需要 `PNP_ALLOW_HTTP_ENDPOINTS=1`。
+- **权限**：`common.permissions`，`default` 为 `allow`/`ask`/`deny`，`operations` 按操作覆盖，例如 `{"write":"ask","shell":"deny"}`。不改文件也行：启动前 `set PNP_CONFIGURED_POLICY_OVERRIDES={"write":"ask"}`，之后写文件前会发出 `permission.asked`，用第 5 步第 7 条的接口回复。
+- **反问**：`set PNP_QUESTION_POLICY=ask` 让反问真的等待回复（默认 `auto` 自动作答）。
+- **工具**：`common.mcp.servers`。随包的 Office 工具（docx/xlsx/pptx/csv 读写、文件查找删除、打开本机应用、网页抓取）已启用，两个引擎共用。接内网 MCP 服务时照样加一项，凭据只写环境变量名：
 
   ```json
-  "servers": {
-    "office": {"transport": "stdio", "command": "${PNP_NODE}",
-               "args": ["${PNP_CODE_ROOT}/dist/tools/office-mcp/main.js"], "enabled": true},
-    "intranet": {"transport": "streamable-http", "urlEnvironment": "PNP_INTRANET_MCP_URL",
-                 "headerEnvironment": {"Authorization": "PNP_INTRANET_MCP_TOKEN"}, "enabled": true}
-  }
+  "intranet": {"transport": "streamable-http", "urlEnvironment": "PNP_INTRANET_MCP_URL",
+               "headerEnvironment": {"Authorization": "PNP_INTRANET_MCP_TOKEN"}, "enabled": true}
   ```
+  `${PNP_CODE_ROOT}` 与 `${PNP_NODE}` 可用来引用包内路径和 Node。内网 `http://` 的 MCP 同样需要 `PNP_ALLOW_HTTP_ENDPOINTS=1`。
+- **给引擎的行为指令**：`code\config\instructions\competition.md`（无人值守、不反问、绝对路径、产物落盘、Windows/PowerShell 环境、优先用 Office 工具），可按需增删。
+- **按引擎单独配置**：`settings.json` 的 `cores.opencode` / `cores.pi`。
+- **数据目录与超时**：`PNP_DATA_DIR`（默认 `code\runtime\data\<引擎>`）、`PNP_RUN_TIMEOUT_MS`（默认 900000）。
 
-- **调整行为指令**：`code\config\instructions\competition.md` 是交给两个引擎的系统指令（无人值守、不反问、绝对路径、产物落盘、Windows/PowerShell 环境、优先使用 Office 工具）。按需增删条目，改完重启网关生效。
+## 附录 C：从源码而不是交付包运行
+
+交付包里已含 Node 24.19.0、依赖和两个引擎，零联网。直接用源码仓库（`engineering\code`）时，第一次 `pnp.cmd` 会自动下载 Node、执行 `npm ci`、编译并安装引擎，需要联网；内网可用镜像：`npm_config_registry=<内网 npm 镜像>`、`PNP_NODE_DOWNLOAD_URL=<镜像上的 node-v24.19.0-win-x64.zip>`（仍按固定 SHA-256 校验）、`PNP_NODE_HOME=<本机已装的 Node 24.19+ 目录>`。这些变量也可以写进 `code\runtime\local.env`。制作交付包：`node scripts/package-release.mjs --bundle --zip`。
