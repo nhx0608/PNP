@@ -1,5 +1,6 @@
 {
   "formatVersion": 1,
+  "sha256Method": "sha256 of the published npm tarball, obtained with `npm pack <name>@<version> --pack-destination <dir>` and cross-checked against a direct download of the registry's dist.tarball URL (both bytes-identical). scripts/package-release.mjs --bundle re-derives the same value while packaging and fails when it disagrees with this file.",
   "engines": [
     {
       "engineId": "opencode",
@@ -7,7 +8,17 @@
       "version": "1.18.29",
       "source": "npm:opencode-windows-x64@1.18.29",
       "sha256": "19eca6cdead9c67cce26fdc2db165980318edb7318c8c964dfc2ebffe03bb472",
-      "protocolVersion": "1"
+      "protocolVersion": "1",
+      "notes": "The platform package is the actual launch target: opencode-ai@1.18.29 only carries a placeholder bin/opencode.exe until its postinstall copies the platform binary over it."
+    },
+    {
+      "engineId": "pi",
+      "channelId": "rpc",
+      "version": "0.85.1",
+      "source": "npm:@earendil-works/pi-coding-agent@0.85.1",
+      "sha256": "1f498729649bdce647d1160993b4d92bf3c614cc819213bee2f91dd34f2a7af4",
+      "protocolVersion": "1",
+      "notes": "Launch target is the package's own Node entry script dist/bundle/cli.js (`node cli.js --version` answers 0.85.1); there is no native binary and no platform package. Installed with --ignore-scripts, which the entry script does not depend on."
     }
   ]
 }

@@ -21,16 +21,24 @@ const { values } = parseArgs({
   },
 });
 const engine = values.engine ?? "mock";
-if (!["mock", "opencode"].includes(engine)) throw new Error("--engine must be mock or opencode.");
+const SUPPORTED_ENGINES = ["mock", "opencode", "pi"];
+if (!SUPPORTED_ENGINES.includes(engine)) throw new Error(`--engine must be one of ${SUPPORTED_ENGINES.join(", ")}.`);
+/** Every engine-specific variable this harness may set, cleared before one of them is chosen. */
+const ENGINE_LOCATION_VARIABLES = ["PNP_OPENCODE_EXE_PATH", "PNP_PI_ENTRY", "PNP_PI_NODE", "PNP_PI_EXECUTABLE"];
 // Defaults outside the repository: the tree has no ignore rule for an artifacts directory.
 const artifacts = path.resolve(values.artifacts ?? path.join(os.tmpdir(), "pnp-e2e-artifacts", engine));
 const totalTimeoutMs = Number(values["timeout-ms"] ?? 600_000);
-const AUTH_VALUE = "Bearer e2e-not-a-secret";
-// The variable names the SHIPPED profile (code/config/competition-profile.json) declares. The
-// opencode leg sets nothing else about the integration: exercising the documented defaults is the
-// point, so a regression that reintroduces a start-time gate fails this smoke.
+const API_KEY_VALUE = "e2e-not-a-secret";
+const AUTH_VALUE = `Bearer ${API_KEY_VALUE}`;
+// The variable names the SHIPPED settings declare. A real-engine leg sets nothing else about the
+// integration: exercising the documented defaults is the point, so a regression that reintroduces a
+// start-time gate fails this smoke. Both credential spellings are supplied - the header value and
+// the bare key the gateway turns into `Authorization: Bearer <key>` - so this harness matches the
+// delivered settings whichever of the two they name.
 const AUTH_VARIABLE = "PNP_MODEL_AUTHORIZATION";
+const API_KEY_VARIABLE = "PNP_MODEL_API_KEY";
 const ENDPOINT_VARIABLE = "PNP_MODEL_ENDPOINT";
+const MODEL_ID_VARIABLE = "PNP_MODEL_ID";
 // Deliberately NOT the model the profile declares: the evaluator sends identifiers this deployment
 // does not control, and the run must land on the profile's default model instead of a 403.
 const MODEL = { providerID: "e2e", modelID: "mock-1" };
@@ -47,6 +55,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 /** Nothing leaving this process may carry a live credential. */
 const redact = (value) => value
   .split(AUTH_VALUE).join("[redacted]")
+  .split(API_KEY_VALUE).join("[redacted]")
   .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]");
 
 /** True when nothing listens on the port on either loopback family. */
@@ -114,6 +123,27 @@ function resolveOpenCodeExecutable() {
   return { path: resolved ?? candidates[0], source: "npm root -g", exists: resolved !== undefined, npm_root: root, candidates };
 }
 
+/**
+ * Pi has no native binary: its launch target is the package's own Node entry script, and a global
+ * npm install only leaves a .cmd shim on Windows, which the shared ProcessHost refuses to spawn.
+ * So the driver reads a pair - PNP_PI_ENTRY (the script) and PNP_PI_NODE (the interpreter) - and
+ * this resolves the same pair from a global install, the way the CI legs install it.
+ */
+function resolvePiEntry() {
+  const node = process.env.PNP_PI_NODE !== undefined && process.env.PNP_PI_NODE !== "" ? process.env.PNP_PI_NODE : process.execPath;
+  const provided = process.env.PNP_PI_ENTRY;
+  if (provided !== undefined && provided !== "") {
+    return { path: provided, node, source: "PNP_PI_ENTRY", exists: existsSync(provided) };
+  }
+  const cli = npmCli();
+  if (cli === undefined) return { path: null, node, source: "npm-root-unavailable", exists: false };
+  const result = spawnSync(process.execPath, [cli, "root", "-g"], { encoding: "utf8", shell: false });
+  if (result.status !== 0) return { path: null, node, source: "npm-root-failed", exists: false, error: (result.stderr ?? "").trim() };
+  const root = result.stdout.trim().split(/\r?\n/).pop() ?? "";
+  const candidate = path.join(root, "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js");
+  return { path: candidate, node, source: "npm root -g", exists: existsSync(candidate), npm_root: root };
+}
+
 const children = new Set();
 function launch(command, args, options) {
   const child = spawn(command, args, {
@@ -161,7 +191,7 @@ const gatewayStdout = path.join(logs, "gateway.stdout.log");
 const gatewayStderr = path.join(logs, "gateway.stderr.log");
 const runnerLog = path.join(logs, "e2e-runner.log");
 const reportPath = path.join(logs, "e2e-report.json");
-const shippedProfile = path.join(codeRoot, "config", "competition-profile.json");
+const shippedSettings = path.join(codeRoot, "config", "settings.json");
 // Always present so the artifact set is the same shape whether or not the engine
 // reached the model service (the mock engine never does).
 await writeFile(modelRequestLog, "", "utf8");
@@ -249,7 +279,9 @@ try {
   delete environment.PNP_MODE;
   // Whatever this machine happens to export, the integration posture of each leg is set here.
   for (const name of ["PNP_INTEGRATION", "PNP_CONFIGURED_PROFILE", "PNP_CONFIGURED_POLICY_OVERRIDES",
-    "PNP_MODEL_STRICT", "PNP_OPENCODE_NATIVE_PERMISSIONS", AUTH_VARIABLE, ENDPOINT_VARIABLE]) delete environment[name];
+    "PNP_MODEL_STRICT", "PNP_OPENCODE_NATIVE_PERMISSIONS", "PNP_MODEL_HEADERS", "PNP_MODEL_CA_FILE",
+    AUTH_VARIABLE, API_KEY_VARIABLE, ENDPOINT_VARIABLE, MODEL_ID_VARIABLE,
+    ...ENGINE_LOCATION_VARIABLES]) delete environment[name];
   if (engine === "mock") {
     environment.PNP_MODE = "development";
     environment.PNP_INTEGRATION = "mock";
@@ -259,8 +291,11 @@ try {
     delete environment.AGENT_ENGINE;
     // No PNP_INTEGRATION and no PNP_CONFIGURED_PROFILE: the shipped profile is the default, and
     // these two variables are all a deployment supplies for the model it names.
+    // The three variables the shipped settings name for the model: where it is, what the endpoint
+    // calls it, and the credential. Nothing else about the integration is supplied.
     environment[ENDPOINT_VARIABLE] = `http://127.0.0.1:${modelPort}/v1`;
-    environment[AUTH_VARIABLE] = AUTH_VALUE;
+    environment[MODEL_ID_VARIABLE] = MODEL.modelID;
+    environment[API_KEY_VARIABLE] = API_KEY_VALUE;
     // The evaluator answers permissions it finds on GET /permission, so one operation has to actually
     // reach that endpoint. Only `write` is put on "ask": the driver authorises a permission request under
     // the tool name the engine announced the call with, and an "allow" policy would be decided inside the
@@ -273,20 +308,31 @@ try {
     // official route: settings -> effective policy -> IntegrationContext.permissions -> the private
     // opencode.json the Pack writes. PNP_OPENCODE_NATIVE_PERMISSIONS is deleted above with the rest of the
     // machine's integration posture precisely so it cannot stand in for that route.
-    const executable = resolveOpenCodeExecutable();
-    summary.opencode_executable = executable;
-    log(`opencode executable: ${executable.path ?? "unresolved"} (${executable.source}, exists=${executable.exists})`);
-    if (executable.path !== null) environment.PNP_OPENCODE_EXE_PATH = executable.path;
+    if (engine === "opencode") {
+      const executable = resolveOpenCodeExecutable();
+      summary.engine_executable = executable;
+      log(`opencode executable: ${executable.path ?? "unresolved"} (${executable.source}, exists=${executable.exists})`);
+      if (executable.path !== null) environment.PNP_OPENCODE_EXE_PATH = executable.path;
+    } else if (engine === "pi") {
+      const entry = resolvePiEntry();
+      summary.engine_executable = entry;
+      log(`pi entry: ${entry.path ?? "unresolved"} (${entry.source}, exists=${entry.exists}), node: ${entry.node}`);
+      if (entry.path !== null) {
+        environment.PNP_PI_ENTRY = entry.path;
+        environment.PNP_PI_NODE = entry.node;
+      }
+    }
   }
   // Values only for variables that carry no credential; PNP_INTEGRATION and PNP_CONFIGURED_PROFILE
   // stay in the list precisely so their ABSENCE is visible evidence that the defaults ran.
   summary.engine_environment = Object.fromEntries(
     ["AGENT_ENGINE", "PNP_MODE", "PNP_INTEGRATION", "PNP_CONFIGURED_PROFILE", "PNP_CONFIGURED_POLICY_OVERRIDES",
-      ENDPOINT_VARIABLE, "PNP_OPENCODE_EXE_PATH", "PNP_OPENCODE_NATIVE_PERMISSIONS", "PNP_DATA_DIR"]
+      ENDPOINT_VARIABLE, MODEL_ID_VARIABLE, "PNP_OPENCODE_EXE_PATH", "PNP_OPENCODE_NATIVE_PERMISSIONS",
+      "PNP_PI_ENTRY", "PNP_PI_NODE", "PNP_DATA_DIR"]
       .filter((key) => environment[key] !== undefined).map((key) => [key, environment[key]]),
   );
   // The credential is recorded by variable NAME only, never by value.
-  summary.credential_variables = environment[AUTH_VARIABLE] === undefined ? [] : [AUTH_VARIABLE];
+  summary.credential_variables = [AUTH_VARIABLE, API_KEY_VARIABLE].filter((name) => environment[name] !== undefined);
 
   let command;
   let commandArguments;
@@ -323,7 +369,7 @@ try {
   // resolves localhost to ::1 first, a client may still dial 127.0.0.1. Both are probed before the
   // protocol client runs, and a gateway that answers on only one fails here -- which is exactly
   // what the real-engine leg, which passes no --host at all, checks about the default.
-  const readyBudgetMs = engine === "opencode" ? 120_000 : 60_000;
+  const readyBudgetMs = engine === "mock" ? 60_000 : 120_000;
   summary.bind_probe = await probeBind(summary.gateway_hosts, readyBudgetMs, () => gatewayExit !== null);
   for (const probe of summary.bind_probe) {
     if (probe.status !== 200) throw new Error(`gateway did not answer /health/ready on ${probe.base}: ${JSON.stringify(probe)}`);
@@ -341,9 +387,11 @@ try {
     // A prompt without `model` must run on the provider's default; this is contract, not a nicety.
     "--require-default-model",
   ];
-  if (engine === "opencode") {
+  if (engine !== "mock") {
+    // A real engine runs the full trace: a tool call, the permission round trip and a file on disk.
     runnerArgs.push("--expect-tools", "--marker", "E2E_HELLO_OK", "--abort-attempts", "1",
-      // The Windows binary is ~172 MB and the first launch is slow.
+      // The Windows OpenCode binary is ~172 MB and the first launch is slow; pi compiles its
+      // session on first use. One budget covers both.
       "--prompt-timeout-ms", "300000", "--ready-timeout-ms", "120000");
   } else {
     runnerArgs.push("--marker", "E2E_HELLO", "--abort-attempts", "8",
@@ -391,9 +439,9 @@ try {
     if (!existsSync(source)) continue;
     await writeFile(path.join(artifacts, name), redact(await readFile(source, "utf8")), "utf8");
   }
-  // The profile the run actually used is the shipped one; it is copied verbatim as evidence that
-  // nothing private was substituted for it.
-  if (engine !== "mock" && existsSync(shippedProfile)) await copyFile(shippedProfile, path.join(artifacts, "configured-profile.json"));
+  // The settings the run actually used are the shipped ones; they are copied verbatim as evidence
+  // that nothing private was substituted for them. They name variables, never values.
+  if (engine !== "mock" && existsSync(shippedSettings)) await copyFile(shippedSettings, path.join(artifacts, "settings.json"));
   const hostsSource = path.join(dataDirectory, "hosts");
   if (existsSync(hostsSource)) {
     const hostsTarget = path.join(artifacts, "hosts");

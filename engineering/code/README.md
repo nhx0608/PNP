@@ -1,6 +1,6 @@
 # PNP 可执行工程
 
-规范：[AGENTS.md](../AGENTS.md)。设计：[architecture.md](../docs/spec/architecture.md)。实际验证：[coverage.md](../verification/coverage.md)。
+评测方的操作手册是同级目录的 `INSTRUCTION.md`（部署、启动、调用序列、完成判定、产物说明）；开发者的上手说明是 `QUICKSTART.md`。本文件面向在仓库里开发的人。仓库内另有规范 `AGENTS.md`、设计 `docs/spec/architecture.md` 与实测记录 `verification/coverage.md`，这些评审材料不进交付包。
 
 ## 工具链与依赖
 
@@ -35,12 +35,17 @@ config/settings.json
 $env:PNP_SETTINGS='D:\pnp-private\settings.json'
 ```
 
-真实 endpoint/API Key 不写入 settings；文件只引用环境变量名。例如 HIS OpenAI-compatible 模型：
+真实 endpoint 与凭据不写入 settings；文件只引用环境变量**名字**，取值来自进程环境或 `runtime/local.env`（网关启动时自动加载，只打印变量名）。交付设置点名的变量：
 
 ```powershell
-$env:PNP_HIS_MODEL_ENDPOINT='https://<approved-channel-domain>/v1'
-$env:PNP_HIS_AUTHORIZATION='Bearer <API-KEY>'
+$env:PNP_MODEL_ENDPOINT='https://<模型服务主机>/v1'   # 必填，OpenAI 兼容基地址，以 /v1 结尾
+$env:PNP_MODEL_ID='<端点认识的模型名>'                # 必填，替换 settings.json 里的模型标识
+$env:PNP_MODEL_API_KEY='<凭据>'                       # 可选，作为 Authorization: Bearer 发送
+$env:PNP_MODEL_HEADERS='{"appid":"<appid>"}'          # 可选，附加请求头（JSON 对象）
+$env:PNP_MODEL_CA_FILE='.\runtime\intranet-ca.pem'    # 可选，私有 CA 的 PEM
 ```
+
+非回环的 `http://` 端点需要 `PNP_ALLOW_HTTP_ENDPOINTS=1`；证书无法校验时的最后手段是 `PNP_MODEL_TLS_INSECURE=1`。`prompt_async` 传入的任意 `providerID/modelID` 都映射到这一个模型。变量全清单见 [.env.example](.env.example)。
 
 `config/engines/*.json` 仍是 Engine Pack 的安装/协议/可执行文件等适配器元数据，不是业务侧模型和权限配置。
 
@@ -81,17 +86,24 @@ HTTP 契约测试需要完整依赖。真实引擎和内网测试不由 Mock 结
 npm run build
 npm run e2e -- --engine mock                  # 对照组：不依赖真实引擎，验证测试本身
 npm run e2e -- --engine opencode              # 真实 OpenCode，需要先装引擎
+npm run e2e -- --engine pi                    # 真实 Pi，需要先装引擎
 npm run e2e -- --engine mock --artifacts D:\tmp\e2e
 ```
 
-`--engine opencode` 前先安装引擎，并让编排器解析出真实可执行文件：
+真实引擎腿之前先装引擎：
 
 ```powershell
 npm install -g opencode-ai@1.18.29 --loglevel=error
+npm install -g @earendil-works/pi-coding-agent@0.85.1 --ignore-scripts --loglevel=error
 ```
 
-编排器用 `npm root -g` 推导 `<npm root -g>/opencode-ai/bin/opencode.exe`（非 Windows 为
-`opencode`），并通过 `PNP_OPENCODE_EXE_PATH` 传给 Pack；若该环境变量已设置则原样透传。
+编排器用 `npm root -g` 推导可执行文件：OpenCode 为 `<npm root -g>/opencode-ai/bin/opencode.exe`（非
+Windows 为平台包里的 `opencode`），通过 `PNP_OPENCODE_EXE_PATH` 传给 Pack；Pi 没有原生二进制，推导的是
+`<npm root -g>/@earendil-works/pi-coding-agent/dist/bundle/cli.js`，通过 `PNP_PI_ENTRY` 加 `PNP_PI_NODE`
+传下去。相应环境变量已设置时原样透传。
+
+模型侧一路只设交付设置点名的三个变量：`PNP_MODEL_ENDPOINT`（mock 服务的 `/v1`）、`PNP_MODEL_ID`、
+`PNP_MODEL_API_KEY`；凭据取值在所有日志与产物中脱敏。
 
 OpenCode Pack 会把有效 permission settings 投影到会话私有 `opencode.json`。PNP 中 `ask` 和 `deny` 都要求
 内核先发出 ACP permission request，随后由 Gateway 的统一 policy 决定是否直接拒绝或进入人工审批。
@@ -104,7 +116,18 @@ E2E 的 opencode 腿只设 `PNP_CONFIGURED_POLICY_OVERRIDES={"write":"ask"}`，�
 - `mock-model-server.mjs` — 零依赖模型服务，`--port 0 --log <jsonl>`，启动后 stdout 输出 `{"port":N}`；
 - `run-e2e.mjs` — 只用全局 `fetch` 的北向协议客户端，`--base/--workspace/--report/--expect-tools`，
   审批回路的两个文件名与轮询预算是 `--write-file-name/--reject-file-name/--permission-timeout-ms`；
-- `ci-smoke.mjs` — 编排器，负责临时 `PNP_DATA_DIR`、配置档、进程收尾与产物收集。
+- `ci-smoke.mjs` — 编排器，负责临时 `PNP_DATA_DIR`、引擎位置解析、进程收尾与产物收集。
 
-产物（网关日志、模型请求 JSONL、断言报告、`hosts/*.json`、`/diagnostics`）默认写到系统临时目录，
-CI 中由 `engine-smoke` 作业以 `always()` 上传。Authorization 头的值在任何日志和产物中都会脱敏。
+产物（网关日志、模型请求 JSONL、断言报告、`hosts/*.json`、`/diagnostics`、本轮使用的 `settings.json`）默认
+写到系统临时目录，CI 中由 `engine-smoke` 作业以 `always()` 上传。凭据在任何日志和产物中都会脱敏。
+
+## 交付打包
+
+```powershell
+node scripts\package-release.mjs --bundle --zip
+```
+
+产出 `dist/release/solution/{INSTRUCTION.md, code/}` 与 `solution.zip`：除源码外还含 `pnp.cmd`、编译好的
+`dist/`、生产依赖、固定版本 Node Windows 运行时与两个引擎，评测机可完全离线运行；各组件版本与 SHA-256 写在
+`code/BUNDLE-MANIFEST.json`。`--source-only`（默认）产出旧的纯源码包。打包会自检包内没有环境文件、数据库、
+日志、私钥或形似凭据的字符串，并打印体积。

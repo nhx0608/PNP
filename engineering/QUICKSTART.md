@@ -1,341 +1,87 @@
-# PNP Windows 内网快速启动
+# PNP 开发者快速上手
 
-这份说明只回答四件事：**怎么准备配置、怎么一键安装依赖并启动、启动参数有哪些、模型/权限/MCP 怎么配。** 完整协议仍以 [`INSTRUCTION.md`](INSTRUCTION.md) 为准。
+**评测方的操作手册是 [`INSTRUCTION.md`](INSTRUCTION.md)**（环境准备、启动、调用序列、完成判定、产物说明）。交付包里只有那一份说明书，改动启动方式或变量时先改它。
 
-## 1. 最短路径
+本文只讲仓库里的开发用法：怎么在本机跑起来、怎么配私有环境、怎么打交付包。全部命令在 `engineering/code` 目录下执行。
 
-在仓库的 `engineering/code` 目录下操作。
-
-### 第一次准备私有配置
-
-```powershell
-New-Item -ItemType Directory -Force runtime | Out-Null
-Copy-Item config/local.env.example runtime/local.env
-Copy-Item config/settings.his.example.json runtime/settings.json
-notepad runtime/local.env
-```
-
-`runtime/` 已被 Git 忽略，真实 API Key 不进入仓库。
-
-在 `runtime/local.env` 中至少配置：
-
-```text
-PNP_SETTINGS=runtime/settings.json
-PNP_HIS_MODEL_ENDPOINT=https://<内部模型通道>/v1
-PNP_HIS_AUTHORIZATION=Bearer <API-KEY>
-PNP_MODEL_STRICT=1
-```
-
-模型 API Key 只放环境文件，不要写进 `settings.json`。
-
-### 一条命令自动准备并启动
+## 1. 本机启动
 
 ```powershell
 .\pnp.cmd start --engine opencode --port 6217
 ```
 
-第一次执行会尽量自动完成：
-
-1. 检查 Node.js；本机没有兼容版本时下载并校验固定的 Node.js 24.19.0 Windows x64 ZIP；
-2. 根据 `package-lock.json` 自动执行 `npm ci`；
-3. 自动编译 PNP Gateway；
-4. 根据 Engine 元数据自动准备对应 Harness；OpenCode 当前固定安装 `opencode-ai@1.18.29` 到 `runtime/bootstrap/`；
-5. 启动同一个赛题 Gateway，监听默认端口 `6217`。
-
-以后再次启动会复用已经准备好的依赖，不会每次重新下载。
-
-只准备依赖、不启动：
+第一次执行会按需依次完成：找 Node（`PNP_NODE_HOME` → 包内 `runtime\bootstrap\node-*` → PATH 上的 24.19+ → 下载并校验官方 ZIP）、`npm ci`、`npm run build`、准备引擎（`PNP_*` 变量 → `runtime\bootstrap\engines\<id>\<version>` → `npm install`）。每一步都有 stamp 文件，命中就跳过，所以第二次启动通常不再下载或编译任何东西。
 
 ```powershell
-.\pnp.cmd bootstrap --engine opencode
-```
-
-## 2. 启动命令和参数
-
-正式的 Engine 切换方式是**启动参数 `--engine`**。没有默认 Engine，必须显式指定。
-
-```powershell
-.\pnp.cmd start --engine <engineId> [--port <port>] [--host <host>]
-```
-
-参数：
-
-| 参数 | 必填 | 默认值 | 说明 |
-|---|---:|---|---|
-| `--engine` | 是 | 无 | 本轮 Gateway 使用的 Agent Core，例如 `opencode`、`pi`、`hermes` |
-| `--port` | 否 | `6217` | 本地 Gateway 端口 |
-| `--host` | 否 | `localhost` | 只允许 `localhost`、`127.0.0.1`、`::1` |
-
-例子：
-
-```powershell
-# OpenCode
-.\pnp.cmd start --engine opencode --port 6217
-
-# Pi（实现并准备完成后）
-.\pnp.cmd start --engine pi --port 6217
-
-# Hermes（实现并准备完成后）
-.\pnp.cmd start --engine hermes --port 6217
-```
-
-停止当前 Gateway 后，用另一个 `--engine` 重新启动，就是赛题要求的多 Engine 切换；不是运行时热切换。
-
-如果裁判或开发者已经手工安装好全部依赖，也可以跳过自动准备，直接使用正式入口：
-
-```powershell
-.\gateway.cmd --engine opencode --port 6217
-```
-
-`pnp.cmd` 和 `gateway.cmd` 最终启动的是同一个 Gateway 主程序；区别只是 `pnp.cmd` 会先自动准备依赖。
-
-帮助：
-
-```powershell
+.\pnp.cmd bootstrap --engine opencode   # 只准备依赖，不启动
+.\pnp.cmd selfcheck --engine opencode   # 准备 + 离线端到端自检，打印 PASS/FAIL
+.\pnp.cmd stop                          # 结束 runtime\gateway.pid 记录的那个进程
 .\pnp.cmd help
 ```
 
-## 3. 统一 settings：模型、权限、MCP
+引擎既可以用 `--engine`，也可以用 `AGENT_ENGINE`；两个都给且不一致时直接失败。依赖都就绪时可以跳过准备步骤，直接 `.\gateway.cmd --engine opencode --port 6217`，启动的是同一个网关。
 
-默认统一配置入口是：
+`start` 会把网关输出写到 `runtime\logs\gateway-<engine>.log`（错误流写 `.err.log`），同时回显到控制台。
 
-```text
-engineering/code/config/settings.json
-```
-
-内网推荐使用仓库外或 `runtime/` 下的私有副本，并通过：
-
-```text
-PNP_SETTINGS=runtime/settings.json
-```
-
-指定。
-
-配置结构只有一个：
-
-```json
-{
-  "version": 1,
-  "common": {
-    "model": {},
-    "permissions": {},
-    "mcp": { "servers": {} }
-  },
-  "cores": {
-    "opencode": {},
-    "pi": {},
-    "hermes": {}
-  }
-}
-```
-
-规则：先读 `common`，再用 `cores.<engineId>` 覆盖。某个 Core 没有单独配置，就完全继承公共配置。
-
-### 3.1 模型配置
-
-你现在的两个内网模型可以这样配置：
-
-```json
-"model": {
-  "default": {
-    "providerID": "his",
-    "modelID": "GLM-V5.1-DX"
-  },
-  "models": [
-    {
-      "selection": {
-        "providerID": "his",
-        "modelID": "GLM-V5.1-DX"
-      },
-      "endpointEnvironment": "PNP_HIS_MODEL_ENDPOINT",
-      "protocol": "openai-chat",
-      "headerEnvironment": {
-        "Authorization": "PNP_HIS_AUTHORIZATION"
-      }
-    },
-    {
-      "selection": {
-        "providerID": "his",
-        "modelID": "Qwen-V3.6-27B-DX"
-      },
-      "endpointEnvironment": "PNP_HIS_MODEL_ENDPOINT",
-      "protocol": "openai-chat",
-      "headerEnvironment": {
-        "Authorization": "PNP_HIS_AUTHORIZATION"
-      }
-    }
-  ]
-}
-```
-
-真正的地址和 Key 在 `runtime/local.env`：
-
-```text
-PNP_HIS_MODEL_ENDPOINT=https://<内部模型通道>/v1
-PNP_HIS_AUTHORIZATION=Bearer <API-KEY>
-PNP_MODEL_STRICT=1
-```
-
-如果只想让 OpenCode 默认使用 Qwen，而其他 Core 仍用公共默认模型：
-
-```json
-"cores": {
-  "opencode": {
-    "model": {
-      "default": {
-        "providerID": "his",
-        "modelID": "Qwen-V3.6-27B-DX"
-      }
-    }
-  }
-}
-```
-
-### 3.2 权限配置
-
-权限值只有：
-
-- `allow`：直接执行；
-- `ask`：进入 PNP 权限确认接口；
-- `deny`：直接拒绝，人工回复也不能覆盖。
-
-例如公共默认允许读操作，但写文件和执行命令需要确认：
-
-```json
-"permissions": {
-  "default": "allow",
-  "operations": {
-    "read": "allow",
-    "write": "ask",
-    "edit": "ask",
-    "bash": "ask"
-  }
-}
-```
-
-如果某个 Core 的 operation 名称不同，可以在 Core 下单独覆盖：
-
-```json
-"cores": {
-  "opencode": {
-    "permissions": {
-      "operations": {
-        "bash": "ask"
-      }
-    }
-  }
-}
-```
-
-### 3.3 MCP 配置
-
-C 完成员工助手 CLI -> MCP 的适配后，只需要把 C 交付的 MCP Server 填进统一 settings。
-
-本地 stdio MCP 示例：
-
-```json
-"mcp": {
-  "servers": {
-    "welink": {
-      "transport": "stdio",
-      "command": "D:\\pnp-mcp\\welink-mcp.exe",
-      "args": ["serve"],
-      "env": {},
-      "enabled": true,
-      "sideEffect": "external",
-      "timeoutMs": 10000
-    }
-  }
-}
-```
-
-远程 Streamable HTTP MCP 示例：
-
-```json
-"mcp": {
-  "servers": {
-    "knowledge": {
-      "transport": "streamable-http",
-      "urlEnvironment": "PNP_KNOWLEDGE_MCP_URL",
-      "headerEnvironment": {
-        "Authorization": "PNP_KNOWLEDGE_MCP_AUTHORIZATION"
-      },
-      "enabled": true,
-      "timeoutMs": 10000
-    }
-  }
-}
-```
-
-真实 URL、Token 仍放 `runtime/local.env`，不写进 JSON。
-
-完整 settings 格式见 [`code/config/SETTINGS.md`](code/config/SETTINGS.md)，C 的 MCP 交付规范见 [`docs/spec/mcp-integration-profile.md`](docs/spec/mcp-integration-profile.md)。
-
-## 4. 内网无法访问公网怎么办
-
-自动启动器不会绕过企业网络策略。
-
-如果 npm 要走内网镜像，在 `runtime/local.env` 中配置：
-
-```text
-npm_config_registry=https://<内部 npm 镜像>/
-```
-
-如果不能访问 `nodejs.org`，把官方 `node-v24.19.0-win-x64.zip` 镜像到内网后配置：
-
-```text
-PNP_NODE_DOWNLOAD_URL=https://<内部镜像>/node-v24.19.0-win-x64.zip
-```
-
-启动器仍会校验固定 SHA256。也可以提前安装 Node 24.19+，或者通过 `PNP_NODE_HOME` 指向本机安装目录。
-
-如果某个 Harness 不能由 PNP 自动安装，启动器会明确告诉你需要配置的 executable 环境变量。赛题 FAQ 允许裁判手工安装 Harness 依赖；安装后仍通过同一个 Gateway API 评测。
-
-## 5. 启动成功后怎么验证
+## 2. 私有配置
 
 ```powershell
-$base = 'http://127.0.0.1:6217'
-Invoke-RestMethod "$base/health/live"
-Invoke-RestMethod "$base/health/ready"
+New-Item -ItemType Directory -Force runtime | Out-Null
+Copy-Item config\local.env.example runtime\local.env
+notepad runtime\local.env
 ```
 
-创建 Session：
+`runtime\` 已被 Git 忽略。网关自己会在启动时加载 `runtime\local.env`（`pnp.cmd`、`gateway.cmd`、`npm start` 三条路都一样），只打印变量名不打印取值；`PNP_LOCAL_ENV_FILE` 可以指向别的文件。
 
-```powershell
-$session = Invoke-RestMethod -Method Post -Uri "$base/session" -ContentType 'application/json' -Body (@{
-  directory = 'D:\test_data'
-  title = 'PNP local smoke'
-} | ConvertTo-Json)
-```
-
-发一个最小模型请求：
-
-```powershell
-$body = @{
-  parts = @(@{ type = 'text'; text = '请只回复 PNP_MODEL_OK' })
-  model = @{ providerID = 'his'; modelID = 'GLM-V5.1-DX' }
-} | ConvertTo-Json -Depth 10
-
-Invoke-WebRequest -Method Post -Uri "$base/session/$($session.id)/prompt_async" -ContentType 'application/json' -Body $body
-Invoke-RestMethod "$base/session/$($session.id)/message" | ConvertTo-Json -Depth 20
-```
-
-`prompt_async` 正常完成返回 HTTP 204。
-
-评测文件由沙箱预置，因此评测时只需要让 `POST /session` 的 `directory` 指向裁判给出的工作目录，不要把评测数据打进代码包。
-
-## 6. 第一次内网联调建议顺序
+最少需要两个变量：
 
 ```text
-1. pnp.cmd bootstrap --engine opencode
-2. 配 runtime/local.env + runtime/settings.json
-3. pnp.cmd start --engine opencode --port 6217
-4. health/live + health/ready
-5. 普通模型对话
-6. 文件 Tool Calling
-7. ask / reject 权限闭环
-8. 接 C 提供的 MCP Server
-9. 切换另一个 Engine，用同一组 Gateway API 重测
+PNP_MODEL_ENDPOINT=https://<模型服务主机>/v1
+PNP_MODEL_ID=<端点认识的模型名>
 ```
 
-FAQ 已确认评测只依据网关接口执行，Harness 可以由作品自动准备，也允许裁判手工安装。因此 PNP 的原则是：**优先自动准备，手工安装可兜底，但最终始终使用同一套本地 Gateway API。**
+可选：`PNP_MODEL_API_KEY`（作为 `Authorization: Bearer` 发送）、`PNP_MODEL_HEADERS`（JSON 对象，附加请求头）、`PNP_MODEL_CA_FILE`（私有 CA 的 PEM）、`PNP_ALLOW_HTTP_ENDPOINTS=1`（放开非回环的 `http://` 端点）、`PNP_MODEL_TLS_INSECURE=1`（最后手段）。模型、权限、MCP 工具与指令文件的完整格式见 [`code/config/SETTINGS.md`](code/config/SETTINGS.md)；默认设置文件是 `config/settings.json`，放到仓库外时用 `PNP_SETTINGS` 指向它。
+
+内网镜像：`npm_config_registry` 指向内网 npm，`PNP_NODE_DOWNLOAD_URL` 指向内网上的 `node-v24.19.0-win-x64.zip`（仍按固定 SHA-256 校验），或用 `PNP_NODE_HOME` 指向已装好的 Node 24.19+。
+
+引擎位置也可以显式指定，指定后启动器不再安装：OpenCode 用 `PNP_OPENCODE_EXE_PATH`，Pi 用 `PNP_PI_ENTRY`（`dist/bundle/cli.js`）加可选的 `PNP_PI_NODE`，或用单文件可执行的 `PNP_PI_EXECUTABLE`。
+
+## 3. 验证
+
+```powershell
+npm run check                                  # typecheck + 单元 + 契约 + 边界 + strip-only
+npm run e2e -- --engine mock                   # 对照组：不依赖真实引擎
+npm run e2e -- --engine opencode               # 真实 OpenCode
+npm run e2e -- --engine pi                     # 真实 Pi
+```
+
+端到端冒烟用真实网关进程、真实引擎和北向 HTTP，唯一被 Mock 的是模型服务。真实引擎腿需要先装引擎：
+
+```powershell
+npm install -g opencode-ai@1.18.29 --loglevel=error
+npm install -g @earendil-works/pi-coding-agent@0.85.1 --ignore-scripts --loglevel=error
+```
+
+编排器用 `npm root -g` 推导可执行文件（OpenCode 为 `bin/opencode.exe`，Pi 为 `dist/bundle/cli.js`）；相应的 `PNP_*` 变量已设置时原样透传。产物（网关日志、模型请求 JSONL、断言报告、`/diagnostics`）默认写到系统临时目录，凭据在所有产物中都会脱敏。`--gateway-port` 只在本机 6217 被占用时使用。
+
+## 4. 打交付包
+
+```powershell
+node scripts\package-release.mjs --bundle --zip
+```
+
+产出 `dist\release\solution\{INSTRUCTION.md, code\}` 与 `dist\release\solution.zip`：源码之外还包含 `pnp.cmd`、编译好的 `dist\`、生产依赖 `node_modules\`、固定版本的 Node Windows 运行时和两个引擎，因此评测机可以完全离线运行。包内组件的版本与 SHA-256 写在 `code\BUNDLE-MANIFEST.json`。
+
+`--source-only`（也是默认）产出旧的纯源码包。打包结束会自检包内没有环境文件、数据库、日志、私钥或形似凭据的字符串，并打印体积；自检不通过时退出码非零。
+
+## 5. 常见顺序
+
+```text
+1. .\pnp.cmd bootstrap --engine opencode
+2. 配 runtime\local.env
+3. .\pnp.cmd selfcheck --engine opencode
+4. .\pnp.cmd start --engine opencode --port 6217
+5. 按 INSTRUCTION.md 第 2 节的调用序列联调
+6. .\pnp.cmd stop，换 AGENT_ENGINE=pi 重来一遍
+7. node scripts\package-release.mjs --bundle --zip
+```
