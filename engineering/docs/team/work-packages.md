@@ -6,6 +6,20 @@ A 为用户本人，B 为另一位引擎开发，C 为内网对接开发。A/B �
 
 共同输入是同一个已审核的公共代码基线：规范、契约、公共运行库、Fake、测试工具和依赖锁文件。公共代码在交付包中提供；基础验收属于共同基线准入，不重新分配为 A 的长期前置开发任务。
 
+### 1.1 交付状态（2026-09-09）
+
+本文其余部分是分工计划。实际状态（证据见 [`../../verification/results.json`](../../verification/results.json)）：
+
+| 工作包 | 状态 |
+|---|---|
+| A01–A04、A06–A07（ACP Driver、OpenCode Pack、版本锁、能力证据） | 已实现；Windows 真机真实引擎冒烟 20/21 通过 |
+| A05 Hermes EnginePack | 未实现；`implementationProvided: false` 的扩展点示例，可选项 |
+| B01–B07（Pi RPC Driver、Pi Pack、扩展桥、版本锁） | 已实现；Windows 真机真实引擎冒烟 20/21 通过 |
+| B08 Office 能力包 | 未按 `assets/packs/office` 的清单形式交付；等价能力由共同基线的 Office MCP 服务器（`code/src/tools/office-mcp`）经 `settings.json` 提供，两个引擎共用 |
+| C01–C06（内网模型、员工助手 CLI → PNP-MCP/1、组织权限、夹具、内网自检、联合验收） | 未交付；`InternalIntegration` 为桩，`verification/internal/` 只有模板 |
+| C07 Windows 桌面交互能力包 | 部分：共同基线交付了 Desktop MCP（`code/src/tools/desktop-mcp`，列举/打开固定应用）；UI 自动化与即时通讯客户端未交付 |
+| C08 网页检索能力包 | 未交付；只有 Office MCP 的 `web_fetch`（GET → 文本） |
+
 ```mermaid
 flowchart LR
   Base[共同基线与共享契约] --> A[A: ACP / OpenCode / Hermes]

@@ -77,6 +77,8 @@ SSE 有限缓冲（2 MiB）；`text.delta` 只发增量，完整文本只在终�
 - I02：员工助手权限、登录与调用回执；未知提交结果不盲目重试。
 - I03：官方已有材料上的真实任务、文件可打开、数据可对账、GUI任务结果不被清理撤销。
 
+当前状态（2026-09-09，`../../verification/results.json`）：F 系列与 E01/E02 在单测、契约测试和 Windows 真机的真实引擎冒烟（opencode、pi 各 20/21，模拟模型服务）中有证据；E03 的能力包清单机制未实现，`not_run`；I01–I03 需要授权内网环境，`not_run`。
+
 ## 7. 基线准入
 
 `npm run foundation:check` 必须通过依赖锁、目标 Node、类型检查、公共单测、HTTP 契约和边界检查。共同基线的 SHA、契约版本与锁哈希写入交接记录。源代码存在不等于已经通过该门禁。
@@ -88,5 +90,7 @@ Windows Job helper 的实机验证与完整依赖构建是单独证据项。未�
 `npm run release:check` 检查：共同基线通过、必过引擎（OpenCode、Pi）的真实 Pack 已实现、版本锁和内网验收证据、源码 commit 一致、Windows 身份和清理测试通过、无真实凭据、INSTRUCTION 可自动执行。两个必过引擎缺任一项即不可发布。
 
 可选引擎（Hermes）有完整证据时计入发布矩阵并加分；无证据不阻断发布，只从矩阵中去掉，不得标为通过。
+
+当前状态（2026-09-09）：`npm run release:check` 退出非零，唯一原因是两个必过引擎缺 `verification/internal/<engine>.json` 内网验收证据；实现、版本锁与本机证据均已就位，Hermes 报告为 optional/no-evidence。
 
 最终证据中禁止用 Mock、占位文件、仅声明 capability=true 或旧 commit 的结果代替真实验收。测试模型、回执和材料缺失时标记 not_run，不把它算作通过。

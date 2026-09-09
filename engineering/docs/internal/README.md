@@ -4,6 +4,8 @@
 
 公共仓库只保留配置字段、环境变量名称、协议描述、脱敏夹具、调用示例和不含用户内容的测试摘要。内部资源详情通过私有文件分发。
 
+> 实现状态（2026-09-09）：下列交付物尚无一项存在；`InternalIntegration` 是抛 `INTEGRATION_UNAVAILABLE` 的桩，`verification/internal/` 只有模板 `evidence.example.json`。已交付的 Office MCP 与 Desktop MCP 是共同基线的公开工具，不是 C 线的内网工具。
+
 ## 必交付物
 
 - 模型协议、鉴权、CA/网络、工具调用往返报告。

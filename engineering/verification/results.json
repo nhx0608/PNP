@@ -1,7 +1,9 @@
 {
   "kind": "delivery-verification",
   "contractVersion": "1.1.0",
-  "recordedOn": "2026-09-07",
+  "recordedOn": "2026-09-09",
+  "baseCommit": "c3403b9015f7107cf169c1fbf25f6a11c8293511",
+  "workingTree": "uncommitted changes on top of baseCommit; see docs/team/handoff-settings-mcp-2026-09-09.md",
   "environment": {
     "platform": "win32",
     "architecture": "x64",
@@ -12,79 +14,136 @@
   },
   "checks": [
     {
+      "id": "typecheck",
+      "status": "passed",
+      "command": "cd code && npm run typecheck"
+    },
+    {
       "id": "common-unit",
       "status": "passed",
-      "command": "cd code && node scripts/test.mjs unit",
-      "passed": 274,
+      "command": "cd code && npm test",
+      "total": 469,
+      "passed": 467,
       "failed": 0,
-      "skipped": 1,
-      "scope": "Common framework, HTTP/SSE contracts, ACP driver, OpenCode pack and Windows ProcessHost tests"
+      "skipped": 2,
+      "scope": "tests/unit + tests/adapters: common framework, ACP driver, OpenCode pack, Pi RPC driver and pack, Office MCP, Desktop MCP, Windows ProcessHost"
+    },
+    {
+      "id": "http-contract",
+      "status": "passed",
+      "command": "cd code && npm run test:contract",
+      "total": 9,
+      "passed": 9,
+      "failed": 0,
+      "scope": "Fastify real routes, blocking 204, error format, SSE"
     },
     {
       "id": "module-boundaries",
       "status": "passed",
-      "command": "cd code && node scripts/check-boundaries.mjs",
-      "evidence": "logs/boundaries.txt"
+      "command": "cd code && npm run check:boundaries"
     },
     {
-      "id": "full-typecheck-build-http",
+      "id": "strip-only",
       "status": "passed",
-      "scope": "Complete TypeScript project, Fastify gateway, ACP SDK integration and HTTP/SSE contract tests",
-      "compiler": "project TypeScript 5.8.3"
+      "command": "cd code && npm run check:strip-only"
+    },
+    {
+      "id": "powershell-encoding",
+      "status": "passed",
+      "command": "cd code && npm run check:ps-encoding"
     },
     {
       "id": "dependency-lock",
       "status": "passed",
-      "scope": "package-lock.json present and npm dependencies installed"
-    },
-    {
-      "id": "foundation-gate",
-      "status": "passed",
-      "scope": "Manifest, dependencies, Node 24, typecheck, unit/contract tests and boundaries"
-    },
-    {
-      "id": "windows-job-helper",
-      "status": "passed",
-      "scope": "Windows native helper compilation and ProcessHost lifecycle tests"
+      "scope": "package-lock.json present and npm dependencies installed with npm ci"
     },
     {
       "id": "node24-target",
       "status": "passed",
-      "scope": "Node v24.19.0 target runtime"
+      "scope": "Node v24.19.0 target runtime (bundled under runtime/bootstrap for the delivery)"
     },
     {
-      "id": "opencode-lock",
+      "id": "engine-lock",
       "status": "passed",
-      "scope": "opencode-windows-x64@1.18.29 official npm tarball",
-      "sha256": "19eca6cdead9c67cce26fdc2db165980318edb7318c8c964dfc2ebffe03bb472"
+      "scope": "engines.lock.json pins both required engines with the SHA-256 of the official npm tarball",
+      "entries": [
+        { "engineId": "opencode", "source": "npm:opencode-windows-x64@1.18.29", "sha256": "19eca6cdead9c67cce26fdc2db165980318edb7318c8c964dfc2ebffe03bb472" },
+        { "engineId": "pi", "source": "npm:@earendil-works/pi-coding-agent@0.85.1", "sha256": "1f498729649bdce647d1160993b4d92bf3c614cc819213bee2f91dd34f2a7af4" }
+      ]
     },
     {
-      "id": "real-opencode-contract-1.1",
+      "id": "launcher-without-node-on-path",
       "status": "passed",
-      "passed": 14,
+      "scope": "gateway.cmd and gateway.ps1 start with no Node.js on PATH and /health/ready reports the selected engine; verified for opencode and pi separately"
+    },
+    {
+      "id": "e2e-opencode-mock-model",
+      "status": "passed",
+      "command": "cd code && npm run e2e -- --engine opencode --expect-desktop-mcp",
+      "total": 21,
+      "passed": 20,
       "failed": 0,
-      "scope": "Windows native OpenCode 1.18.29, real gateway/ACP/process host, local mock model, permissions, file tool, cancellation, SSE and session lifecycle"
+      "skipped": 1,
+      "scope": "Windows native opencode 1.18.29 through the real gateway process, Windows process host and ACP driver; only the model service is mocked (OpenAI-compatible). Checks: health-ready, event stream, session creation and missing-directory 400, prompt without model, text trace, write-file with permission once, permission reject, Office MCP csv_read on a Chinese/space path, missing-file error returned to the model, Desktop MCP discovery, abort, question/permission lists, session lifecycle, second session, cross-session queue, event sequence. Skipped: concurrency/same-session-busy (covered by the mock control run)"
+    },
+    {
+      "id": "e2e-pi-mock-model",
+      "status": "passed",
+      "command": "cd code && npm run e2e -- --engine pi --expect-desktop-mcp",
+      "total": 21,
+      "passed": 20,
+      "failed": 0,
+      "skipped": 1,
+      "scope": "Same checks against real @earendil-works/pi-coding-agent 0.85.1 through the Pi RPC driver and the in-process MCP bridge extension"
+    },
+    {
+      "id": "windows-job-helper",
+      "status": "passed",
+      "scope": "Windows native helper compilation and ProcessHost lifecycle tests; desktop-smoke observed the MCP server tree quiescent under the Job and the Scope while the launched Notepad survived. No separate F12-level cleanup record for a real engine process tree has been produced"
+    },
+    {
+      "id": "foundation-gate",
+      "status": "pending",
+      "reason": "npm run foundation:check includes node VERIFY.mjs against FILE-MANIFEST.json; rerun after refresh-manifest at the end of this round. Its individual parts (lock, Node 24, typecheck, unit, contract, boundaries) are recorded above"
+    },
+    {
+      "id": "hermes",
+      "status": "not_implemented",
+      "scope": "src/engines/hermes/pack.ts declares implementationProvided:false and open() throws ENGINE_UNAVAILABLE; config/engines/hermes.json has no version and capabilityEvidence unverified; no engines.lock.json entry. Optional extension-point example for a third ACP engine, outside the release matrix"
+    },
+    {
+      "id": "capability-packs",
+      "status": "not_implemented",
+      "scope": "code/assets/packs contains only README.md; src/ has no pack.json loader, probes or pack.projected events. Tool and instruction injection is delivered through config/settings.json: Office MCP (src/tools/office-mcp), Desktop MCP (src/tools/desktop-mcp) and instructions/competition.md, projected by each engine pack"
+    },
+    {
+      "id": "internal-integration",
+      "status": "not_implemented",
+      "scope": "src/integration/internal/provider.ts throws INTEGRATION_UNAVAILABLE and probeIntegration refuses to start with it; the shipped path is the configured provider (settings.json + PNP_MODEL_* variables). No employee-assistant CLI MCP server and no organisation policy service exist"
     },
     {
       "id": "internal-network",
       "status": "not_run",
-      "reason": "C integration, authorized internal environment and credentials supplied outside the repository are required."
+      "reason": "Authorized intranet environment, internal model endpoint, employee-assistant tooling and credentials supplied outside the repository are required."
     },
     {
       "id": "release-gate",
       "status": "blocked",
-      "reason": "Pi implementation/installer lock and per-engine internal acceptance evidence remain absent."
-    },
-    {
-      "id": "strip-only-and-script-boundaries",
-      "status": "passed",
-      "scope": "Source-only packaging allowlist, script syntax and ownership boundaries"
+      "command": "cd code && npm run release:check",
+      "exitCode": 1,
+      "reason": "verification/internal/opencode.json and verification/internal/pi.json (per-engine intranet acceptance evidence) do not exist. Engine implementations and installer locks are complete; hermes is reported as an optional engine with no evidence and does not block."
     }
   ],
+  "notRun": [
+    "internal model and employee-assistant joint acceptance",
+    "Outlook activation, sign-in and business operations",
+    "official evaluation task scoring",
+    "Hermes"
+  ],
   "externalActions": {
-    "githubPush": true,
-    "giteePush": true,
+    "githubPush": false,
+    "giteePush": false,
     "internalServiceCalls": false
   },
-  "qualification": "Common framework and required A-line OpenCode/ACP source implementation are verified locally; Pi and authorized per-engine internal acceptance still block a certified competition release."
+  "qualification": "Common framework, OpenCode/ACP and Pi/RPC implementations are verified locally on Windows against a mock model service (and a public OpenAI-compatible model, see docs/team/handoff-settings-mcp-2026-09-09.md); per-engine intranet acceptance has not been run and is the only remaining release-gate blocker. Hermes, the capability-pack manifest mechanism and the internal IntegrationProvider are not implemented."
 }

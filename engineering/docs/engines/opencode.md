@@ -1,16 +1,16 @@
 # OpenCode 接入规格
 
-所有者 A。入口 `code/src/engines/opencode/pack.ts`，通道 `acp`，公共契约 1.0.0。实现文件：`config.ts`（配置装载与校验）、`executable.ts`（可执行文件解析）、`native-config.ts`（私有配置/环境变量重定向/模型注入）、`assets.ts`（资产投影）。配置：`code/config/engines/opencode.json`。测试：`code/tests/adapters/opencode/`。
+所有者 A。入口 `code/src/engines/opencode/pack.ts`，通道 `acp`，公共契约 1.1.0。实现文件：`config.ts`（配置装载与校验）、`executable.ts`（可执行文件解析）、`native-config.ts`（私有配置/环境变量重定向/模型注入）、`assets.ts`（资产投影）。配置：`code/config/engines/opencode.json`。测试：`code/tests/adapters/opencode/`。
 
 ## 0. 证据等级的定义
 
-本文档逐项标注证据等级，含义在本次修订中被收紧了：
+本文档逐项标注证据等级：
 
 - **declared**：只有官方文档、npm 注册表元数据或静态代码依据，没有把二进制跑起来。
-- **probed**：**用真实的 opencode 二进制**（1.18.29）在 **Linux** 上、对着一个 mock 的 OpenAI 兼容服务端，实际观察到过；或者用假 ACP 对端在协议层面练过本仓库这一侧的代码路径（下表逐条写明是哪一种）。
-- **verified**：在赛题要求的 **Windows 原生**目标上、连真实模型端点观察到过。
+- **probed**：**用真实的 opencode 二进制**（1.18.29）对着一个 mock 的 OpenAI 兼容服务端实际观察到过——早期在 Linux 上，此后也在 **Windows 原生**上（`npm run e2e -- --engine opencode`：真实网关进程 + Windows 进程宿主 + 真实 `opencode.exe`）；或者用假 ACP 对端在协议层面练过本仓库这一侧的代码路径。下表逐条写明是哪一种、在哪个平台。
+- **verified**：在赛题要求的 Windows 原生目标上、连**真实内网模型端点**、由授权环境出具与 commit/版本匹配的验收证据（`verification/internal/opencode.json`）。
 
-**本文档没有任何一项是 verified。** Windows 原生这条路径至今没有真机运行证据，§8 逐条列出还欠什么。
+**本文档没有任何一项是 verified**，因为真实内网模型端点尚未接入；这也是 `config/engines/opencode.json#capabilityEvidence` 停在 `"probed"` 的原因。Windows 原生 + 真实二进制 + 模拟模型端点这条路径已有真机证据（2026-09-09 冒烟 21 项 20 通过、0 失败、1 跳过，见 §11）；§8 列出仍只能靠内网真机或专项实验证实的点。
 
 ## 1. 分发形态与安装（distribution）
 
@@ -255,12 +255,12 @@ ACP 的 `session/prompt` 请求没有模型字段；驱动的 `AcpModelPolicy` �
 
 | 能力 | 等级 | 依据 | 备注 |
 |---|---|---|---|
-| `opencode acp` 存在，stdio JSON-RPC，无额外参数 | probed（真实二进制，Linux/Windows） | opencode.ai/docs/acp/ + 实跑 1.18.29 | Windows 契约1.1端到端14/14 |
+| `opencode acp` 存在，stdio JSON-RPC，无额外参数 | probed（真实二进制，Linux/Windows） | opencode.ai/docs/acp/ + 实跑 1.18.29 | Windows 端到端冒烟 20/21（2026-09-09，§11） |
 | ACP 协议版本 1 握手 | probed（真实二进制，Linux） | 实跑 initialize 成功 | 驱动固定校验 `protocolVersion === 1..PROTOCOL_VERSION` |
 | `initialize` 返回 `agentCapabilities.loadSession: true`、`sessionCapabilities: { close, fork, list, resume }` | probed（真实二进制，Linux/Windows） | 实跑 initialize 返回值及Windows端到端握手 | |
 | `initialize` 返回 `agentCapabilities.mcpCapabilities: { http: true, sse: true }` | probed（真实二进制，Linux） | 实跑 1.18.29 initialize 返回值，原文摘录见表下 | 驱动据此投影 `mcp-http` 绑定（§6）；`sse` 已声明但网关没有对应的绑定形状，不使用 |
 | npm 包 `opencode-ai` 的 bin 是占位符，postinstall 从平台包解析出真实 exe，无 JS 入口 | declared（直接读包内容与 postinstall 脚本） | npm registry `opencode-ai@1.18.29` | 未在 Windows 上真正 `npm i -g` 过 |
-| Windows 原生运行可行性 | probed（真实二进制） | 官方文档、Windows x64 1.18.29、契约1.1端到端14/14 | 真实内网模型仍未验证 |
+| Windows 原生运行可行性 | probed（真实二进制，Windows） | 官方文档、Windows x64 1.18.29、Windows 端到端冒烟 20/21（§11） | 真实内网模型仍未验证 |
 | `%APPDATA%\npm\node_modules\opencode-ai\bin\opencode.exe` 是安装后的实际落点 | declared（npm 全局布局 + postinstall 目标） | 同上 | 未在 Windows 上核对过实际落点 |
 | `OPENCODE_CONFIG` 指定的私有配置会被读取并生效 | probed（真实二进制，Linux） | 实跑：该路径的配置被采用 | |
 | `{env:VAR}` 会被展开；`$VAR` **不会** | probed（真实二进制，Linux） | 实跑：`{env:}` 到达服务端是真实值，`$VAR` 是字面量 | 这条推翻了旧文档里的 `$VAR` 结论 |
@@ -281,7 +281,7 @@ ACP 的 `session/prompt` 请求没有模型字段；驱动的 `AcpModelPolicy` �
 | `OPENCODE_CONFIG_DIR` 被接受（与 `OPENCODE_CONFIG` 并存不冲突） | probed（真实二进制，Linux） | 实跑：设置后整轮正常 | 目录内 `agents/commands/plugins` 的实际扫描未单独验证 |
 | 权限：默认全允许；`"permission": {"edit":"ask","bash":"ask"}` 才触发 `session/request_permission` | probed（真实二进制，Linux/Windows） | `edit: ask` 下 `write` 触发提问，载荷含 diff | `bash: ask` 未观察 |
 | 完整审批回路：`GET /permission` → `POST /permission/{id}/reply` → 引擎继续/放弃 | probed（真实二进制，Linux/Windows） | `scripts/e2e` 的 `case2`（`once`）与 `case2b`（`reject`） | 请求的 `permission` 字段为 `write`（§4.3） |
-| 网关 → 进程宿主 → ACP 驱动 → 真实引擎 → 模型服务（mock）整条链路 | probed（真实二进制，Linux/Windows） | `npm run e2e -- --engine opencode`，见 §11 | Windows契约1.1端到端14/14 |
+| 网关 → 进程宿主 → ACP 驱动 → 真实引擎 → 模型服务（mock）整条链路，含 Office/Desktop MCP 往返 | probed（真实二进制，Linux/Windows） | `npm run e2e -- --engine opencode --expect-desktop-mcp`，见 §11 | Windows 端到端冒烟 20/21（2026-09-09） |
 | 可执行文件解析顺序、平台感知校验与错误码 | probed（本仓库代码，假文件系统） | `tests/adapters/opencode/executable.test.ts`（14 例） | 纯逻辑测试，不涉及真实二进制 |
 | 私有配置不落盘凭据、不写用户目录 | probed（本仓库代码，真实临时目录） | `native-config.test.ts`（17 例）、`assets.test.ts`（4 例） | 断言序列化文本不含明文密钥、不含 `$VAR` |
 | Pack → 驱动接缝（launch 请求、私有配置、握手） | probed（假 ACP 对端） | `pack.test.ts`（3 例） | 假引擎，不是真实 OpenCode 进程 |
@@ -304,11 +304,11 @@ ACP 的 `session/prompt` 请求没有模型字段；驱动的 `AcpModelPolicy` �
 }
 ```
 
-`config/engines/opencode.json#capabilityEvidence` 因此从 `"unverified"` 改为 `"probed"`：确实有真实二进制的观察结果了，但**没有一条是 Windows 上的**，所以不是 `"verified"`。
+`config/engines/opencode.json#capabilityEvidence` 因此从 `"unverified"` 改为 `"probed"`：有真实二进制的观察结果（Linux 与 Windows 原生均有），但**没有一条连的是真实内网模型端点**，所以不是 `"verified"`。
 
 ## 8. 仍然只能靠真机证实的点
 
-1. **Windows 原生把 `opencode.exe` 拉起来跑 ACP**：整条路径至今零真机证据。`opencode-windows-x64` 是 Bun 编译的独立可执行文件，与 Linux 版同源，但这不是运行证据。
+1. **真实内网模型端点**：Windows 原生把 `opencode.exe` 拉起来跑 ACP 这条路径已经有真机证据（§11，模拟模型服务），但对内网端点——鉴权头、appid、私有 CA、代理、真实的流式工具调用格式——没有任何观察。这是 `verified` 唯一还欠的东西，只能由 C 线在授权环境出具。
 2. **`npm i -g opencode-ai` 在 Windows 上的实际落点**：`%APPDATA%\npm\node_modules\opencode-ai\bin\opencode.exe` 是按 npm 布局 + postinstall 目标推出来的，需要在真机上 `dir` 一次核对；`wellKnownPaths` 的顺序也该按核对结果复查。
 3. **AVX2 与 baseline 包的选择**：`opencode-windows-x64-baseline` 只在 CPU 无 AVX2 时被 postinstall 选中，本 Pack 只是把它列进探测顺序，没有真机对照。
 4. **Windows 上的技能扫描落点**：`OPENCODE_CONFIG` 只管配置文件；技能依赖 `OPENCODE_CONFIG_DIR/skills/` 与 `<xdgConfigHome>/opencode/skills/` 两处，Linux 上的目录解析已从二进制读实，Windows 真机上到底认哪一份未验证。
@@ -415,8 +415,8 @@ node --experimental-strip-types --test tests/adapters/opencode/settings-permissi
 
 `scripts/e2e/`（`npm run e2e -- --engine opencode`）把整条链路真的跑一遍：网关进程（`dist/main.js`）→ 进程宿主 → ACP 驱动 → **真实 `opencode` 二进制** → 模型服务。只有模型服务是 mock（`scripts/e2e/mock-model-server.mjs`，OpenAI Chat Completions 形态，绑定 127.0.0.1，按最新一条用户消息选剧本，无工具的请求——包括 OpenCode 的标题生成旁路调用——永远只回纯文本）。北向客户端只用 `fetch` 打通用网关协议。
 
-opencode 腿额外把**评测方的审批回路**真的驱动一遍：编排器给网关进程设 `PNP_OPENCODE_NATIVE_PERMISSIONS=ask`（引擎侧提问），
-并把集成档写成 `policy: { default: "allow", operations: { write: "ask" } }`（网关侧只对 `write` 停下来问）。北向客户端于是走的
+opencode 腿额外把**评测方的审批回路**真的驱动一遍：编排器只设 `PNP_CONFIGURED_POLICY_OVERRIDES={"write":"ask"}`（网关侧只对 `write` 停下来问），
+Pack 把这份有效策略投影到会话私有 `opencode.json`，引擎据此发出 `session/request_permission`；早期版本靠 `PNP_OPENCODE_NATIVE_PERMISSIONS=ask` 强制引擎侧提问，冒烟已不再设置它。北向客户端于是走的
 是评测方的动作序列：`prompt_async` **不等**返回（它只在整轮结束时才答）→ 每 250 ms 轮询 `GET /permission` →
 `POST /permission/{id}/reply` → 再等 `prompt_async` 落 204。
 
@@ -436,11 +436,12 @@ Linux 上对 1.18.29 的实跑结果（probed；当时为契约 1.0，网关**�
 - 中断：对一个在模型侧挂住的轮次 `POST /session/{id}/abort` → 200，`prompt_async` 以 409 `EXECUTION_CANCELLED` 收尾，最终消息 `finish: "cancelled"`、原生 `stopReason: "cancelled"`，会话回到 `idle`，第一次尝试即命中；
 - 会话删除后 404；第二个会话在同一进程内正常；SSE 事件序列合法；`hosts/*.json` 归属记录存在；工件里没有凭据（mock 的 Authorization 值被脱敏为 `[redacted]`）。
 
-契约 1.1 把 ACP 工具更新改为逐字段 `tool.observed` 后，上述真实引擎腿必须重新执行才能把 14/14 证据迁移到当前提交；旧结果只证明
-进程、协议、权限与模型链路曾经跑通，不证明当前工具轨迹投影已在真实二进制上复验。
+上面这段是契约 1.0 时期的 Linux 记录，其中 abort 收 409 的行为已按 D5 改为 204 + `finish: "cancelled"`。契约 1.1 把 ACP 工具更新改为逐字段 `tool.observed` 后，D1–D3 落地时又在 Linux 上重跑过一次（14/14，模型端点仍是 mock）：`case2` 的 assistant 消息带 `tool_calls: ["write"]` 与 `info.finish: "tool-calls"`，`role: "tool"` 消息的 `tool_name` 是 `write`，三条观察 part 的 `state.nameSource` 全部是 `announced-title`，`state.title` 依次是 `write`、`write`、被引擎改写后的目标文件路径，最终 assistant 消息 `finish: "stop"`。这两次 Linux 结果只证明进程、协议、权限与模型链路曾经跑通；当前证据是下面的 Windows 记录。
 
-**D1–D3 落地后在 Linux 上对 1.18.29 重跑过一次（probed，14/14，模型端点仍是 mock；Windows 未复跑）**：`case2` 的 assistant 消息带 `tool_calls: ["write"]` 与 `info.finish: "tool-calls"`，`role: "tool"` 消息的 `tool_name` 是 `write`，三条观察 part 的 `state.nameSource` 全部是 `announced-title`，`state.title` 依次是 `write`、`write`、被引擎改写后的目标文件路径，最终 assistant 消息 `finish: "stop"`。
+**当前证据（2026-09-09，Windows x64 / Node 24.19.0，契约 1.1，交付 `settings.json` 原样，含 Office/Desktop MCP 与指令文件）**：`npm run e2e -- --engine opencode --expect-desktop-mcp` 21 项中 20 通过、0 失败、1 跳过（`concurrency/same-session-busy`，由 mock 对照组覆盖）。检查项：`health-ready`、`event-stream-open`、`create-session`、`create-session-missing-directory`、`case1/prompt-without-model`、`case1/hello-trace`、`case2/write-file`（`once`）、`case2b/permission-rejected`（`reject`）、`mcp/csv-read`（Office MCP，中文与空格路径）、`mcp/missing-file`（真实工具错误回到模型）、`mcp/desktop-discovery`（Desktop MCP）、`case3/abort`（204 + `cancelled`）、`question-and-permission`、`session-lifecycle`、`second-session/*`、`concurrency/create-sessions`、`concurrency/cross-session-queue`、`event-sequence`。真实 `opencode.exe` 由 `PNP_OPENCODE_EXE_PATH` 指向已校验 SHA-256 的 `opencode-windows-x64@1.18.29`，由网关的 Windows 进程宿主拉起。另据 `docs/team/handoff-settings-mcp-2026-09-09.md`，同一构建对本机配置的公网 OpenAI 兼容模型跑 `live-check` 8/8（真实写文件、同会话历史、取消、删除会话后文件保留）。**Windows 原生 + 真实二进制 + mock 模型端点**已经观察到；真实内网模型端点仍须由 C 线在授权环境验收。
 
-CI 里 `engine-smoke` 作业以四条腿跑同一套：ubuntu/mock、ubuntu/opencode、windows/mock、windows/opencode，其中 windows/opencode 用 `npm install -g opencode-ai@1.18.29` 装出真实 `opencode.exe`，通过 `npm root -g` 定位。每条腿的工件（网关日志、模型请求日志、报告、归属记录、`/diagnostics`）随作业上传。
+**CI 边界，如实说明**：生效的工作流是仓库根目录的 `.github/workflows/ci.yml`（125 行），它有两个作业：`shared-contract`（windows-latest + ubuntu-latest 上 `npm ci`、`foundation:check`、`build`），以及 `engine-smoke` —— 一个六腿矩阵，其中包含 **windows-latest × opencode** 与 **windows-latest × pi**，用 `npm i -g opencode-ai@1.18.29` 装出真实 `opencode.exe` 后运行 `scripts/e2e/ci-smoke.mjs`，并上传产物。所以真实引擎冒烟**在 CI 里是有的**，模型服务是其中唯一被 mock 的部件。
 
-**windows-latest/opencode 这条腿已在 GitHub Actions 上通过；当前契约1.1又在本地 Windows 上通过14/14。** CI 中真实 `opencode.exe` 1.18.29 由 `npm i -g` 装到 `C:\npm\prefix\node_modules\opencode-ai\bin\opencode.exe`；当前复核则直接使用已校验 SHA-256 的 `opencode-windows-x64@1.18.29` 包。两次都由网关的 Windows 进程宿主拉起并走完整 ACP 链路；当前检查还覆盖了权限允许/拒绝、文件工具、取消、SSE与会话生命周期。**Windows 原生 + 真实二进制 + mock 模型端点**已经观察到；真实内网模型端点仍须由 C 线在授权环境验收。
+注意 `engineering/.github/workflows/ci.yml` 是一份 22 行的**陈旧副本**：GitHub 只读取仓库根的 `.github/workflows/`，这份不会被执行，且其 `working-directory: code` 对当前目录结构也是错的。它只应被当作历史遗留，不要据它判断 CI 覆盖面。
+
+本地等价命令是 `npm run e2e`，结果记录在 `verification/results.json`，原始产物在 Git 忽略的 `code/runtime/logs/`。

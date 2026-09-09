@@ -1,6 +1,8 @@
-# 能力包目录
+# 能力包目录（设计草案，机制未实现）
 
-本目录存放能力包（Capability Pack）。行为契约见 [`docs/spec/contracts.md` 第 10 节](../../../docs/spec/contracts.md#10-能力包)。本文只给目录骨架与清单字段，不含任何任务材料。
+> **实现状态（2026-09-09）：本目录只有这份 README。** `src/` 中没有 `pack.json` 解析器、`probes[]` 探测或 `pack.projected` 事件；下文骨架里的 `office/`、`windows-desktop/`、`web-search/` 子目录不存在，示例清单中的 `python` 运行时与 `office_mcp.py` 也不存在。本交付的工具与指令注入走 `code/config/settings.json`：`common.mcp.servers` 注册 Office MCP（`src/tools/office-mcp`：docx/xlsx/pptx/csv 读写、`fs_find`/`fs_delete`、`app_open`、`web_fetch`）与 Desktop MCP（`src/tools/desktop-mcp`：列举/打开固定应用），`common.instructions` 注入 `config/instructions/competition.md`；两者经 IntegrationProvider 成为 `ToolBinding`/`AssetBinding`，由各引擎 Pack 投影为原生 MCP 配置与指令。通用 UI 自动化与网页检索能力未交付。下文是 [`docs/spec/contracts.md` 第 10 节](../../../docs/spec/contracts.md#10-能力包) 的目录骨架与清单字段**草案**，供后续把 settings 驱动的注入收敛为可声明的包时使用；不要据此认为存在对应代码。
+
+本目录预留给能力包（Capability Pack）。本文只给目录骨架与清单字段，不含任何任务材料。
 
 ## 1. 骨架
 

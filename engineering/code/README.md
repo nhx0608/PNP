@@ -19,6 +19,8 @@ npm run foundation:check
 
 ## 统一 Settings
 
+中文配置入口：[模型与 MCP 配置上手](config/START-HERE.zh-CN.md)，包含 API key 文件、自动加载、多模型、按引擎覆盖和桌面工具验证。
+
 模型和权限统一配置在：
 
 ```text
@@ -62,20 +64,23 @@ Mock 仅用于开发。正式引擎失败不得回退 Mock。
 
 ## 并行开发
 
-A：`drivers/acp`、`engines/opencode`、`engines/hermes`。B：`drivers/pi-rpc`、`engines/pi`。C：`integration/internal`。公共模块变更独立评审，所有实现依赖 `src/contracts`。
+A：`drivers/acp`、`engines/opencode`、`engines/hermes`（`hermes` 目前是 `implementationProvided: false` 的扩展点占位）。B：`drivers/pi-rpc`、`engines/pi`。C：`integration/internal`（目前是抛 `INTEGRATION_UNAVAILABLE` 的桩，正式路径是 `integration/configured`）。公共模块变更独立评审，所有实现依赖 `src/contracts`。
 
 ## 验证
 
 ```powershell
+npm run check            # typecheck + 单元 + 契约 + 边界 + strip-only + PowerShell 编码检查
 npm run typecheck
 npm test
 npm run test:contract
 npm run check:boundaries
+npm run check:strip-only
+npm run check:ps-encoding
 npm run doctor -- --engine pi
-npm run release:check
+npm run release:check    # 内网验收证据缺失时按设计退出非零
 ```
 
-HTTP 契约测试需要完整依赖。真实引擎和内网测试不由 Mock 结果代替。
+HTTP 契约测试需要完整依赖。真实引擎和内网测试不由 Mock 结果代替。最近一次实际结果见 `../verification/results.json`。
 
 ## 端到端冒烟（e2e）
 
@@ -118,8 +123,14 @@ E2E 的 opencode 腿只设 `PNP_CONFIGURED_POLICY_OVERRIDES={"write":"ask"}`，�
   审批回路的两个文件名与轮询预算是 `--write-file-name/--reject-file-name/--permission-timeout-ms`；
 - `ci-smoke.mjs` — 编排器，负责临时 `PNP_DATA_DIR`、引擎位置解析、进程收尾与产物收集。
 
+真实引擎腿还通过 Office MCP 读取带中文路径的随机内容、回传不存在文件的真实错误；`--expect-desktop-mcp` 额外验证桌面工具发现。模拟模型只存在于测试目录。模拟测试使用隔离的空环境文件，避免本机的私有模型/MCP 配置干扰验证。
+
 产物（网关日志、模型请求 JSONL、断言报告、`hosts/*.json`、`/diagnostics`、本轮使用的 `settings.json`）默认
-写到系统临时目录，CI 中由 `engine-smoke` 作业以 `always()` 上传。凭据在任何日志和产物中都会脱敏。
+写到系统临时目录。仓库根的 CI 工作流（`.github/workflows/ci.yml`）除 `foundation:check` 与构建外，还有一个
+`engine-smoke` 六腿矩阵，其中包含 windows-latest × opencode 与 windows-latest × pi，跑的就是这条冒烟（模型服务
+是其中唯一被 mock 的部件）。`engineering/.github/workflows/ci.yml` 是不会被执行的陈旧副本，不代表 CI 覆盖面。
+本地等价命令的最近一次结果（opencode 20/21、pi 20/21，Windows 真机）记录在 `../verification/results.json`。
+凭据在任何日志和产物中都会脱敏。
 
 ## 交付打包
 

@@ -1,5 +1,7 @@
 # 内网对接契约与验证责任
 
+> 实现状态（2026-09-09）：本文是 C 线内网对接的**目标契约**。本交付中 `code/src/integration/internal/provider.ts` 仍是抛 `INTEGRATION_UNAVAILABLE` 的桩，`probeIntegration` 拒绝以 `internal` 启动；正式启动路径是已实现的 `configured` provider（`code/config/settings.json` + `PNP_MODEL_*` 环境变量，见 `../../INSTRUCTION.md`）。员工助手 CLI 的 PNP-MCP/1 Server、组织策略服务与第 7 节的内网验收证据均未交付（`not_run`）。已交付的 Office MCP 与 Desktop MCP 是共同基线的公开工具，不是本文所指的内网工具。
+
 ## 1. 边界
 
 内网对接作为 IntegrationProvider 实现，与 Agent 系统运行控制解耦。它不参与 Session 状态转换、消息排序、模型迭代、引擎选择或最终完成判定。

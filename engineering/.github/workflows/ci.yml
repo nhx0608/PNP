@@ -1,3 +1,14 @@
+# NOT EXECUTED FROM THIS REPOSITORY.
+#
+# GitHub only reads workflows from the repository root's .github/workflows/. The active gate is
+# ../../.github/workflows/ci.yml (125 lines), which runs BOTH `shared-contract` and a six-leg
+# `engine-smoke` matrix including windows-latest x opencode and windows-latest x pi. Do not read
+# this file to judge CI coverage - a documentation pass did exactly that and wrongly recorded
+# "CI does not run a real-engine smoke".
+#
+# This copy exists only for the case where engineering/ is extracted as a standalone repository,
+# which is why its working-directory is `code` rather than `engineering/code`. Keep it in sync
+# with the root workflow or delete it; do not let it drift into a second source of truth.
 name: PNP shared-contract checks
 on:
   pull_request:

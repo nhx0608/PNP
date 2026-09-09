@@ -48,6 +48,8 @@ flowchart TB
 
 A 实现 ACP/OpenCode，Hermes 为可选；B 实现 Pi RPC/Pi 原生工具和扩展桥；C 实现内部模型、员工助手工具与权限。能力包的内容归各自所有者（契约第 10 节）。三者依赖公共框架，不依赖对方未完成的实现。内网的最终联合验收由 C 组织，A/B 分别修复自身模块。
 
+> 实现状态（2026-09-09，证据见 `../../verification/results.json`）：OpenCode（ACP）与 Pi（RPC）两个 Pack 已实现并在 Windows 真机上以真实引擎冒烟通过；第 2 节拓扑图中的 Hermes 只有 `implementationProvided: false` 的占位描述符，是扩展点示例；`InternalIntegration` 是未实现桩，正式路径是 `configured` provider（`settings.json` + `PNP_MODEL_*`）；能力包清单机制未实现，图中"能力包"节点目前由 `settings.json` 注册的 Office/Desktop MCP 服务器与指令文件承担，"员工助手 CLI"节点（C 线 PNP-MCP/1 Server）尚未交付。
+
 ## 4. 标识与会话
 
 对象关系为 `GatewaySession → Run → Message/Event`。原生绑定是 `engineId + channelId + nativeId + engineVersion + protocolVersion`。Native Resume 标识只能是非秘密标识，不能将认证 Token 保存为恢复令牌。

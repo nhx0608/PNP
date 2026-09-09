@@ -115,7 +115,7 @@ PNP_CONFIGURED_POLICY_OVERRIDES={"write":"ask"}
 ## 4. 验证
 
 ```powershell
-npm run check                                  # typecheck + 单元 + 契约 + 边界 + strip-only
+npm run check                                  # typecheck + 单元 + 契约 + 边界 + strip-only + PowerShell 编码检查
 npm run e2e -- --engine mock                   # 对照组：不依赖真实引擎
 npm run e2e -- --engine opencode               # 真实 OpenCode
 npm run e2e -- --engine pi                     # 真实 Pi

@@ -190,6 +190,8 @@ ToolBinding 按 transport 分两形：`mcp-stdio`/`cli`/`native` 由网关本地
 
 能力包是一组可投影到任意引擎的资产与工具声明，是客观分的落点。它属于资产层内容，不改 Core 接口，不按引擎名分支。
 
+> 实现状态（2026-09-09）：本节是目标契约，尚无对应实现——`code/assets/packs/` 只有 README，`src/` 没有 `pack.json` 解析、探测或 `pack.projected` 事件。当前的资产与工具绑定由 `code/config/settings.json` 的 `common.mcp.servers`（Office MCP、Desktop MCP）与 `common.instructions` 经 IntegrationProvider 展开为同一套 `ToolBinding`/`AssetBinding`，各引擎 Pack 照 10.3 的投影规则处理；契约类型不变，只是启用来源不是 `pack.json`。
+
 ### 10.1 目录与清单
 
 目录固定为 `code/assets/packs/<id>/`。骨架与清单字段示例见 [`code/assets/packs/README.md`](../../code/assets/packs/README.md)。

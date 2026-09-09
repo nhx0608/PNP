@@ -12,7 +12,8 @@ PNP 是运行于 Windows 10/11 的自研 Agent Gateway。它以稳定的会话�
 | [架构设计](docs/spec/architecture.md) | 模块、运行拓扑、持久化、生命周期和能力模型 |
 | [技术栈](docs/spec/technology.md) | 唯一技术选型、依赖规则和运行环境 |
 | [公共契约](docs/spec/contracts.md) | A/B/C 必须遵守的接口语义 |
-| [内网边界](docs/spec/internal-integration.md) | 模型、员工助手 CLI、工具、权限与内部验证 |
+| [内网边界](docs/spec/internal-integration.md) | 内网模型/工具/授权的 IntegrationProvider 契约（C 线目标规格；本交付中 `internal` 仍是未实现桩，正式路径是 `configured` provider） |
+| [引擎接入规格](docs/engines/) | OpenCode（ACP）与 Pi（RPC）逐项标注 declared/probed/verified 的证据；Hermes 为未实现的扩展点示例 |
 | [DFX 与验收](docs/spec/dfx-and-testing.md) | 故障处理、验证方法和发布门禁 |
 | [分工](docs/team/work-packages.md) | A/B 同时开发与 C 独立对接 |
 | [协作规范](docs/team/collaboration.md) | 目录所有权、契约变更、分支和合并 |
@@ -22,11 +23,18 @@ PNP 是运行于 Windows 10/11 的自研 Agent Gateway。它以稳定的会话�
 | [实现覆盖](verification/coverage.md) | 公共实现与 A/B/C 实现边界 |
 | [验证证据](verification/results.json) | 实际执行环境和测试结果 |
 
-## 开发模式
+## 开发模式与当前状态
 
 公共框架是 A/B/C 的共同代码基线，不属于 A 开工后向 B 交付的前置任务。A 与 B 从同一基线提交建立分支，分别实现 ACP 系列和 Pi RPC 系列。C 通过独立的 `IntegrationProvider` 提供内网模型、工具和授权，不修改 Agent Loop。
 
-仓库中 `mock` 是显式测试引擎。OpenCode、Hermes、Pi 和内部集成各有独立实现入口；入口未实现时明确失败，不切换到 Mock。公共测试通过不代表这些真实接入已完成。
+截至 2026-09-09（Windows x64 / Node 24.19.0，证据见 [results.json](verification/results.json)）：
+
+- **OpenCode 1.18.29（ACP）与 Pi 0.85.1（RPC）均已实现并锁定**（`code/engines.lock.json` 含 tarball SHA-256）。真实引擎端到端冒烟（真实网关进程 + Windows 进程宿主 + 真实引擎 + 模拟模型服务）两者各 20/21 通过、0 失败、1 项按设计跳过，含 Office MCP 与 Desktop MCP 往返、审批允许/拒绝、取消、跨会话队列。`gateway.cmd` 与 `gateway.ps1` 在 PATH 上没有 Node 时也能启动并在 `/health/ready` 报告所选引擎。
+- **Hermes 未实现**：`HermesPack` 的 `implementationProvided: false`，启动即 `ENGINE_UNAVAILABLE`。它只是第三个 ACP 引擎的扩展点示例，是可选项，不计入交付矩阵。
+- **内网集成未交付**：`src/integration/internal` 是抛 `INTEGRATION_UNAVAILABLE` 的桩；正式启动路径是已实现的 `configured` provider（`config/settings.json` + `PNP_MODEL_*` 环境变量）。员工助手 CLI 的 MCP Server、组织授权策略与逐引擎内网验收证据均为 `not_run`，`npm run release:check` 仅因此退出非零。
+- `docs/spec/` 中的能力包清单机制（`code/assets/packs/*/pack.json`、`pack.projected`）没有实现；当前的工具与指令注入走 `settings.json` 的 `common.mcp.servers`（Office MCP、Desktop MCP）与 `common.instructions`。
+
+仓库中 `mock` 是显式测试引擎。正式引擎入口未实现时明确失败，不切换到 Mock。公共测试与本机冒烟通过不代表内网验收已完成。
 
 ## 基线使用规则
 

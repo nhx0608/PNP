@@ -1,5 +1,7 @@
 # 独立架构方案（设计过程存档）
 
+> 历史设计输入，不描述当前实现。最终规范在 [`engineering/docs/spec/architecture.md`](../../../engineering/docs/spec/architecture.md)；当前状态见 `engineering/verification/results.json`。
+
 这五份方案由五位独立架构师从互不相同的角度、基于同一份调研语料（[`../../research/`](../../research/README.md)）分别写成，彼此不可见。它们是最终架构的**输入**，不是结论；最终综合稿见 [`../architecture.md`](../architecture.md)。
 
 保留它们的理由：最终架构的每个决策都能追溯到"哪些角度支持、哪些角度反对、为什么这样裁决"。

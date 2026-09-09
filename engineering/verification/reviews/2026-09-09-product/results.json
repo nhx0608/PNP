@@ -1,0 +1,86 @@
+{
+  "kind": "delivery-product-review",
+  "recordedOn": "2026-09-09",
+  "baseCommit": "c3403b9015f7107cf169c1fbf25f6a11c8293511",
+  "workingTree": "Existing uncommitted changes were included; review does not identify the source solely by HEAD.",
+  "contractVersion": "1.1.0",
+  "sourceStamp": {
+    "algorithm": "engineering/code/scripts/source-stamp.mjs computeSourceStamp",
+    "scope": "Sorted src/** contents and tsconfig.json; not config, tests, dependencies or documentation",
+    "sha256": "c48dafd907b587f0c9086e21307b9c1d377fc972faa1d01737dd4442fbdbf66d",
+    "files": 83
+  },
+  "environment": { "platform": "win32", "architecture": "x64", "node": "v24.19.0" },
+  "checks": [
+    {
+      "id": "npm-check",
+      "command": "npm run check",
+      "workingDirectory": "engineering/code",
+      "exitCode": 0,
+      "typecheck": "passed",
+      "unitAndAdapters": { "total": 478, "passed": 476, "failed": 0, "skipped": 2 },
+      "httpAndSseContract": { "total": 10, "passed": 10, "failed": 0, "skipped": 0 },
+      "moduleBoundaries": "passed",
+      "stripOnly": "passed",
+      "powershellEncoding": "passed"
+    },
+    {
+      "id": "existing-checksum-manifest",
+      "command": "node engineering/VERIFY.mjs",
+      "exitCode": 0,
+      "verifiedFiles": 257,
+      "qualification": "Only existing listed files were verified. New review files are outside that manifest; completeness was not proved."
+    },
+    {
+      "id": "release-gate",
+      "command": "node scripts/release-check.mjs",
+      "workingDirectory": "engineering/code",
+      "exitCode": 1,
+      "failures": [
+        "opencode: required internal acceptance evidence is missing.",
+        "pi: required internal acceptance evidence is missing."
+      ],
+      "optionalHermes": "No implementation, exact installer lock or evidence; optional and non-blocking."
+    },
+    {
+      "id": "review-probes",
+      "command": "node engineering/verification/reviews/2026-09-09-product/probe.mjs",
+      "exitCode": 0,
+      "qualification": "Defects reproduced, not fixed. Real HTTP/SSE route and SQLite; Mock Engine, no model calls.",
+      "sse": {
+        "storedEvents": 5001,
+        "receivedEvents": 4097,
+        "replayedThrough": 4096,
+        "nextLiveId": 5001,
+        "missingCount": 904,
+        "missingFirst": 4097,
+        "missingLast": 5000,
+        "gapNotification": false
+      },
+      "origin": {
+        "sent": "https://untrusted.invalid",
+        "contentType": "text/plain",
+        "method": "POST",
+        "path": "/session",
+        "status": 200,
+        "qualification": "Server-side inject only. Browser reachability and local-network restrictions not tested."
+      },
+      "getRoutes": [
+        { "path": "/", "status": 404 },
+        { "path": "/session", "status": 404 },
+        { "path": "/engines", "status": 404 },
+        { "path": "/runs", "status": 404 },
+        { "path": "/config", "status": 404 }
+      ]
+    }
+  ],
+  "notRun": [
+    "Fresh real Harness and model smoke",
+    "Real Pi instruction-change reproduction; finding based on source paths",
+    "Intranet model, employee-assistant and organization-policy acceptance",
+    "Real email or message CLI operations",
+    "Browser cross-origin exploit demonstration",
+    "Final solution.zip deployment and official evaluation scoring"
+  ],
+  "changes": "Only review report, this evidence summary and the isolated review probe were added. Product implementation and prior verification records were not changed."
+}

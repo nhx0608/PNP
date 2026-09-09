@@ -159,10 +159,10 @@ $env:AGENT_ENGINE = 'pi'
 [
   {"id":"msg_…","role":"user","content":"请基于 …","created_at":"…"},
   {"id":"msg_…","role":"assistant","content":"","created_at":"…",
-   "tool_calls":[{"id":"call_…","name":"office.csv_read","arguments":{"path":"D:\\test_data\\task.csv"}}],
+   "tool_calls":[{"id":"call_…","name":"office_csv_read","arguments":{"path":"D:\\test_data\\task.csv"}}],
    "info":{"role":"assistant","finish":"tool-calls"},
-   "parts":[{"type":"tool","tool":"office.csv_read","callID":"call_…","state":{"status":"completed","title":"office.csv_read"}}]},
-  {"id":"msg_…","role":"tool","tool_call_id":"call_…","tool_name":"office.csv_read","content":"{…}","created_at":"…"},
+   "parts":[{"type":"tool","tool":"office_csv_read","callID":"call_…","state":{"status":"completed","title":"office_csv_read"}}]},
+  {"id":"msg_…","role":"tool","tool_call_id":"call_…","tool_name":"office_csv_read","content":"{…}","created_at":"…"},
   {"id":"msg_…","role":"assistant","content":"已生成 D:\\test_data\\task_违约风险分析.md",
    "created_at":"…","info":{"role":"assistant","finish":"stop"},
    "parts":[{"type":"text","content":"已生成 …","text":"已生成 …"},{"type":"step-finish"}]}

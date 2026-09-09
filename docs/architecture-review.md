@@ -1,5 +1,6 @@
 # PnP Agent Fabric 方案评审（针对 v2 稿）
 
+> **历史架构输入**：针对 2026-09-05 的 v2 设计稿写成，是保留的设计依据，不描述当前实现。最终规范见 `engineering/docs/spec/`，当前状态见 `engineering/verification/results.json`。
 > 评审日期：2026-09-05
 > 评审依据：33 份一手调研（[`research/`](./research/README.md)）、赛题原文任务书与调测指南、
 > [`competition-baseline.md`](./competition-baseline.md)、[`gateway-api-baseline.md`](./gateway-api-baseline.md)、

@@ -1,5 +1,6 @@
 # PNP 工程交付评审与开发规划（第一性原理版）
 
+> **历史评审记录**：针对提交 `63b0a80` 当时的状态写成，不描述当前代码；文中的测试数量、缺陷与分工建议均以当时为准。当前状态见 `engineering/verification/results.json`。
 > 评审日期：2026-09-05
 > 评审对象：`engineering/`（提交 `63b0a80 fix: harden shared gateway foundation`）——
 > `docs/spec/*`、`docs/team/*`、`prompts/*`、`code/src/**`、`code/scripts/**`、`native/windows/**`、`verification/*`。

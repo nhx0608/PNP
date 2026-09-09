@@ -1,5 +1,6 @@
 # PNP 第二轮评审：提交 3337990
 
+> **历史评审记录**：针对提交 `3337990` 当时的状态写成，不描述当前代码。当前状态见 `engineering/verification/results.json`。
 > 评审日期：2026-09-06
 > 评审对象：`engineering/` 在提交 `3337990 fix: harden shared gateway transport and configuration` 的状态。
 > 基线对比：上一轮评审 [`engineering-review.md`](./engineering-review.md) 针对提交 `63b0a80`，本文沿用其编号

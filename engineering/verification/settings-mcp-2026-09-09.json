@@ -1,0 +1,30 @@
+{
+  "date": "2026-09-09",
+  "scope": "Windows local configuration, real harnesses, real MCP, configured public model service",
+  "baseCommit": "c3403b9015f7107cf169c1fbf25f6a11c8293511",
+  "workingTree": "uncommitted; concurrent launcher/encoding changes separately owned",
+  "sourceStamp": "808375d100baf8e6fd99e6581aa28e532eb8276a380a83707a75793398268497",
+  "versions": { "node": "24.19.0", "opencode": "1.18.29", "pi": "0.85.1", "model": "glm-4-flash" },
+  "checks": {
+    "build": "pass",
+    "unitAndAdapters": { "total": 469, "passed": 467, "failed": 0, "skipped": 2 },
+    "httpContract": { "total": 9, "passed": 9, "failed": 0 },
+    "typecheck": "pass",
+    "boundaries": "pass",
+    "stripOnly": "pass",
+    "foundation": "pass",
+    "powershellEncoding": "pass",
+    "opencodeWithMockModel": { "passed": 20, "failed": 0, "skipped": 1, "mcp": ["csv_read", "missing_file_error", "desktop_list_apps"] },
+    "piWithMockModel": { "passed": 20, "failed": 0, "skipped": 1, "mcp": ["csv_read", "missing_file_error", "desktop_list_apps"] },
+    "mockControl": { "passed": 16, "failed": 0, "skipped": 2 },
+    "opencodeWithConfiguredModel": { "passed": 8, "failed": 0 },
+    "piWithConfiguredModelBeforeFix": { "passed": 6, "failed": 2 },
+    "piWithConfiguredModelAfterFix": { "passed": 8, "failed": 0 },
+    "desktopJobHostSmoke": { "passed": true, "observedNewNotepadSurvived": true, "serverQuiescent": true, "scopeQuiescent": true, "uiReadinessVerified": false },
+    "doctor": { "opencodeExitCode": 0, "piExitCode": 0, "liveRequests": "not_attempted" },
+    "releaseGate": { "exitCode": 1, "releasable": false, "reason": "Required internal acceptance evidence is missing for both engines." }
+  },
+  "notRun": ["internal model and employee-assistant joint acceptance", "live Anthropic Messages endpoint", "live remote Streamable HTTP MCP service", "Outlook activation/sign-in/business operations", "official evaluation task scoring", "Hermes"],
+  "privateEvidenceRoot": "code/runtime/logs/",
+  "handoff": "docs/team/handoff-settings-mcp-2026-09-09.md"
+}
