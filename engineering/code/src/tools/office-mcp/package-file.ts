@@ -25,7 +25,7 @@ export async function openPackage(file: string): Promise<OfficePackage> {
   }
 }
 
-async function readPart(pkg: OfficePackage, part: string): Promise<string> {
+export async function readPartText(pkg: OfficePackage, part: string): Promise<string> {
   const entry = pkg.zip.file(part);
   if (entry === null) {
     throw new OfficeToolError("UNSUPPORTED_FORMAT", `包内缺少部件 / package part missing: ${part} (${pkg.path})`);
@@ -33,13 +33,13 @@ async function readPart(pkg: OfficePackage, part: string): Promise<string> {
   return entry.async("string");
 }
 
-async function readOptionalPart(pkg: OfficePackage, part: string): Promise<string | null> {
+export async function readOptionalPartText(pkg: OfficePackage, part: string): Promise<string | null> {
   const entry = pkg.zip.file(part);
   return entry === null ? null : entry.async("string");
 }
 
 export async function readPartTree(pkg: OfficePackage, part: string): Promise<XmlNode[]> {
-  return parseXml(await readPart(pkg, part));
+  return parseXml(await readPartText(pkg, part));
 }
 
 export function writePartTree(pkg: OfficePackage, part: string, nodes: XmlNode[]): void {
@@ -83,7 +83,7 @@ export async function readRelationships(pkg: OfficePackage, ownerPart: string): 
 }
 
 export async function readRelationshipTree(pkg: OfficePackage, ownerPart: string): Promise<XmlNode[] | null> {
-  const xml = await readOptionalPart(pkg, relationshipsPartOf(ownerPart));
+  const xml = await readOptionalPartText(pkg, relationshipsPartOf(ownerPart));
   return xml === null ? null : parseXml(xml);
 }
 

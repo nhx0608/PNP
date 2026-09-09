@@ -11,6 +11,7 @@ import { pptxDeleteSlides, pptxExtract, pptxReorderSlides, pptxReplaceText } fro
 import { MAX_SLIDES, pptxCreate } from "./pptx-create.ts";
 import { annotationsFor, failureResult, successResult, type SideEffect, type ToolPayload } from "./results.ts";
 import { appOpen, DEFAULT_MAX_BYTES, DEFAULT_TIMEOUT_MS, webFetch } from "./system.ts";
+import { docVerify } from "./verify.ts";
 import { xlsxRead, xlsxWrite } from "./xlsx.ts";
 
 export const SERVER_NAME = "office";
@@ -478,6 +479,71 @@ function registerDataTools(server: McpServer, catalog: ToolInfo[]): void {
   });
 }
 
+function registerVerifyTools(server: McpServer, catalog: ToolInfo[]): void {
+  register(server, catalog, {
+    name: "doc_verify",
+    title: "校验产出文件 / Verify a produced document",
+    sideEffect: "read",
+    description: "在声称完成之前校验刚写出的文件：按真实内容而不是扩展名判断格式（.docx/.xlsx/.pptx 会实际打开 OOXML 包），"
+      + "并逐项检查可选期望：minBytes、mustContain/mustNotContain（文档可见文本）、minTables（.docx/.pptx）、"
+      + "minSlides/maxSlides（.pptx）、minSheets/sheetNames（.xlsx）、minCjkChars/maxCjkChars（按评测口径统计"
+      + " U+3400-U+9FFF 的中文字符）。.md/.txt/.csv 只做存在性、minBytes、mustContain 与中文字数检查。"
+      + "不满足期望不是错误：返回 ok=false 与 failures[{check,expected,actual}]，请据此修复后重新生成，"
+      + "ok=false 时不要宣称任务完成。"
+      + " Verifies a file you just produced, before you claim it is done. The format is decided by"
+      + " parsing the bytes, not by the extension: a text file saved under a .docx name is reported as"
+      + " not a valid Office document instead of passing. Optional expectations are checked one by one —"
+      + " minBytes, mustContain/mustNotContain against the document's visible text, minTables (.docx and"
+      + " .pptx), minSlides/maxSlides (.pptx), minSheets/sheetNames (.xlsx) and minCjkChars/maxCjkChars"
+      + " counting the U+3400-U+9FFF range the evaluation grader itself uses; .md, .txt and .csv get"
+      + " existence, minBytes, mustContain and the CJK count. An unmet expectation is not an error: the"
+      + " result carries ok=false and failures[{check,expected,actual}] so you can fix the file and try"
+      + " again. Do not report completion while ok is false.",
+    inputSchema: z.object({
+      path: z.string().describe(`要校验的文件 / the file to verify; ${ABSOLUTE_PATH_NOTE}`),
+      minBytes: z.number().int().min(1).optional()
+        .describe("最小文件字节数 / minimum file size in bytes"),
+      mustContain: z.array(z.string()).optional()
+        .describe("文档可见文本必须包含的字符串 / strings that must appear in the document's visible text"),
+      mustNotContain: z.array(z.string()).optional()
+        .describe("文档可见文本不得包含的字符串 / strings that must not appear"),
+      minTables: z.number().int().min(0).optional().describe("最少表格数（.docx/.pptx）/ minimum tables (.docx, .pptx)"),
+      minSlides: z.number().int().min(0).optional().describe("最少幻灯片页数（.pptx）/ minimum slides (.pptx)"),
+      maxSlides: z.number().int().min(0).optional().describe("最多幻灯片页数（.pptx）/ maximum slides (.pptx)"),
+      minSheets: z.number().int().min(0).optional().describe("最少工作表数（.xlsx）/ minimum sheets (.xlsx)"),
+      sheetNames: z.array(z.string()).optional().describe("必须存在的工作表名（.xlsx）/ sheet names that must exist (.xlsx)"),
+      minCjkChars: z.number().int().min(0).optional()
+        .describe("最少中文字符数（U+3400-U+9FFF）/ minimum CJK characters in the U+3400-U+9FFF range"),
+      maxCjkChars: z.number().int().min(0).optional()
+        .describe("最多中文字符数（U+3400-U+9FFF）/ maximum CJK characters in the U+3400-U+9FFF range"),
+    }),
+  }, async (args) => {
+    const file = await requireExistingFile("path", args.path);
+    const result = await docVerify(file, {
+      ...(args.minBytes === undefined ? {} : { minBytes: args.minBytes }),
+      ...(args.mustContain === undefined ? {} : { mustContain: args.mustContain }),
+      ...(args.mustNotContain === undefined ? {} : { mustNotContain: args.mustNotContain }),
+      ...(args.minTables === undefined ? {} : { minTables: args.minTables }),
+      ...(args.minSlides === undefined ? {} : { minSlides: args.minSlides }),
+      ...(args.maxSlides === undefined ? {} : { maxSlides: args.maxSlides }),
+      ...(args.minSheets === undefined ? {} : { minSheets: args.minSheets }),
+      ...(args.sheetNames === undefined ? {} : { sheetNames: args.sheetNames }),
+      ...(args.minCjkChars === undefined ? {} : { minCjkChars: args.minCjkChars }),
+      ...(args.maxCjkChars === undefined ? {} : { maxCjkChars: args.maxCjkChars }),
+    });
+    const shape = `${result.kind}，${result.bytes} 字节 / bytes，${result.cjkChars} 中文字符 / CJK chars`;
+    return {
+      // A failed verification is reported as a successful call with ok:false: the model has to read
+      // the failures and fix the file, and an error result would invite it to retry the tool instead.
+      summary: result.ok
+        ? `doc_verify: 通过 / PASS（${shape}）${file}`
+        : `doc_verify: 未通过 / FAIL，${result.failures.length} 项不符 / ${result.failures.length} check(s) failed`
+          + `（${result.failures.map((failure) => failure.check).join(", ")}；${shape}）${file}`,
+      data: result,
+    };
+  });
+}
+
 function registerSystemTools(server: McpServer, catalog: ToolInfo[]): void {
   register(server, catalog, {
     name: "app_open",
@@ -529,6 +595,7 @@ export function createOfficeServer(): McpServer {
   registerXlsxTools(server, catalog);
   registerPptxTools(server, catalog);
   registerDataTools(server, catalog);
+  registerVerifyTools(server, catalog);
   registerSystemTools(server, catalog);
   register(server, catalog, {
     name: "server_info",

@@ -30,8 +30,27 @@ const BUILDER_OPTIONS = {
   suppressEmptyNode: true,
 } as const;
 
+const LOCAL_NAME_PARSER_OPTIONS = { ...PARSER_OPTIONS, removeNSPrefix: true } as const;
+
 export function parseXml(xml: string): XmlNode[] {
   const parsed: unknown = new XMLParser(PARSER_OPTIONS).parse(xml);
+  return Array.isArray(parsed) ? (parsed as XmlNode[]) : [];
+}
+
+/**
+ * The same tree as `parseXml`, but every element and attribute is reduced to its LOCAL name:
+ * `<x:sheet r:id="R1">` arrives as `sheet` carrying `@_id`. A namespace prefix is only an alias for
+ * a namespace URI, so `<x:sheet>` bound to the spreadsheetml namespace and a plain `<sheet>` under
+ * the same namespace are the same element — but a reader that compares literal tag names sees two
+ * different tags, and that is exactly how a workbook written by a non-Microsoft generator becomes
+ * unreadable. Resolving by local name makes the question disappear.
+ *
+ * READ ONLY. The prefixes are gone, so a tree parsed this way must never be handed to `buildXml`:
+ * the rebuilt part would carry element names stripped of the namespaces it still declares. The
+ * editing tools keep using `parseXml`, which round-trips a part byte-for-byte.
+ */
+export function parseXmlLocalNames(xml: string): XmlNode[] {
+  const parsed: unknown = new XMLParser(LOCAL_NAME_PARSER_OPTIONS).parse(xml);
   return Array.isArray(parsed) ? (parsed as XmlNode[]) : [];
 }
 

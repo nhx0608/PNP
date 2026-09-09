@@ -57,6 +57,7 @@ stdout 只承载 JSON-RPC，日志一律走 stderr。
 | `data_aggregate` | read | `path`（`.csv`/`.xlsx`）, `sheet?`, `delimiter?`, `filters[{column,op,value?,values?}]?`, `filterMode?`, `groupBy[]?`, `aggregations[{op,column?,as?}]?`, `sort[{by,direction?}]?`, `limit?` | `rows[{<分组列>,<统计列>}]`、`columns[{column,index,type,numericCount,textCount,emptyCount}]`、`rowCount`、`filteredRowCount`、`groupCount`、`skipped[{column,nonNumericCount,emptyCount,samples[]}]`、`warnings[]` |
 | `fs_find` | read | `root`, `nameContains?`, `extensions?`, `recursive?`, `maxResults?` | `files[{path,name,size,modifiedAt}]`、`directories[{path,name}]`、`truncated` |
 | `fs_delete` | external | `paths?` 或 `root`+`nameContains`/`extensions`, `recursive?`, `dryRun?` | `matched[]`、`deleted[]`、`failed[{path,reason}]`、`skippedDirectories[]` |
+| `doc_verify` | read | `path`, `minBytes?`, `mustContain[]?`, `mustNotContain[]?`, `minTables?`, `minSlides?`, `maxSlides?`, `minSheets?`, `sheetNames[]?`, `minCjkChars?`, `maxCjkChars?` | `ok`、`kind`、`kindMatchesExtension`、`formatValid`、`formatProblem?`、`bytes`、`textLength`、`cjkChars`、`paragraphCount?`、`tableCount?`、`slideCount?`、`sheetCount?`、`sheetNames?`、`checked[]`、`skipped[]`、`failures[{check,expected,actual}]` |
 | `app_open` | external | `name` | `name`、`command`、`argv[]`、`exitCode` |
 | `web_fetch` | external | `url`, `maxBytes?`, `timeoutMs?` | `status`、`contentType`、`title?`、`text`、`bytes`、`truncated` |
 | `server_info` | read | — | `name`、`version`、`platform`、`nodeVersion`、`tools[{name,title,sideEffect,description}]` |
@@ -81,6 +82,13 @@ stdout 只承载 JSON-RPC，日志一律走 stderr。
 - **表格网格**：`docx_extract` 按真实列网格返回表格。`w:gridSpan`（横向合并）与 `w:vMerge`（纵向合并）
   都被展开成列位置：`rows` 中被合并覆盖的位置是空串（不重复文本），`cells` 里给出每个单元格的
   `column`/`columnSpan`/`rowSpan`。这样"每个表格导出成一个 sheet"不会整行错位。
+- **产出校验**：`doc_verify` 按文件内容而不是扩展名判断格式——`.docx`/`.xlsx`/`.pptx` 会真的打开 OOXML 包
+  并解析主部件，所以"把路径字符串写进 `.docx`"这类 44 字节假文件会被判为"不是有效的 Office 文档"，
+  而不是因为扩展名对就通过。期望不满足不是错误：返回 `ok:false` 与 `failures[{check,expected,actual}]`，
+  调用方据此修复重写；只有参数本身不可用（缺路径、相对路径、不支持的扩展名、文件不存在）才返回
+  `isError`。文件解析失败时，需要读内容的期望不会被"默认通过"，而是列进 `skipped`；对文档类型不适用的
+  期望（对 `.docx` 问 `minSlides`）计为失败，因为那说明校验的根本不是刚写出的那个产物。
+  `minCjkChars`/`maxCjkChars` 只统计 U+3400-U+9FFF，与评测口径一致。
 - **错误码**：`PATH_NOT_ABSOLUTE`、`PATH_NOT_FOUND`、`NOT_A_FILE`、`OUTPUT_EXISTS`、`INVALID_ARGUMENT`、
   `NO_MATCH`、`AMBIGUOUS_MATCH`、`INDEX_OUT_OF_RANGE`、`UNSUPPORTED_FORMAT`、`PROTECTED_LOCATION`、
   `PLATFORM_UNSUPPORTED`、`REQUEST_FAILED`、`UNEXPECTED`。
@@ -105,13 +113,26 @@ stdout 只承载 JSON-RPC，日志一律走 stderr。
   该图表仍会被报出来（`series` 为空），不会被当作"没有图表"。SmartArt（`ppt/diagrams/`）与图片仍不可读。
   备注可读、在重排与删页时会跟随幻灯片，但没有备注编辑工具。
 - **xlsx**：`xlsx_write` 总是新建工作簿，不做原位编辑，因此图表、透视表、宏、条件格式不会被保留；
-  `xlsx_read` 只返回值，不返回格式、合并单元格几何或批注。公式单元格返回缓存结果，没有缓存结果时为 `null`。
+  `xlsx_read` 只返回值，不返回格式、合并单元格几何或批注。公式单元格返回缓存结果（即工作簿当前显示的数字或
+  文本）；写入方没有存缓存结果时才退回 `=公式` 字符串，不会把公式当成数据。
   工作表名按 Excel 规则清洗并去重，实际使用的名字在 `sheets[].name` 里回报。
+- **xlsx 读取路径**：主读取器是 `exceljs`；它按字面比较标签名（只认 `sheet`，不认 `x:sheet`），因此带命名空间
+  前缀的工作簿（`<x:workbook>`，WPS 等非微软生成器的常见写法，同样是合法 OOXML）会解析失败。这类文件改由
+  直接读取 OOXML 包的回退读取器处理（`xlsx-ooxml.ts`，按 local name 解析，支持共享字符串、内联字符串、
+  布尔、错误值，并按数字格式把日期序列号还原成 ISO 字符串）。两个读取器都失败时报 `UNSUPPORTED_FORMAT`，
+  错误信息同时给出两个读取器各自的原因，绝不返回空工作簿。
 - **csv**：按 UTF-8（可带 BOM）读取，不做 GBK 等编码探测。
 - **data_aggregate**：只读 `.csv`/`.tsv`/`.txt` 与 `.xlsx`/`.xlsm`，首行必须是表头；过滤条件只比较"列与常量"，
   不比较两列（"低于安全库存"这类判断请分组取出两列的值后自行比较）。默认最多返回 1000 组，超出时
   `truncated:true`。`gt/gte/lt/lte` 在两侧都能解析成数字时按数值比较，否则退化为字符串比较；空单元格不参与
   任何大小比较。
+- **doc_verify**：只支持 `.docx`/`.xlsx`/`.pptx` 与 `.md`/`.markdown`/`.txt`/`.csv`，`.doc`/`.xls`/`.ppt`
+  等旧版二进制格式与 `.pdf` 直接报 `UNSUPPORTED_FORMAT`（宁可拒答也不给一个没验证过的"通过"）。
+  可读文本的范围与各自的读取工具一致：docx 只覆盖正文（页眉页脚、脚注、文本框不算在 `mustContain` 与
+  中文字数里），pptx 覆盖形状文本、表格、备注与图表缓存值，xlsx 覆盖全部工作表的单元格值。
+  "是不是文本文件"用首 4 KB 内有无 NUL 字节判断——足够识别"把路径或 Markdown 存成 `.docx`"，
+  但不是通用的编码探测。它能证明"文件存在、格式真、结构与字数达标"，不能证明"内容正确"：
+  数字是不是编的仍要靠 `csv_read`/`data_aggregate` 先算。
 - **web_fetch**：不执行 JavaScript，HTML 转文本是启发式的。Node 的全局 `fetch` 默认不读代理环境变量；
   需要代理时在 Node 24 上设 `NODE_USE_ENV_PROXY=1`。
 - **app_open**：仅 Windows，走 `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`

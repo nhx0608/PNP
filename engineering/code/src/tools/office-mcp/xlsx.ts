@@ -1,7 +1,8 @@
 import { stat } from "node:fs/promises";
 import ExcelJS from "exceljs";
-import type { CellValue } from "exceljs";
+import type { CellValue, Worksheet } from "exceljs";
 import { OfficeToolError } from "./errors.ts";
+import { xlsxReadDirect, type OoxmlSheet } from "./xlsx-ooxml.ts";
 
 export type SheetCell = string | number | boolean | null;
 
@@ -60,20 +61,120 @@ function uniqueSheetNames(names: readonly string[]): string[] {
   });
 }
 
-export async function xlsxRead(file: string, sheet?: string, maxRows?: number): Promise<XlsxReadResult> {
-  const workbook = new ExcelJS.Workbook();
-  try {
-    await workbook.xlsx.readFile(file);
-  } catch (error) {
-    throw new OfficeToolError("UNSUPPORTED_FORMAT",
-      `无法读取工作簿 / cannot read workbook: ${file} (${error instanceof Error ? error.message : String(error)})`);
+function sheetRows(worksheet: Worksheet, rowLimit: number, columnCount: number): SheetCell[][] {
+  const rows: SheetCell[][] = [];
+  for (let rowNumber = 1; rowNumber <= rowLimit; rowNumber += 1) {
+    const row = worksheet.getRow(rowNumber);
+    const cells: SheetCell[] = [];
+    for (let columnNumber = 1; columnNumber <= columnCount; columnNumber += 1) {
+      cells.push(cellValue(row.getCell(columnNumber).value));
+    }
+    rows.push(cells);
   }
-  const names = workbook.worksheets.map((worksheet) => worksheet.name);
+  return rows;
+}
+
+/**
+ * One worksheet, however it was read. Rows stay behind a call so the exceljs path — the one every
+ * workbook this server writes goes through — keeps materialising only the rows `xlsx_read` was asked
+ * for instead of the whole workbook.
+ */
+type LoadedSheet = {
+  name: string;
+  rowCount: number;
+  columnCount: number;
+  /** Rows 1..`limit`, each padded to `columnCount`. */
+  readRows: (limit: number) => SheetCell[][];
+};
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function fromExcelJs(workbook: ExcelJS.Workbook): LoadedSheet[] {
+  return workbook.worksheets.map((worksheet) => ({
+    name: worksheet.name,
+    rowCount: worksheet.rowCount,
+    columnCount: worksheet.columnCount,
+    readRows: (limit: number): SheetCell[][] => sheetRows(worksheet, limit, worksheet.columnCount),
+  }));
+}
+
+function fromOoxml(sheets: readonly OoxmlSheet[]): LoadedSheet[] {
+  return sheets.map((sheet) => ({
+    name: sheet.name,
+    rowCount: sheet.rowCount,
+    columnCount: sheet.columnCount,
+    readRows: (limit: number): SheetCell[][] => sheet.rows.slice(0, Math.max(0, limit)),
+  }));
+}
+
+/**
+ * Opens a workbook with exceljs and, only when that fails, reads the OOXML package directly.
+ *
+ * exceljs is kept as the primary reader: it is what `xlsx_write` produces, it resolves styles, dates
+ * and shared strings the way this file has always reported them, and nothing about that path
+ * changes. What it cannot do is read a workbook whose parts use a namespace PREFIX (`<x:sheet>`
+ * rather than `<sheet>`) — it compares tag names literally, so its workbook model stays empty and it
+ * dies on `undefined.sheets`. That spelling is valid OOXML and is what several non-Microsoft
+ * generators emit, including the one that produced this repository's own evaluation fixture, so the
+ * file being unreadable is a defect in the reader, not in the file. `xlsxReadDirect` resolves every
+ * element by local name and is blind to the distinction.
+ *
+ * A workbook that parses into zero worksheets counts as a failure too: Excel cannot produce one, so
+ * an empty worksheet list always means the reader gave up quietly, and letting that through would
+ * hand the caller an empty spreadsheet instead of an error.
+ */
+async function loadWorkbook(file: string): Promise<LoadedSheet[]> {
+  let primaryProblem: string;
+  try {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(file);
+    if (workbook.worksheets.length > 0) return fromExcelJs(workbook);
+    primaryProblem = "解析后没有工作表 / parsed without producing any worksheet";
+  } catch (error) {
+    primaryProblem = messageOf(error);
+  }
+  try {
+    const sheets = await xlsxReadDirect(file);
+    if (sheets.length === 0) {
+      throw new OfficeToolError("UNSUPPORTED_FORMAT", "包内没有声明任何工作表 / the package declares no worksheet");
+    }
+    return fromOoxml(sheets);
+  } catch (fallbackError) {
+    // Both readers are named, with the reason each one gave. A caller that cannot open a file has to
+    // be told which reader failed and why; answering with an empty workbook would be far worse.
+    throw new OfficeToolError("UNSUPPORTED_FORMAT",
+      `无法读取工作簿 / cannot read workbook: ${file}`
+      + ` (exceljs: ${primaryProblem}；直接读取 OOXML 包 / direct OOXML reader: ${messageOf(fallbackError)})`);
+  }
+}
+
+export type XlsxSheetSummary = { name: string; rowCount: number; columnCount: number; rows: SheetCell[][] };
+
+/**
+ * Every sheet of a workbook in one parse. `xlsxRead` answers "show me this sheet"; verifying a
+ * multi-sheet export has to ask "what is in the whole workbook", and getting there through
+ * `xlsxRead` would re-parse the file once per sheet.
+ */
+export async function xlsxSummarize(file: string): Promise<XlsxSheetSummary[]> {
+  const sheets = await loadWorkbook(file);
+  return sheets.map((worksheet) => ({
+    name: worksheet.name,
+    rowCount: worksheet.rowCount,
+    columnCount: worksheet.columnCount,
+    rows: worksheet.readRows(worksheet.rowCount),
+  }));
+}
+
+export async function xlsxRead(file: string, sheet?: string, maxRows?: number): Promise<XlsxReadResult> {
+  const sheets = await loadWorkbook(file);
+  const names = sheets.map((worksheet) => worksheet.name);
   if (names.length === 0) throw new OfficeToolError("UNSUPPORTED_FORMAT", `工作簿没有工作表 / workbook has no sheets: ${file}`);
-  let worksheet = workbook.worksheets[0];
+  let worksheet = sheets[0];
   if (sheet !== undefined && sheet.length > 0) {
-    const byName = workbook.worksheets.find((candidate) => candidate.name === sheet);
-    const byIndex = /^\d+$/.test(sheet) ? workbook.worksheets[Number(sheet) - 1] : undefined;
+    const byName = sheets.find((candidate) => candidate.name === sheet);
+    const byIndex = /^\d+$/.test(sheet) ? sheets[Number(sheet) - 1] : undefined;
     const found = byName ?? byIndex;
     if (found === undefined) {
       throw new OfficeToolError("NO_MATCH",
@@ -84,15 +185,7 @@ export async function xlsxRead(file: string, sheet?: string, maxRows?: number): 
   if (worksheet === undefined) throw new OfficeToolError("UNSUPPORTED_FORMAT", `工作簿没有可读工作表 / no readable sheet: ${file}`);
   const limit = maxRows === undefined || maxRows <= 0 ? worksheet.rowCount : Math.min(maxRows, worksheet.rowCount);
   const columnCount = worksheet.columnCount;
-  const rows: SheetCell[][] = [];
-  for (let rowNumber = 1; rowNumber <= limit; rowNumber += 1) {
-    const row = worksheet.getRow(rowNumber);
-    const cells: SheetCell[] = [];
-    for (let columnNumber = 1; columnNumber <= columnCount; columnNumber += 1) {
-      cells.push(cellValue(row.getCell(columnNumber).value));
-    }
-    rows.push(cells);
-  }
+  const rows = worksheet.readRows(limit);
   return {
     path: file,
     sheets: names,

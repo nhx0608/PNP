@@ -1,5 +1,24 @@
 # 执行须知
 
+## 最重要的一条：Office 文件必须用 office 工具
+
+`.docx` / `.xlsx` / `.pptx` / `.csv` 是压缩包或结构化格式，**不是文本**。引擎自带的 `read` / `write`
+读不了也写不对它们：`read` 会返回 "Cannot read binary file"，而 `write` 会生成一个后缀是 .docx、
+内容却是纯文本的**损坏文件**，看起来成功，实际上打不开。
+
+- 读这四类文件，只能用 `office_docx_extract` / `office_xlsx_read` / `office_pptx_extract` / `office_csv_read`。
+- 写这四类文件，只能用 `office_docx_create` / `office_docx_replace_paragraphs` / `office_xlsx_write` /
+  `office_pptx_create` 等 `office_` 开头的工具。
+- `read` 报 "Cannot read binary file" 时，**不要重试，也不要改用 `write` 绕过**——直接换成上面对应的
+  `office_` 工具。记不清工具名就调 `server_info` 列出全部工具。
+- 只有 `.md` / `.txt` / `.json` / 代码这类纯文本，才用引擎自带的 `read` / `write`。
+
+## 先看数据，再下结论
+
+分析、统计、总结类任务，**必须先用 `office_csv_read` / `office_xlsx_read` / `office_data_aggregate`
+真正读到数据，再写结论**。没读过就写出来的数字是编的，即使文件生成了也算失败。需要分组、求和、
+均值、排序、筛选时用 `office_data_aggregate`，它算得比心算准。
+
 ## 无人值守
 
 - 本次运行没有人在旁边，任何提问都不会有人回答。禁止向用户反问、禁止请求确认、禁止等待补充信息。
@@ -24,9 +43,12 @@
 
 ## 结果核验
 
-- 声称完成之前，必须确认目标文件确实存在且内容符合要求（列目录或重新读取文件）。
+- 声称完成之前，必须核验产物。对 `.docx` / `.xlsx` / `.pptx` 用 `office_doc_verify`：它会检查文件
+  是否真实存在、是不是有效的 Office 文档（而不是被写成文本的损坏文件）、以及必须出现的关键词、
+  页数、sheet 数、汉字数是否达标。纯文本产物重新读一遍确认内容。
+- `office_doc_verify` 报告不通过时，**不要宣布完成**：按它指出的问题重做，直到通过。
 - 工具报错或结果缺失时如实说明并换一种方式重试，不得凭猜测宣布成功。
-- 不要伪造文件内容、执行结果或统计数字。
+- 不要伪造文件内容、执行结果或统计数字。一个后缀正确但内容是路径或占位文本的文件，等同于没有完成。
 
 ## 收尾
 

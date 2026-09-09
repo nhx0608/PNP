@@ -136,6 +136,19 @@ export async function writeMergedTableDocx(file: string): Promise<void> {
   await writeFile(file, await Packer.toBuffer(document));
 }
 
+/**
+ * Exactly what evaluation case office_011 produced. The model could not read the source .docx, fell
+ * back to the engine's native `write`, passed the destination path as the file content, and reported
+ * 已成功创建文件. The result is 44 bytes of text under a .docx name — not a zip, so not a document any
+ * grader can open. Every check that only looks at the extension, the size or the exit status passes
+ * it; only parsing the package catches it.
+ */
+export const FAKE_DOCX_TEXT = "D:\\test_data\\OpenClaw学术洞察报告.docx";
+
+export async function writeFakeDocx(file: string): Promise<void> {
+  await writeFile(file, FAKE_DOCX_TEXT, "utf8");
+}
+
 export const XLSX_SHEET_ONE = "库存管理台账";
 export const XLSX_SHEET_TWO = "Summary";
 
