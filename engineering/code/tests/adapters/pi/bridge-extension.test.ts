@@ -36,7 +36,7 @@ function fakePi(): FakePi {
     registerTool(definition: PiToolDefinition) { tools.push(definition); },
     on(event: string, handler: unknown) {
       if (event === "tool_call") pi.hook = handler as FakePi["hook"];
-      else pi.shutdown = handler as FakePi["shutdown"];
+      else if (event === "session_shutdown") pi.shutdown = handler as FakePi["shutdown"];
     },
   } as FakePi;
   return pi;

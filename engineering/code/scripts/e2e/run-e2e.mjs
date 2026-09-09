@@ -12,6 +12,8 @@ const { values } = parseArgs({
     workspace: { type: "string" },
     report: { type: "string" },
     "expect-tools": { type: "boolean" },
+    "expect-mcp": { type: "boolean" },
+    "expect-desktop-mcp": { type: "boolean" },
     marker: { type: "string" },
     "model-provider": { type: "string" },
     "model-id": { type: "string" },
@@ -30,6 +32,7 @@ const workspaceInput = values.workspace;
 if (workspaceInput === undefined) throw new Error("--workspace is required.");
 const reportPath = values.report;
 const expectTools = values["expect-tools"] === true;
+const expectMcp = values["expect-mcp"] === true;
 const marker = values.marker ?? (expectTools ? "E2E_HELLO_OK" : "E2E_HELLO");
 const model = { providerID: values["model-provider"] ?? "e2e", modelID: values["model-id"] ?? "mock-1" };
 const readyTimeoutMs = Number(values["ready-timeout-ms"] ?? 90_000);
@@ -516,6 +519,36 @@ if (currentSessionId !== null) {
     assert(status.json?.[currentSessionId]?.type === "idle",
       "the session must return to idle after a refused tool", evidence.session_status);
   });
+
+  if (expectMcp) {
+    const csv = path.join(workspace, "中文 客户.csv");
+    const nonce = `mcp-roundtrip-${Date.now()}`;
+    await writeFile(csv, `客户,标记\n测试客户,${nonce}\n`, "utf8");
+    const cases = [
+      { label: "csv-read", name: "csv_read", arguments: { path: csv }, expected: nonce },
+      { label: "missing-file", name: "csv_read", arguments: { path: path.join(workspace, "不存在.csv") }, expected: "PATH_NOT_FOUND" },
+      ...(values["expect-desktop-mcp"] ? [{ label: "desktop-discovery", name: "desktop_list_apps", arguments: {}, expected: "notepad" }] : []),
+    ];
+    for (const item of cases) {
+      await step(`mcp/${item.label}`, async (evidence) => {
+        const before = (await messagesOf(currentSessionId)).length;
+        const prompt = promptAsync(currentSessionId, `E2E_MCP ${JSON.stringify({ name: item.name, arguments: item.arguments })}`);
+        evidence.permissions = [];
+        evidence.prompt = await settleAnswering(prompt, currentSessionId, "once", evidence.permissions);
+        assert(evidence.prompt.status === 204, "MCP round trip must settle with 204", evidence.prompt);
+        const messages = (await messagesOf(currentSessionId)).slice(before);
+        const text = String(finalAssistant(messages)?.content ?? "");
+        evidence.result = text.slice(0, 3000);
+        evidence.messages = summarise(messages);
+        assert(text.includes("E2E_MCP_RESULT") && text.includes(item.expected),
+          "the real MCP result must reach the next model request and final persisted response", evidence.result);
+        const calls = messages.flatMap((message) => message.tool_calls ?? []);
+        assert(calls.some((entry) => entry.name === item.name || entry.name?.endsWith(`_${item.name}`)),
+          "the MCP call must be present in canonical history", calls);
+        assert(messages.some((message) => message.role === "tool"), "MCP must retain a canonical tool result");
+      });
+    }
+  }
 
   await step("case3/abort", async (evidence) => {
     evidence.attempts = [];

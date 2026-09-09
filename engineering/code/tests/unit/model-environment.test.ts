@@ -132,6 +132,49 @@ test("request headers combine the three sources, and an existing Authorization w
     assert.deepEqual((await prepared(declared, {
       ...endpoint, PNP_MODEL_API_KEY: "not-a-secret", PNP_MODEL_AUTHORIZATION: "Bearer stated-by-deployment",
     })).model.headers, { AUTHORIZATION: "Bearer stated-by-deployment" });
+    // The later aggregate source overrides the earlier per-header source case-insensitively. Keeping
+    // both spellings would leave the engine or HTTP client to choose which credential it sends.
+    assert.deepEqual((await prepared(declared, {
+      ...endpoint,
+      PNP_MODEL_AUTHORIZATION: "Bearer earlier",
+      PNP_MODEL_HEADERS: JSON.stringify({ authorization: "Bearer later" }),
+    })).model.headers, { authorization: "Bearer later" });
+  } finally { await removeTree(dir); }
+});
+
+test("blank required model values fail as missing and header errors never include their values", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "pnp-model-blank-"));
+  try {
+    const secondary = {
+      selection: { providerID: "secondary", modelID: "secondary" },
+      endpointEnvironment: "PNP_SECONDARY_ENDPOINT", protocol: "openai-chat",
+      headerEnvironment: { appid: "PNP_SECONDARY_APPID" },
+    };
+    const file = await settingsFile(dir, withModels([model, secondary]));
+    const provider = await load(file, {
+      ...endpoint, PNP_SECONDARY_ENDPOINT: "   ", PNP_SECONDARY_APPID: "fixture-value",
+    });
+    await assert.rejects(provider.prepare({
+      session,
+      request: { parts: [{ type: "text", text: "test" }], model: secondary.selection },
+      signal: new AbortController().signal,
+    }), { code: "MODEL_ENDPOINT_MISSING", status: 503 });
+
+    const invalidHeader = await load(file, {
+      ...endpoint, PNP_SECONDARY_ENDPOINT: "https://secondary.test.invalid/v1",
+      PNP_SECONDARY_APPID: "fixture-value\r\ninjected: value",
+    });
+    await assert.rejects(invalidHeader.prepare({
+      session,
+      request: { parts: [{ type: "text", text: "test" }], model: secondary.selection },
+      signal: new AbortController().signal,
+    }), (error: unknown) => {
+      const failure = error as { code: string; message: string };
+      assert.equal(failure.code, "MODEL_ENVIRONMENT_INVALID");
+      assert.match(failure.message, /PNP_SECONDARY_APPID/);
+      assert.doesNotMatch(failure.message, /fixture-value|injected/);
+      return true;
+    });
   } finally { await removeTree(dir); }
 });
 
@@ -178,6 +221,83 @@ test("a certificate bundle is probed at startup and published as an absolute pat
     });
     // No certificate named: nothing is published and nothing is probed.
     assert.equal((await prepared(file, endpoint)).model.caFile, undefined);
+  } finally { await removeTree(dir); }
+});
+
+test("a selected non-default model checks its certificate before reaching an engine", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "pnp-model-secondary-ca-"));
+  try {
+    const secondary = {
+      selection: { providerID: "secondary", modelID: "secondary" },
+      endpoint: "https://secondary.test.invalid/v1", protocol: "openai-chat", headerEnvironment: {},
+      caFileEnvironment: "PNP_SECONDARY_CA_FILE",
+    };
+    const file = await settingsFile(dir, withModels([model, secondary]));
+    const provider = await load(file, {
+      ...endpoint, PNP_SECONDARY_CA_FILE: path.join(dir, "absent.pem"),
+    });
+    await probeIntegration(provider);
+    await assert.rejects(provider.prepare({
+      session,
+      request: { parts: [{ type: "text", text: "test" }], model: secondary.selection },
+      signal: new AbortController().signal,
+    }), (error: unknown) => {
+      const failure = error as { code: string; message: string };
+      assert.equal(failure.code, "MODEL_CA_FILE_MISSING");
+      assert.match(failure.message, /PNP_SECONDARY_CA_FILE/);
+      assert.doesNotMatch(failure.message, /absent\.pem/);
+      return true;
+    });
+  } finally { await removeTree(dir); }
+});
+
+test("model identifier environment substitutions cannot collapse two endpoints onto one selection", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "pnp-model-duplicate-"));
+  try {
+    const entry = (declared: string, variable: string, port: number) => ({
+      selection: { providerID: "competition", modelID: declared },
+      modelIDEnvironment: variable,
+      endpoint: `http://127.0.0.1:${port}/v1`, protocol: "openai-chat", headerEnvironment: {},
+    });
+    const file = await settingsFile(dir, {
+      version: 1,
+      common: {
+        model: {
+          default: { providerID: "competition", modelID: "first" },
+          models: [entry("first", "PNP_FIRST_MODEL_ID", 9001), entry("second", "PNP_SECOND_MODEL_ID", 9002)],
+        },
+        permissions: { default: "allow", operations: {} },
+      },
+      cores: {},
+    });
+    await assert.rejects(load(file, {
+      PNP_FIRST_MODEL_ID: "same-model", PNP_SECOND_MODEL_ID: "same-model",
+    }), { code: "INTEGRATION_CONFIG_INVALID", status: 400 });
+  } finally { await removeTree(dir); }
+});
+
+test("an explicit legacy profile uses the same supplied transport environment as unified settings", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "pnp-model-legacy-environment-"));
+  try {
+    const profile = path.join(dir, "profile.json");
+    await writeFile(profile, JSON.stringify({
+      models: [{
+        selection: { providerID: "legacy", modelID: "model" },
+        endpoint: "http://model.intranet.invalid/v1", protocol: "openai-chat", headerEnvironment: {},
+      }],
+      tools: [],
+      policy: { default: "allow", operations: {} },
+    }));
+    const provider = await loadIntegration({
+      kind: "configured", development: false, engineDevelopmentOnly: false,
+      configuredProfile: profile, environment: { PNP_ALLOW_HTTP_ENDPOINTS: "1" },
+    });
+    const context = await provider.prepare({
+      session,
+      request: { parts: [{ type: "text", text: "test" }], model: { providerID: "", modelID: "" } },
+      signal: new AbortController().signal,
+    });
+    assert.equal(context.model.endpoint, "http://model.intranet.invalid/v1");
   } finally { await removeTree(dir); }
 });
 

@@ -372,3 +372,64 @@ test("a remote MCP server follows the same http rule as a model endpoint", async
     } finally { await removeTree(byVariable.dir); }
   } finally { await removeTree(dir); }
 });
+
+test("loadIntegration applies its supplied environment while parsing literal endpoint transports", async () => {
+  const { dir, file } = await settingsFile({
+    version: 1,
+    common: {
+      model: {
+        default: model.selection,
+        models: [{ ...model, endpoint: "http://model.intranet.invalid/v1" }],
+      },
+      permissions: { default: "allow", operations: {} },
+      mcp: {
+        servers: {
+          knowledge: {
+            transport: "streamable-http", url: "http://mcp.intranet.invalid/mcp", sideEffect: "read",
+          },
+        },
+      },
+    },
+    cores: {},
+  });
+  try {
+    const tools = await preparedTools({
+      settingsPath: file, environment: { PNP_ALLOW_HTTP_ENDPOINTS: "1" },
+    });
+    assert.equal(tools[0]?.transport === "mcp-http" && tools[0].url,
+      "http://mcp.intranet.invalid/mcp");
+  } finally { await removeTree(dir); }
+});
+
+test("MCP HTTP header names are validated before environment values are resolved", async () => {
+  const { dir, file } = await settingsFile(withServers({
+    knowledge: {
+      transport: "streamable-http", url: "https://mcp.test.invalid/mcp",
+      headerEnvironment: { "bad header": "PNP_MCP_VALUE" },
+    },
+  }));
+  try {
+    await assert.rejects(loadPnpSettings({ engineId: "opencode", settingsPath: file }),
+      { code: "SETTINGS_INVALID", status: 400 });
+  } finally { await removeTree(dir); }
+});
+
+test("MCP HTTP header values cannot inject another header or leak through diagnostics", async () => {
+  const { dir, file } = await settingsFile(withServers({
+    knowledge: {
+      transport: "streamable-http", url: "https://mcp.test.invalid/mcp",
+      headerEnvironment: { Authorization: "PNP_MCP_AUTH" },
+    },
+  }));
+  try {
+    await assert.rejects(preparedTools({
+      settingsPath: file, environment: { PNP_MCP_AUTH: "fixture-token\r\ninjected: value" },
+    }), (error: unknown) => {
+      const failure = error as { code: string; message: string };
+      assert.equal(failure.code, "INTEGRATION_CONFIG_INVALID");
+      assert.match(failure.message, /PNP_MCP_AUTH/);
+      assert.doesNotMatch(failure.message, /fixture-token|injected/);
+      return true;
+    });
+  } finally { await removeTree(dir); }
+});

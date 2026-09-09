@@ -16,6 +16,7 @@ const { values } = parseArgs({
     artifacts: { type: "string" },
     "timeout-ms": { type: "string" },
     "keep-temp": { type: "boolean" },
+    "expect-desktop-mcp": { type: "boolean" },
     // Local escape hatch only: the assessor starts on 6217 and so does this by default.
     "gateway-port": { type: "string" },
   },
@@ -270,7 +271,12 @@ try {
     ...process.env,
     PNP_DATA_DIR: dataDirectory,
     AGENT_ENGINE: engine,
+    // Offline tests must never reload private model headers, settings or MCP credentials from the
+    // operator's local.env after the orchestrator cleared its own process environment.
+    PNP_LOCAL_ENV_FILE: path.join(temporaryRoot, "empty.env"),
+    PNP_SETTINGS: shippedSettings,
   };
+  await writeFile(environment.PNP_LOCAL_ENV_FILE, "", "utf8");
   // The bind address and port come from the documented command line, never from these.
   delete environment.PNP_HOST;
   delete environment.PNP_PORT;
@@ -279,7 +285,7 @@ try {
   delete environment.PNP_MODE;
   // Whatever this machine happens to export, the integration posture of each leg is set here.
   for (const name of ["PNP_INTEGRATION", "PNP_CONFIGURED_PROFILE", "PNP_CONFIGURED_POLICY_OVERRIDES",
-    "PNP_MODEL_STRICT", "PNP_OPENCODE_NATIVE_PERMISSIONS", "PNP_MODEL_HEADERS", "PNP_MODEL_CA_FILE",
+    "PNP_MODEL_STRICT", "PNP_MODEL_SETTINGS", "PNP_OPENCODE_NATIVE_PERMISSIONS", "PNP_MODEL_HEADERS", "PNP_MODEL_CA_FILE",
     AUTH_VARIABLE, API_KEY_VARIABLE, ENDPOINT_VARIABLE, MODEL_ID_VARIABLE,
     ...ENGINE_LOCATION_VARIABLES]) delete environment[name];
   if (engine === "mock") {
@@ -389,10 +395,11 @@ try {
   ];
   if (engine !== "mock") {
     // A real engine runs the full trace: a tool call, the permission round trip and a file on disk.
-    runnerArgs.push("--expect-tools", "--marker", "E2E_HELLO_OK", "--abort-attempts", "1",
+    runnerArgs.push("--expect-tools", "--expect-mcp", "--marker", "E2E_HELLO_OK", "--abort-attempts", "1",
       // The Windows OpenCode binary is ~172 MB and the first launch is slow; pi compiles its
       // session on first use. One budget covers both.
       "--prompt-timeout-ms", "300000", "--ready-timeout-ms", "120000");
+    if (values["expect-desktop-mcp"]) runnerArgs.push("--expect-desktop-mcp");
   } else {
     runnerArgs.push("--marker", "E2E_HELLO", "--abort-attempts", "8",
       "--abort-busy-timeout-ms", "150", "--prompt-timeout-ms", "60000");

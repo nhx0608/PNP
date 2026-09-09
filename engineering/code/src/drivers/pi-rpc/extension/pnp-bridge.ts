@@ -118,6 +118,7 @@ export interface PiUiContext {
 export interface PiEventContext {
   readonly hasUI: boolean;
   readonly ui: PiUiContext;
+  readonly model?: { readonly api: string };
 }
 export interface PiToolCallEvent {
   readonly toolName: string;
@@ -147,6 +148,31 @@ export interface PiExtensionApi {
   registerTool(definition: PiToolDefinition): void;
   on(event: "tool_call", handler: (event: PiToolCallEvent, ctx: PiEventContext) => Promise<PiToolCallDecision | undefined>): void;
   on(event: "session_shutdown", handler: () => Promise<void>): void;
+  on(event: "before_provider_request", handler: (event: { readonly payload: unknown }, ctx: PiEventContext) => unknown): void;
+}
+
+/** Use Chat Completions' string form for plain text. Some compatible endpoints accept text arrays
+ * without an error but ignore their contents (verified with GLM-4-Flash). This belongs at Pi's
+ * native serialization hook, not in the gateway or a second model proxy. Never discard media,
+ * cache-control metadata, or another provider's content blocks. The original payload is immutable. */
+export function normalizeTextOnlyPayload(payload: unknown, api: string | undefined): unknown {
+  if (api !== "openai-completions" || payload === null || typeof payload !== "object" || Array.isArray(payload)) return undefined;
+  const request = payload as Record<string, unknown>;
+  if (!Array.isArray(request.messages)) return undefined;
+  let changed = false;
+  const messages = request.messages.map((value: unknown) => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+    const message = value as Record<string, unknown>;
+    if (message.role !== "user" || !Array.isArray(message.content) || message.content.length === 0) return value;
+    const parts = message.content as unknown[];
+    const plain = parts.every((part) => part !== null && typeof part === "object" && !Array.isArray(part)
+      && (part as Record<string, unknown>).type === "text" && typeof (part as Record<string, unknown>).text === "string"
+      && Object.keys(part).every((key) => key === "type" || key === "text"));
+    if (!plain) return value;
+    changed = true;
+    return { ...message, content: parts.map((part) => (part as { text: string }).text).join("") };
+  });
+  return changed ? { ...request, messages } : undefined;
 }
 
 /**
@@ -306,6 +332,7 @@ export async function activateBridge(pi: PiExtensionApi, options: BridgeOptions 
       report(`PNP bridge: MCP server "${server.id}" (${server.transport}) is unavailable: ${describe(error)}`);
     }
   }
+  pi.on("before_provider_request", (event, ctx) => normalizeTextOnlyPayload(event.payload, ctx.model?.api));
   pi.on("tool_call", createToolCallHook(bridged));
   // Upstream `docs/extensions.md` "Long-lived resources and shutdown": close session-scoped
   // resources from an idempotent `session_shutdown` handler, which pi also fires on exit

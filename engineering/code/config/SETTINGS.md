@@ -194,6 +194,53 @@ Transport rule, applied to whatever a literal or a variable produced: `https` an
 loopback, and `http` elsewhere only when `PNP_ALLOW_HTTP_ENDPOINTS=1`. Credentials inside the URL are
 never accepted. The same rule governs remote MCP servers.
 
+### Minimal multi-model configuration
+
+Give each model its own selection key and variable names. The default below is the logical
+`competition/primary` entry; after loading, its `modelIDEnvironment` value is the model ID published
+in `model.resolved` and sent to the engine.
+
+```json
+{
+  "default": { "providerID": "competition", "modelID": "primary" },
+  "models": [
+    {
+      "selection": { "providerID": "competition", "modelID": "primary" },
+      "modelIDEnvironment": "PNP_PRIMARY_MODEL_ID",
+      "endpointEnvironment": "PNP_PRIMARY_MODEL_ENDPOINT",
+      "protocol": "openai-chat",
+      "apiKeyEnvironment": "PNP_PRIMARY_MODEL_API_KEY"
+    },
+    {
+      "selection": { "providerID": "competition", "modelID": "secondary" },
+      "modelIDEnvironment": "PNP_SECONDARY_MODEL_ID",
+      "endpointEnvironment": "PNP_SECONDARY_MODEL_ENDPOINT",
+      "protocol": "anthropic-messages",
+      "headerEnvironment": {
+        "x-api-key": "PNP_SECONDARY_MODEL_API_KEY"
+      }
+    }
+  ]
+}
+```
+
+The corresponding deployment variables are:
+
+```text
+PNP_PRIMARY_MODEL_ID=<provider-model-id>
+PNP_PRIMARY_MODEL_ENDPOINT=<https-endpoint>
+PNP_PRIMARY_MODEL_API_KEY=<credential>
+PNP_SECONDARY_MODEL_ID=<provider-model-id>
+PNP_SECONDARY_MODEL_ENDPOINT=<https-endpoint>
+PNP_SECONDARY_MODEL_API_KEY=<credential>
+```
+
+By default, a caller's unknown selection is substituted with the effective default so evaluation
+identifiers do not prevent a run. Set `PNP_MODEL_STRICT=1` only when that deployment should reject an
+unknown selection with `MODEL_NOT_ALLOWED`. Two entries for the same provider must not resolve their
+`modelIDEnvironment` variables to the same value, because that would make endpoint selection
+ambiguous and the integration load fails closed.
+
 ## Instructions
 
 `common.instructions` is a list of files whose text tells every Core how to behave in this

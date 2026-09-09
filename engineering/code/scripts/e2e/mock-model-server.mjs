@@ -98,6 +98,11 @@ function pickScenario(messages) {
     .slice(index + 1)
     .some((message) => message !== null && typeof message === "object" && message.role === "tool");
   if (text.trim().toLowerCase().startsWith(TITLE_PREFIX)) return { name: "title", toolResultFollows };
+  if (text.startsWith("E2E_MCP ")) {
+    const request = JSON.parse(text.slice("E2E_MCP ".length));
+    const result = messages.slice(index + 1).filter((message) => message?.role === "tool").at(-1);
+    return { name: "mcp", request, toolResultFollows, result: result === undefined ? undefined : textOf(result.content) };
+  }
   if (text.includes("E2E_WRITE_FILE")) {
     const rest = text.slice(text.indexOf("E2E_WRITE_FILE") + "E2E_WRITE_FILE".length);
     const [target, remainder] = splitFirstToken(rest);
@@ -167,6 +172,17 @@ function plan(body) {
   }
   if (scenario.name === "stall") {
     return { kind: "stall", scenario: scenario.name };
+  }
+  if (scenario.name === "mcp") {
+    // Only the test model knows these markers. Echo the REAL MCP result so the HTTP client can
+    // assert data travelled back through the engine; a canned completion cannot satisfy the test.
+    if (scenario.toolResultFollows) {
+      return { kind: "text", scenario: "mcp:after-tool", text: `E2E_MCP_RESULT ${scenario.result}` };
+    }
+    const suffix = scenario.request.name;
+    const matches = tools.filter((tool) => tool?.function?.name === suffix || tool?.function?.name?.endsWith(`_${suffix}`));
+    if (matches.length !== 1) return { kind: "text", scenario: "mcp:unavailable", text: "E2E_MCP_UNAVAILABLE" };
+    return { kind: "tool_call", scenario: "mcp", call: { name: matches[0].function.name, arguments: scenario.request.arguments } };
   }
   if (scenario.name === "write_file") {
     if (scenario.toolResultFollows) {

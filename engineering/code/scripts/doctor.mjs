@@ -5,15 +5,31 @@ import { parseArgs } from "node:util";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { codeRoot, stringEnv, nodeVersionSatisfies } from "./lib.mjs";
+import { codeRoot, nodeVersionSatisfies } from "./lib.mjs";
+import { loadLocalEnvironment } from "../src/config/local-env.ts";
+import { loadPnpSettings } from "../src/config/settings.ts";
+import { loadIntegration, probeIntegration } from "../src/integration/index.ts";
+import { loadEngine, selectEngine } from "../src/registry/index.ts";
+import { errorStatus, safeDiagnostic, summarizeMcp } from "./doctor-config.mjs";
 
 const args = parseArgs({ options: { engine: { type: "string" } } });
-// An empty AGENT_ENGINE is the same as an unset one everywhere else in this repo's scripts
-// (see docs/engineering-review-2.md §9.5); it must not silently win over --engine, nor should it
-// be reported as a conflict with a --engine value that was only ever meant to fill the gap.
-const envEngine = stringEnv("AGENT_ENGINE", undefined);
-const selected = envEngine ?? args.values.engine;
-const conflict = !!(envEngine && args.values.engine && envEngine !== args.values.engine);
+const environment = { ...process.env };
+let localEnvironment;
+try {
+  localEnvironment = await loadLocalEnvironment({ environment });
+} catch (error) {
+  localEnvironment = { file: "runtime/local.env", present: true, names: [], error };
+}
+// Use the gateway's exact selection rules; an integration kind is never an engine identifier.
+let selected;
+let engineSelectionError;
+try {
+  selected = selectEngine(args.values.engine, environment.AGENT_ENGINE);
+} catch (error) {
+  engineSelectionError = error;
+}
+const conflict = engineSelectionError?.code === "ENGINE_CONFIGURATION_CONFLICT";
+const validEngine = selected !== undefined && selected !== "mock" && engineSelectionError === undefined;
 const toolchain = JSON.parse(readFileSync(path.join(codeRoot, "toolchain.json"), "utf8"));
 
 const checks = [
@@ -21,7 +37,8 @@ const checks = [
   { id: "target-os", passed: process.platform === "win32", observed: process.platform },
   { id: "dependency-lock", passed: existsSync(path.join(codeRoot, "package-lock.json")) },
   { id: "compiled-entry", passed: existsSync(path.join(codeRoot, "dist/main.js")) },
-  { id: "selected-engine", passed: !!selected && selected !== "mock" && !conflict, observed: selected },
+  { id: "selected-engine", passed: validEngine && !conflict, observed: selected,
+    ...(engineSelectionError === undefined ? {} : { reason: safeDiagnostic(engineSelectionError) }) },
 ];
 if (process.platform === "win32") {
   const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "[Console]::Write((Get-Process -Id $PID).SessionId)"], { encoding: "utf8", windowsHide: true });
@@ -91,43 +108,60 @@ async function jobHelperSmoke() {
   }
 }
 
-/**
- * A real detection entry point for the configured model path, not a hardcoded literal. This
- * script never makes the outbound call itself (its own output says `scope: "local-environment-only"`);
- * it only reports, honestly, how far the configuration actually gets: unconfigured, missing,
- * malformed, missing credentials, or structurally ready but not attempted.
- */
-function modelRoundTripProbe() {
-  const kind = stringEnv("PNP_INTEGRATION", undefined);
-  if (kind !== "configured") {
-    return { status: "not_configured", detail: kind === undefined
-      ? "PNP_INTEGRATION is not set (defaults to internal, which has no model path yet)."
-      : `PNP_INTEGRATION=${kind} does not read a model profile; this script performs no live call for it.` };
+/** Loads and probes the same configured integration as main.ts. `probeIntegration` only validates
+ * local configuration and reachability rules; it deliberately does not make a model request. */
+async function modelRoundTripProbe() {
+  if (localEnvironment.error !== undefined) return { status: "local_env_invalid", detail: safeDiagnostic(localEnvironment.error) };
+  if (!validEngine) return { status: "engine_unselected", detail: safeDiagnostic(engineSelectionError ?? { code: "ENGINE_NOT_FOUND", message: "No valid engine selected." }), liveRequest: "not_attempted" };
+  let engine;
+  try { engine = await loadEngine(selected, environment.PNP_MODE === "development"); }
+  catch (error) { return { status: "engine_unavailable", detail: safeDiagnostic(error), liveRequest: "not_attempted" }; }
+  const kind = environment.PNP_INTEGRATION;
+  let provider;
+  try {
+    provider = await loadIntegration({ kind, development: environment.PNP_MODE === "development", engineDevelopmentOnly: engine.descriptor.developmentOnly,
+      engineId: selected, configuredProfile: environment.PNP_CONFIGURED_PROFILE, settingsPath: environment.PNP_SETTINGS,
+      modelSettings: environment.PNP_MODEL_SETTINGS, environment });
+  } catch (error) {
+    return { status: errorStatus(error), detail: safeDiagnostic(error), liveRequest: "not_attempted" };
   }
-  const profilePath = stringEnv("PNP_CONFIGURED_PROFILE", undefined);
-  if (profilePath === undefined || !path.isAbsolute(profilePath)) {
-    return { status: "not_configured", detail: "PNP_CONFIGURED_PROFILE must be set to an absolute path when PNP_INTEGRATION=configured." };
+  try {
+    await probeIntegration(provider);
+    let mcp;
+    try {
+      const legacyOnly = Boolean(environment.PNP_CONFIGURED_PROFILE?.trim()) && !environment.PNP_SETTINGS?.trim();
+      if (legacyOnly) mcp = [];
+      else {
+        const settings = await loadPnpSettings({ engineId: selected, settingsPath: environment.PNP_SETTINGS, environment });
+        mcp = summarizeMcp(settings, environment);
+      }
+    } catch (error) {
+      return { status: "configuration_invalid", detail: safeDiagnostic(error), liveRequest: "not_attempted" };
+    }
+    const failedMcp = mcp.some((entry) => entry.status === "missing_file" || entry.status === "missing_variables");
+    return { status: failedMcp ? "mcp_not_ready" : "ready_untested", liveRequest: "not_attempted", mcp,
+      mcpScope: Boolean(environment.PNP_CONFIGURED_PROFILE?.trim()) && !environment.PNP_SETTINGS?.trim()
+        ? "legacy-profile-not-inspected" : "effective-settings" };
+  } catch (error) {
+    return { status: errorStatus(error), detail: safeDiagnostic(error), liveRequest: "not_attempted" };
   }
-  if (!existsSync(profilePath)) return { status: "profile_missing", detail: profilePath };
-  let profile;
-  try { profile = JSON.parse(readFileSync(profilePath, "utf8")); }
-  catch (error) { return { status: "profile_invalid", detail: error instanceof Error ? error.message : String(error) }; }
-  const models = Array.isArray(profile?.models) ? profile.models : [];
-  if (models.length === 0) return { status: "profile_invalid", detail: "profile.models is missing or empty." };
-  const missing = Object.values(models[0]?.headerEnvironment ?? {}).filter((variable) => !process.env[variable]);
-  if (missing.length > 0) return { status: "credentials_missing", detail: `not resolvable: ${missing.join(", ")}` };
-  return { status: "ready_untested", detail: `${models.length} model(s) configured with resolvable credentials; this script does not place a live call.` };
 }
 
 const [native, helper] = await Promise.all([nativeSourceCheck(), jobHelperSmoke()]);
 checks.push(native, helper);
 
+const modelRoundTrip = await modelRoundTripProbe();
 const report = {
   scope: "local-environment-only",
   checks,
-  modelRoundTrip: modelRoundTripProbe(),
+  localEnvironment: localEnvironment.error === undefined
+    ? { present: localEnvironment.present, names: localEnvironment.names }
+    : { present: true, status: "invalid", detail: safeDiagnostic(localEnvironment.error) },
+  modelRoundTrip,
   desktopAction: "not_run",
   internalTools: "not_run",
 };
 console.log(JSON.stringify(report, null, 2));
-if (checks.some((c) => !c.passed && !c.skipped)) process.exitCode = 1;
+if (checks.some((c) => !c.passed && !c.skipped)
+  || localEnvironment.error !== undefined
+  || ["ready_untested", "not_configured"].includes(modelRoundTrip.status) === false) process.exitCode = 1;

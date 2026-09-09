@@ -18,6 +18,7 @@
 - 系统是 Windows，命令行是 PowerShell；不要假设存在 Git Bash、bash、python 或 curl 等工具。
 - 路径分隔符用 `\`，含空格的路径要加引号。
 - 优先使用已提供的 `office` 工具处理 docx / xlsx / pptx / csv 的读取、生成与修改；这些工具比脚本更可靠。
+- 打开 Notepad、经典 Outlook 或新 Outlook 前先调用 `desktop_list_apps`，再按返回的 appId 调用 `desktop_open_app`。工具只报告启动/激活事实；未核验界面、登录或业务操作时不得声称完成这些步骤。
 - 只有 `office` 工具做不到的事（文件搬移、目录整理、调用本机应用等）才用 PowerShell 命令完成。
 - 不要为了完成任务去联网安装第三方库。
 

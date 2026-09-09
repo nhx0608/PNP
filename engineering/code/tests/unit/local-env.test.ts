@@ -70,12 +70,16 @@ test("a malformed line is reported by position, never by content", async () => {
   try {
     const file = path.join(dir, "local.env");
     await writeFile(file, "PNP_MODEL_ID=endpoint-model\nPNP_MODEL_API_KEY not-a-secret\n", "utf8");
-    await assert.rejects(loadLocalEnvironment({ environment: {}, file }), (error: unknown) => {
+    const environment: NodeJS.ProcessEnv = {};
+    await assert.rejects(loadLocalEnvironment({ environment, file }), (error: unknown) => {
       const failure = error as { code: string; message: string };
       assert.equal(failure.code, "VALIDATION_ERROR");
       assert.match(failure.message, / 2;/);
       assert.doesNotMatch(failure.message, /not-a-secret/);
       return true;
     });
+    // Validation is atomic. A caller that reports the error and keeps running cannot observe a
+    // half-applied environment from the valid lines before the malformed one.
+    assert.equal(environment.PNP_MODEL_ID, undefined);
   } finally { await removeTree(dir); }
 });

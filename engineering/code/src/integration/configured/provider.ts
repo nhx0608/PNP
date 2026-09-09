@@ -10,6 +10,20 @@ import { PnpError } from "../../core/errors.ts";
 function unset(value: string | undefined): boolean {
   return value === undefined || value.trim() === "";
 }
+const HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const INVALID_HEADER_VALUE = /[\0\r\n]/;
+
+function setHeader(
+  headers: Record<string, string>, name: string, value: string, variable: string,
+): void {
+  if (!HEADER_NAME.test(name) || INVALID_HEADER_VALUE.test(value)) {
+    throw new PnpError("MODEL_ENVIRONMENT_INVALID",
+      `${variable} must hold a valid HTTP header name and value.`, 503);
+  }
+  const previous = Object.keys(headers).find((entry) => entry.toLowerCase() === name.toLowerCase());
+  if (previous !== undefined) delete headers[previous];
+  headers[name] = value;
+}
 export interface ConfiguredModel {
   selection: ModelSelection;
   /** Exactly one of these two is set (the settings parser enforces it): a literal URL, or the NAME
@@ -82,15 +96,15 @@ export class ConfiguredIntegration implements IntegrationProvider {
    */
   private endpointOf(model: ConfiguredModel): string {
     const endpoint = model.endpointEnvironment === undefined ? model.endpoint : this.environment[model.endpointEnvironment];
-    if (endpoint === undefined || endpoint === "") throw model.endpointEnvironment === undefined
+    if (unset(endpoint)) throw model.endpointEnvironment === undefined
       ? new PnpError("INTEGRATION_CONFIG_INVALID", "The configured model has no endpoint.", 503)
       : new PnpError("MODEL_ENDPOINT_MISSING", "Required model endpoint environment variable is absent.", 503);
     let url: URL;
-    try { url = new URL(endpoint); }
+    try { url = new URL(endpoint!); }
     catch { throw new PnpError("MODEL_ENDPOINT_INVALID", "Model endpoint is not a valid URL.", 400); }
     if (url.username || url.password) throw new PnpError("UNSAFE_MODEL_ENDPOINT", "Credentials are not allowed in a URL.", 400);
     if (!isApprovedEndpoint(url, this.environment)) throw new PnpError("INSECURE_MODEL_ENDPOINT", "Non-local model transport requires TLS.", 400);
-    return endpoint;
+    return endpoint!;
   }
   /**
    * The model identifier the endpoint expects. A settings entry may name a variable for it, because
@@ -117,8 +131,11 @@ export class ConfiguredIntegration implements IntegrationProvider {
     const headers: Record<string, string> = {};
     for (const [name, variable] of Object.entries(model.headerEnvironment)) {
       const value = this.environment[variable];
-      if (!value) throw new PnpError("MODEL_AUTH_MISSING", "Required credential environment variable is absent.", 503);
-      headers[name] = value;
+      if (unset(value)) {
+        throw new PnpError("MODEL_AUTH_MISSING",
+          `Required model header environment variable is absent: ${variable}.`, 503);
+      }
+      setHeader(headers, name, value!, variable);
     }
     if (model.headersEnvironment !== undefined) {
       const raw = this.environment[model.headersEnvironment];
@@ -133,7 +150,7 @@ export class ConfiguredIntegration implements IntegrationProvider {
           if (typeof value !== "string") {
             throw new PnpError("MODEL_ENVIRONMENT_INVALID", `${model.headersEnvironment} must hold string header values.`, 503);
           }
-          headers[name] = value;
+          setHeader(headers, name, value, model.headersEnvironment);
         }
       }
     }
@@ -142,7 +159,7 @@ export class ConfiguredIntegration implements IntegrationProvider {
       const declared = Object.keys(headers).some((name) => name.toLowerCase() === "authorization");
       // An unset key is not an error: an intranet endpoint that authenticates by header or by
       // network position is a normal deployment, and inventing an empty Bearer would only fail later.
-      if (!unset(key) && !declared) headers.Authorization = `Bearer ${key!}`;
+      if (!unset(key) && !declared) setHeader(headers, "Authorization", `Bearer ${key!}`, model.apiKeyEnvironment);
     }
     return headers;
   }
@@ -153,6 +170,16 @@ export class ConfiguredIntegration implements IntegrationProvider {
     const raw = this.environment[model.caFileEnvironment];
     if (unset(raw)) return undefined;
     return resolveCodePath(raw!.trim());
+  }
+  private async checkedCaFile(model: ConfiguredModel): Promise<string | undefined> {
+    const caFile = this.caFileOf(model);
+    if (caFile === undefined) return undefined;
+    try { await access(caFile, constants.R_OK); }
+    catch {
+      throw new PnpError("MODEL_CA_FILE_MISSING",
+        `${model.caFileEnvironment} names a certificate file that is missing or unreadable.`, 503);
+    }
+    return caFile;
   }
   /** Instruction assets for this turn, content-addressed by the shared resolver. The settings file is
    *  trusted deployment configuration and names each file directly, including one outside the
@@ -185,14 +212,7 @@ export class ConfiguredIntegration implements IntegrationProvider {
     if (missing.length > 0) throw new PnpError("MODEL_ENVIRONMENT_MISSING", `The configured model settings name environment variables that are not set: ${[...new Set(missing)].join(", ")}.`, 503);
     this.endpointOf(defaultModel);
     this.headersOf(defaultModel);
-    const caFile = this.caFileOf(defaultModel);
-    if (caFile !== undefined) {
-      try { await access(caFile, constants.R_OK); }
-      catch {
-        throw new PnpError("MODEL_CA_FILE_MISSING",
-          `${defaultModel.caFileEnvironment} names a certificate file that is missing or unreadable.`, 503);
-      }
-    }
+    await this.checkedCaFile(defaultModel);
     // The instruction files are part of the same startup contract as the model variables: they were
     // checked when the settings loaded, and this confirms they are still readable now.
     await this.instructionAssets();
@@ -203,7 +223,7 @@ export class ConfiguredIntegration implements IntegrationProvider {
     const endpoint = this.endpointOf(model);
     const selection = { providerID: model.selection.providerID, modelID: this.modelIdOf(model) };
     const headers = this.headersOf(model);
-    const caFile = this.caFileOf(model);
+    const caFile = await this.checkedCaFile(model);
     return {
       model: {
         selection, endpoint, protocol: model.protocol, headers, resolution,

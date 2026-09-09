@@ -47,7 +47,7 @@ export async function loadLocalEnvironment(input: {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return { file, present: false, names: [] };
     throw new PnpError("VALIDATION_ERROR", "The local environment file could not be read.", 400);
   }
-  const names: string[] = [];
+  const parsed: Array<{ name: string; value: string }> = [];
   const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
   for (const [index, raw] of lines.entries()) {
     const line = raw.trim();
@@ -60,10 +60,14 @@ export async function loadLocalEnvironment(input: {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
       throw new PnpError("VALIDATION_ERROR", `The local environment file has an invalid variable name at line ${index + 1}.`, 400);
     }
+    parsed.push({ name, value: unquote(line.slice(separator + 1).trim()) });
+  }
+  const names: string[] = [];
+  for (const { name, value } of parsed) {
     // An exported-but-empty variable is unset here, the same way an empty AGENT_ENGINE is: a wrapper
     // that exports a name without a value must not shadow the file the operator filled in.
     if ((environment[name] ?? "") !== "") continue;
-    environment[name] = unquote(line.slice(separator + 1).trim());
+    environment[name] = value;
     names.push(name);
   }
   return { file, present: true, names };

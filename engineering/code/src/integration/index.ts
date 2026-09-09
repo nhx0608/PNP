@@ -91,11 +91,17 @@ function applyModelIdentifierEnvironment(
     substituted.set(modelKey(entry.selection), selection);
     return { ...entry, selection };
   });
+  if (new Set(resolved.map((entry) => modelKey(entry.selection))).size !== resolved.length) {
+    throw new PnpError("INTEGRATION_CONFIG_INVALID",
+      "Model identifier environment variables resolve to duplicate selections.", 400);
+  }
   return { models: resolved, defaultSelection: substituted.get(modelKey(defaultSelection)) ?? defaultSelection };
 }
 /** Legacy profile/model-settings parsing keeps the old public error code even though it reuses the new parser. */
-function parseLegacyModel(value: unknown, label: string): SettingsModelDefinition {
-  try { return parseSettingsModel(value, label); }
+function parseLegacyModel(
+  value: unknown, label: string, environment: NodeJS.ProcessEnv,
+): SettingsModelDefinition {
+  try { return parseSettingsModel(value, label, environment); }
   catch (error) {
     if (error instanceof PnpError && error.code === "SETTINGS_INVALID") {
       throw new PnpError("INTEGRATION_CONFIG_INVALID", error.message, 400);
@@ -112,14 +118,17 @@ function parseLegacySelection(value: unknown, label: string): ModelSelection {
     throw error;
   }
 }
-async function loadLegacyModelSettings(file: string): Promise<{ models: ConfiguredModel[]; defaultSelection: ModelSelection }> {
+async function loadLegacyModelSettings(
+  file: string, environment: NodeJS.ProcessEnv,
+): Promise<{ models: ConfiguredModel[]; defaultSelection: ModelSelection }> {
   if (!path.isAbsolute(file)) throw new PnpError("INTEGRATION_CONFIG_INVALID", "PNP_MODEL_SETTINGS must be an absolute path.", 400);
   const settings = object(await readJson(file, "Legacy model settings"), "legacy model settings");
   exactKeys(settings, ["default", "models"], "legacy model settings");
   if (!Array.isArray(settings.models) || settings.models.length === 0) {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "Legacy model settings require at least one model.", 400);
   }
-  const models = configuredModels(settings.models.map((entry, index) => parseLegacyModel(entry, `models[${index}]`)));
+  const models = configuredModels(settings.models.map((entry, index) =>
+    parseLegacyModel(entry, `models[${index}]`, environment)));
   const defaultSelection = parseLegacySelection(settings.default, "default");
   if (new Set(models.map((entry) => modelKey(entry.selection))).size !== models.length) {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "Model selections must be unique.", 400);
@@ -129,11 +138,12 @@ async function loadLegacyModelSettings(file: string): Promise<{ models: Configur
   }
   return { models, defaultSelection };
 }
-function parseLegacyModels(value: unknown): ConfiguredModel[] {
+function parseLegacyModels(value: unknown, environment: NodeJS.ProcessEnv): ConfiguredModel[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "At least one legacy profile model is required.", 400);
   }
-  const models = configuredModels(value.map((entry, index) => parseLegacyModel(entry, `profile.models[${index}]`)));
+  const models = configuredModels(value.map((entry, index) =>
+    parseLegacyModel(entry, `profile.models[${index}]`, environment)));
   if (new Set(models.map((entry) => modelKey(entry.selection))).size !== models.length) {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "Model selections must be unique.", 400);
   }
@@ -203,8 +213,21 @@ function resolvedValues(names: Readonly<Record<string, string>>, environment: No
   const resolved: Record<string, string> = {};
   for (const [name, variable] of Object.entries(names)) {
     const value = environment[variable];
-    if (!value) throw new PnpError("INTEGRATION_CONFIG_INVALID", "Required tool environment variable is absent.", 503);
-    resolved[name] = value;
+    if (unset(value)) {
+      throw new PnpError("INTEGRATION_CONFIG_INVALID",
+        `Required tool environment variable is absent: ${variable}.`, 503);
+    }
+    resolved[name] = value!;
+  }
+  return resolved;
+}
+function resolvedHeaders(names: Readonly<Record<string, string>>, environment: NodeJS.ProcessEnv): Record<string, string> {
+  const resolved = resolvedValues(names, environment);
+  for (const [name, value] of Object.entries(resolved)) {
+    if (/[^\t\u0020-\u007e\u0080-\u00ff]/.test(value)) {
+      throw new PnpError("INTEGRATION_CONFIG_INVALID",
+        `MCP HTTP header environment variable is invalid: ${names[name]}.`, 503);
+    }
   }
   return resolved;
 }
@@ -215,12 +238,13 @@ function resolvedValues(names: Readonly<Record<string, string>>, environment: No
  */
 function mcpServerUrl(server: McpStreamableHttpServerSettings, environment: NodeJS.ProcessEnv): string {
   const raw = server.urlEnvironment === undefined ? server.url : environment[server.urlEnvironment];
-  if (raw === undefined || raw === "") {
-    throw new PnpError("INTEGRATION_CONFIG_INVALID", "Required tool environment variable is absent.", 503);
+  if (unset(raw)) {
+    throw new PnpError("INTEGRATION_CONFIG_INVALID",
+      `Required MCP URL environment variable is absent: ${server.urlEnvironment}.`, 503);
   }
   // The same environment the rest of this load reads, so `PNP_ALLOW_HTTP_ENDPOINTS` means the same
   // thing for a variable-backed MCP address as it does for a literal one in the settings file.
-  try { return validateRemoteUrl(raw, `mcp.servers.${server.id}.url`, environment); }
+  try { return validateRemoteUrl(raw!, `mcp.servers.${server.id}.url`, environment); }
   catch (error) {
     if (error instanceof PnpError && error.code === "SETTINGS_INVALID") {
       throw new PnpError("INTEGRATION_CONFIG_INVALID", error.message, 400);
@@ -253,7 +277,7 @@ function mcpToolBindings(servers: readonly McpServerSettings[], environment: Nod
     }
     bindings.push({
       id: server.id, transport: "mcp-http", url: mcpServerUrl(server, environment),
-      headers: resolvedValues(server.headerEnvironment, environment), sideEffect: server.sideEffect, ...timeout,
+      headers: resolvedHeaders(server.headerEnvironment, environment), sideEffect: server.sideEffect, ...timeout,
     });
   }
   return bindings;
@@ -309,19 +333,22 @@ export async function loadIntegration(input: {
   // exception, which meant the shipped `{"tools": []}` silently outranked `common.mcp.servers`
   // (docs/engineering-review-3.md section 13).
   const legacyOnly = explicitProfile && !explicitSettings;
-  const legacyModels = legacyOnly && profile.models !== undefined ? parseLegacyModels(profile.models) : undefined;
+  const legacyModels = legacyOnly && profile.models !== undefined
+    ? parseLegacyModels(profile.models, environment) : undefined;
   const legacyPolicy = legacyOnly && profile.policy !== undefined ? parsePolicy(profile.policy, "profile.policy") : undefined;
   // Backward compatibility for the model-only file introduced before unified settings. It is model-only and
   // intentionally cannot override permissions; new deployments should use PNP_SETTINGS instead.
   const legacyModelSettings = input.modelSettings !== undefined && input.modelSettings.trim() !== ""
-    ? await loadLegacyModelSettings(input.modelSettings) : undefined;
+    ? await loadLegacyModelSettings(input.modelSettings.trim(), environment) : undefined;
 
   // The unified settings file is read only when something above has not already supplied that part. A
   // deployment that names its own legacy profile with inline models and policy depends on nothing else, so a
   // missing default settings.json must not fail it (docs/engineering-review-3.md section 12, 记录).
   let unified: EffectiveSettings | undefined;
   const settings = async (): Promise<EffectiveSettings> => {
-    unified ??= await loadPnpSettings({ engineId: input.engineId ?? "", settingsPath: input.settingsPath });
+    unified ??= await loadPnpSettings({
+      engineId: input.engineId ?? "", settingsPath: input.settingsPath, environment,
+    });
     return unified;
   };
   let declaredModels: ConfiguredModel[];

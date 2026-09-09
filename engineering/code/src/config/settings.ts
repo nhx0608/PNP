@@ -189,10 +189,18 @@ function parseDefaultSelection(value: unknown, label: string): SettingsDefaultSe
 function headerEnvironment(value: unknown, label: string): Readonly<Record<string, string>> {
   if (value === undefined) return {};
   const item = object(value, label);
-  return Object.fromEntries(Object.entries(item).map(([name, variable]) => [
-    name,
-    nonEmptyString(variable, `${label}.${name}`),
-  ]));
+  const headerName = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+  const parsed: Record<string, string> = {};
+  const seen = new Set<string>();
+  for (const [name, variable] of Object.entries(item)) {
+    const normalized = name.toLowerCase();
+    if (!headerName.test(name) || seen.has(normalized)) {
+      throw new PnpError("SETTINGS_INVALID", `${label} contains an invalid or duplicate HTTP header name.`, 400);
+    }
+    seen.add(normalized);
+    parsed[name] = nonEmptyString(variable, `${label}.${name}`);
+  }
+  return parsed;
 }
 /**
  * A model declares its endpoint either literally or, like its headers, by the NAME of an
@@ -427,7 +435,7 @@ function parseMcpServer(id: string, value: unknown, label: string, environment: 
     if (hasUrl === hasUrlEnvironment) {
       throw new PnpError("SETTINGS_INVALID", `${label} needs exactly one of url and urlEnvironment.`, 400);
     }
-    const headerEnv = optionalStringMap(item.headerEnvironment, `${label}.headerEnvironment`);
+    const headerEnv = headerEnvironment(item.headerEnvironment, `${label}.headerEnvironment`);
     if (hasUrlEnvironment) {
       return {
         id, transport, urlEnvironment: nonEmptyString(item.urlEnvironment, `${label}.urlEnvironment`),

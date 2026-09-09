@@ -37,6 +37,16 @@
           ],
           "sideEffect": "write",
           "enabled": true
+        },
+        "desktop": {
+          "transport": "stdio",
+          "command": "${PNP_NODE}",
+          "args": [
+            "${PNP_CODE_ROOT}/dist/tools/desktop-mcp/main.js"
+          ],
+          "sideEffect": "external",
+          "timeoutMs": 15000,
+          "enabled": true
         }
       }
     }
