@@ -6,6 +6,16 @@ const factories: Record<string, () => Promise<EnginePack>> = {
   hermes: async () => new (await import("../engines/hermes/pack.ts")).HermesPack(),
   pi: async () => new (await import("../engines/pi/pack.ts")).PiPack(),
 };
+/**
+ * The engine identifiers a deployment may configure, so a configuration surface can offer a Core
+ * section per engine without importing an Engine Pack. The test engine is not one of them outside
+ * development mode, for the same reason `loadEngine` refuses it: it must never look selectable in
+ * a delivered gateway. An id listed here still says nothing about whether that pack is
+ * implemented - `loadEngine` remains the only thing that decides that.
+ */
+export function engineIds(development: boolean): readonly string[] {
+  return Object.keys(factories).filter((id) => development || id !== "mock");
+}
 export async function loadEngine(id: string, development: boolean): Promise<EnginePack> {
   const factory = factories[id];
   if (factory === undefined) throw new PnpError("ENGINE_NOT_FOUND", "Unknown engine identifier.", 400);

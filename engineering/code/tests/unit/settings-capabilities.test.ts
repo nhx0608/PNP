@@ -131,3 +131,32 @@ test("optional missing files are warnings, required targeted missing files fail"
   await writeFile(path.join(directory, "broken", "SKILL.md"), "---\nname: broken\n---\nNo description");
   await assert.rejects(resolvePnpSettingsDocument(document({ skills: { broken: { path: "broken" } } }), input), /frontmatter/);
 }));
+
+test("a variable-name slot must name a variable, not carry its value", async () => fixture(async (directory) => {
+  const input = { engineId: "new", settingsDirectory: directory, environment: {} };
+  const model = (extra: Record<string, unknown>) => ({
+    model: {
+      default: { providerID: "local", modelID: "one" },
+      models: [{ selection: { providerID: "local", modelID: "one" }, protocol: "openai-chat", ...extra }],
+    },
+  });
+  // The schema says these hold NAMES. A pasted secret would otherwise be stored verbatim and then
+  // treated as a variable that merely happens to be unset - silently, and in a file a page serves.
+  await assert.rejects(
+    resolvePnpSettingsDocument(document(model({ endpointEnvironment: "https://model.test/v1" })), input),
+    /endpointEnvironment must name an environment variable/);
+  await assert.rejects(
+    resolvePnpSettingsDocument(document(model({ endpointEnvironment: "PNP_MODEL_ENDPOINT", apiKeyEnvironment: "sk-live-0123456789" })), input),
+    /apiKeyEnvironment must name an environment variable/);
+  await assert.rejects(resolvePnpSettingsDocument(document({
+    mcp: { servers: { one: { transport: "stdio", command: "/bin/one", env: { OPENAI_API_KEY: "sk-live-0123456789" } } } },
+  }), input), /env\.OPENAI_API_KEY must name an environment variable/);
+  await assert.rejects(resolvePnpSettingsDocument(document({
+    mcp: { servers: { one: { transport: "streamable-http", urlEnvironment: "PNP_ONE_URL", headerEnvironment: { Authorization: "Bearer abc" } } } },
+  }), input), /headerEnvironment\.Authorization must name an environment variable/);
+  // A real name still passes, header case and underscores included.
+  const fine = await resolvePnpSettingsDocument(document({
+    mcp: { servers: { one: { transport: "streamable-http", urlEnvironment: "PNP_ONE_URL", headerEnvironment: { Authorization: "PNP_ONE_AUTH" } } } },
+  }), input);
+  assert.equal(fine.mcp.servers[0]?.id, "one");
+}));

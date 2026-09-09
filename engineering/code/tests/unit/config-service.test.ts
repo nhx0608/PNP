@@ -67,6 +67,9 @@ async function fixture(
     const service = new ConfigService({
       engineId: "opencode", settingsPath: file, engineIds: [...ENGINES], environment,
       historyDirectory: path.join(directory, "history"),
+      // What main.ts records at startup; without it inSync is honestly unknown, which the last
+      // test in this file pins separately.
+      runningSha256: createHash("sha256").update(await readFile(file)).digest("hex"),
     });
     const routes = configRoutes(service);
     await run({
@@ -392,11 +395,87 @@ test("the /config family is a pure addition: every path is new and none is regis
     const seen = routes.map((route) => `${route.method} ${route.path}`);
     assert.equal(new Set(seen).size, seen.length);
     // None of the gateway's existing routes lives under /config, so nothing here reshapes one.
-    const app = await readFile(path.join(process.cwd(), "src", "gateway", "app.ts"), "utf8");
-    const registrations = [...app.matchAll(/\bapp\.(get|post|put|delete)\b/g)];
-    assert.ok(registrations.length >= 16, `expected the shipped routes, found ${registrations.length}`);
-    // Literal paths only; the session lifecycle ones are registered from a loop over a suffix.
-    const existing = [...app.matchAll(/\bapp\.(?:get|post|put|delete)<?[^(]*\(\s*"([^"]+)"/g)]
-      .map((match) => match[1]!);
-    assert.deepEqual(existing.filter((route) => route.startsWith("/config")), []);
+    // Nothing outside /config is reachable from this table, so no specification route can be
+    // shadowed by mounting it.
+    assert.deepEqual(routes.filter((route) => !route.path.startsWith("/config")), []);
   }));
+
+test("provenance names the layer for skills, packs and dotted asset domains, not a schema default",
+  async () => fixture(async ({ call }) => {
+    const payload = (await call("GET", "/config")).body as {
+      provenance: { path: string; layer: string; source: string }[];
+    };
+    const at = (needle: string) => payload.provenance.find((entry) => entry.path === needle);
+    // The skill is declared in common and its `required` flag is overridden by the Core: the whole
+    // point of this answer is that those two facts are visible and different.
+    assert.deepEqual(
+      { layer: at("skills.0.path")?.layer, source: at("skills.0.path")?.source },
+      { layer: "common", source: "common.skills.writing.path" },
+    );
+    assert.deepEqual(
+      { layer: at("skills.0.required")?.layer, source: at("skills.0.required")?.source },
+      { layer: "core", source: "cores.opencode.skills.writing.required" },
+    );
+    // A dotted kind and a dotted id must not be split into the wrong lookup key.
+    assert.equal(at("assets.my.domain.a.b.path")?.source, "common.assets.my.domain.a.b.path");
+    assert.equal(at("packs.0.required")?.source, "cores.opencode.packs.house.required");
+    // Genuinely undeclared fields are still labelled as defaults.
+    assert.equal(at("skills.0.layout")?.layer, "default");
+  }, {
+    settings: document({
+      common: {
+        skills: { writing: { path: "skills/writing", required: true } },
+        assets: { "my.domain": { "a.b": { path: "instructions/house.md" } } },
+        packs: { house: {} },
+      },
+      cores: {
+        opencode: {
+          skills: { writing: { required: false } },
+          packs: { house: { required: true } },
+        },
+      },
+    }),
+  }));
+
+test("a credential split across two argv elements is refused like an inline one",
+  async () => fixture(async ({ service }) => {
+    const server = (args: string[]) => ({
+      mcp: { servers: { one: { transport: "stdio", command: "/bin/one", args } } },
+    });
+    for (const args of [["--api-key=" + SECRET], ["--api-key", SECRET], ["serve", "--auth-token", SECRET]]) {
+      await rejects(() => service.validate(document({ common: server(args) }), ["opencode"]), "CONFIG_HTTP_UNSAFE_FIELD");
+    }
+    // A flag with no value after it carries nothing, and an ordinary argument is not a credential.
+    const fine = await service.validate(document({ common: server(["serve", "--verbose", "--api-key"]) }), ["opencode"]);
+    assert.equal(fine.ok, true);
+  }));
+
+test("a query string is ordinary; a credential-shaped parameter name is not",
+  async () => fixture(async ({ service }) => {
+    const endpoint = (url: string) => ({
+      model: {
+        default: { providerID: "local", modelID: "one" },
+        models: [{ selection: { providerID: "local", modelID: "one" }, protocol: "openai-chat", endpoint: url }],
+      },
+    });
+    // The shape one major provider actually routes by; refusing it would make the file unreadable
+    // through the very API meant to edit it.
+    const fine = await service.validate(document({ common: endpoint("https://model.test/v1?api-version=2024-02-01") }), ["opencode"]);
+    assert.equal(fine.ok, true);
+    await rejects(() => service.validate(document({ common: endpoint("https://model.test/v1?token=" + SECRET) }), ["opencode"]),
+      "CONFIG_HTTP_UNSAFE_FIELD");
+    await rejects(() => service.validate(document({ common: endpoint("https://user:pass@model.test/v1") }), ["opencode"]),
+      "CONFIG_HTTP_UNSAFE_FIELD");
+  }));
+
+test("GET /config carries the warnings the validating parser produced", async () => fixture(async ({ call }) => {
+  const payload = (await call("GET", "/config")).body as { warnings: { code: string; path: string }[] };
+  assert.ok(payload.warnings.some((problem) => problem.code === "ASSET_MISSING"),
+    JSON.stringify(payload.warnings));
+}, { settings: document({ common: { skills: { absent: { path: "skills/not-there" } } } }) }));
+
+test("inSync is null, not true, when nobody said what the process loaded", async () => fixture(async ({ file }) => {
+  const service = new ConfigService({ engineId: "opencode", settingsPath: file, engineIds: [...ENGINES], environment: {} });
+  const payload = await service.read();
+  assert.deepEqual({ sha256: payload.running.sha256, inSync: payload.running.inSync }, { sha256: null, inSync: null });
+}));

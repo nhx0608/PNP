@@ -54,7 +54,7 @@ stdout 只承载 JSON-RPC，日志一律走 stderr。
 | `pptx_delete_slides` | write | `path`, `outputPath`, `slides[]`, `overwrite?` | `deleted[{slide,part}]`、`remainingSlides`、`bytes` |
 | `pptx_create` | write | `outputPath`, `slides[{title,bullets?,notes?}]`, `theme?`, `overwrite?` | `slideCount`、`bytes` |
 | `csv_read` | read | `path`, `delimiter?`, `maxRows?` | `headers[]`、`rows[][]`、`rowCount`、`numericColumns[{column,count,min,max,mean,sum}]`、`textColumns[{column,distinctCount,sample[]}]` |
-| `data_aggregate` | read | `path`（`.csv`/`.xlsx`）, `sheet?`, `delimiter?`, `filters[{column,op,value?,values?}]?`, `filterMode?`, `groupBy[]?`, `aggregations[{op,column?,as?}]?`, `sort[{by,direction?}]?`, `limit?` | `rows[{<分组列>,<统计列>}]`、`columns[{column,index,type,numericCount,textCount,emptyCount}]`、`rowCount`、`filteredRowCount`、`groupCount`、`skipped[{column,nonNumericCount,emptyCount,samples[]}]`、`warnings[]` |
+| `data_aggregate` | read | `path`（`.csv`/`.xlsx`）, `sheet?`, `delimiter?`, `filters[{column,op,value?,values?}]?`, `filterMode?`, `groupBy[]?`, `aggregations[{op,column?,as?}]?`, `sort[{by,direction?}]?`, `limit?` | `rows[{<分组列>,<统计列>}]`、`columns[{column,index,type,numericCount,textCount,emptyCount}]`、`rowCount`、`filteredRowCount`、`groupCount`、`hints[]`、`groupingCandidates[{column,distinctCount,samples[]}]?`、`skipped[{column,nonNumericCount,emptyCount,samples[]}]`、`warnings[]` |
 | `fs_find` | read | `root`, `nameContains?`, `extensions?`, `recursive?`, `maxResults?` | `files[{path,name,size,modifiedAt}]`、`directories[{path,name}]`、`truncated` |
 | `fs_delete` | external | `paths?` 或 `root`+`nameContains`/`extensions`, `recursive?`, `dryRun?` | `matched[]`、`deleted[]`、`failed[{path,reason}]`、`skippedDirectories[]` |
 | `doc_verify` | read | `path`, `minBytes?`, `mustContain[]?`, `mustNotContain[]?`, `minTables?`, `minSlides?`, `maxSlides?`, `minSheets?`, `sheetNames[]?`, `minCjkChars?`, `maxCjkChars?` | `ok`、`kind`、`kindMatchesExtension`、`formatValid`、`formatProblem?`、`bytes`、`textLength`、`cjkChars`、`paragraphCount?`、`tableCount?`、`slideCount?`、`sheetCount?`、`sheetNames?`、`checked[]`、`skipped[]`、`failures[{check,expected,actual}]` |
@@ -126,6 +126,15 @@ stdout 只承载 JSON-RPC，日志一律走 stderr。
   不比较两列（"低于安全库存"这类判断请分组取出两列的值后自行比较）。默认最多返回 1000 组，超出时
   `truncated:true`。`gt/gte/lt/lte` 在两侧都能解析成数字时按数值比较，否则退化为字符串比较；空单元格不参与
   任何大小比较。
+- **hints（结果为什么可能不是你要的）**：`hints[]` 不改变任何计算结果，只说明"数字是对的，但回答的不是你问的
+  问题"，并指出改哪个参数。会触发的情况：没传 `groupBy`（返回的那 1 行是整表汇总，不是分类结果，并给出
+  `groupingCandidates`）、`filters` 一行都没匹配上（并列出被过滤列真实存在的取值）、`groupBy` 的组数接近行数
+  （是原表重排而不是汇总）、没传 `aggregations`（只做了一次 count）、某个统计项在每一组都是 `null`（该列没有
+  可解析的数字，不等于 0）、结果被 `limit` 截断、表里根本没有数据行。空数组表示无话可说。
+  `groupingCandidates` 的判据：不同取值数 ≥ 2（只有一个值等于没分组）、≤ 20（再多就不是摘要而是另一份原表）、
+  且 ≤ 行数的一半（保证每组平均至少 2 行），按取值数从少到多排序、最多 6 列——所以 200 行里两个取值的
+  `defaulted` 会被推荐，200 个取值的 `customer_id` 不会。这条判据同时决定"组数太多"的提醒何时出现，
+  工具不会推荐一个自己随后又要抱怨的分组方式。这些提示既在 `structuredContent` 里，也在同一段文本的 JSON 中。
 - **doc_verify**：只支持 `.docx`/`.xlsx`/`.pptx` 与 `.md`/`.markdown`/`.txt`/`.csv`，`.doc`/`.xls`/`.ppt`
   等旧版二进制格式与 `.pdf` 直接报 `UNSUPPORTED_FORMAT`（宁可拒答也不给一个没验证过的"通过"）。
   可读文本的范围与各自的读取工具一致：docx 只覆盖正文（页眉页脚、脚注、文本框不算在 `mustContain` 与

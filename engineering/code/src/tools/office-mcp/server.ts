@@ -408,9 +408,15 @@ function registerDataTools(server: McpServer, catalog: ToolInfo[]): void {
     });
     const dirty = result.skipped.reduce((total, entry) => total + entry.nonNumericCount, 0);
     return {
+      // The hints ride on the summary line, not only inside `data`. A model that reads the first
+      // line and stops is exactly the one that needs them: a real run answered office_014's
+      // ungrouped call three times with byte-identical arguments, because "1 组 / 1 groups" never
+      // said that no groupBy had been asked for. Empty for a well-formed call, so nothing is added
+      // to the common case.
       summary: `data_aggregate: ${result.filteredRowCount}/${result.rowCount} 行 / rows → ${result.groupCount} 组 / groups`
         + `（统计 / aggregations: ${result.aggregations.map((entry) => entry.name).join(", ")}）`
-        + (dirty > 0 ? `，${dirty} 个非数值单元格被跳过 / non-numeric cells skipped` : ""),
+        + (dirty > 0 ? `，${dirty} 个非数值单元格被跳过 / non-numeric cells skipped` : "")
+        + result.hints.map((hint) => `\n${hint}`).join(""),
       data: result,
     };
   });

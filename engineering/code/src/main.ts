@@ -1,12 +1,16 @@
 #!/usr/bin/env node
-import { mkdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { loadLocalEnvironment } from "./config/local-env.ts";
+import { resolveSettingsPath } from "./config/settings.ts";
+import { ConfigService } from "./config/service.ts";
+import { configRoutes } from "./config/routes.ts";
 import { StateStore } from "./storage/store.ts";
 import { GatewayCore } from "./core/gateway-core.ts";
 import { buildApp } from "./gateway/app.ts";
-import { loadEngine, selectEngine } from "./registry/index.ts";
+import { engineIds, loadEngine, selectEngine } from "./registry/index.ts";
 import { loadIntegration, probeIntegration } from "./integration/index.ts";
 import { acquireProcessLifetimeLock } from "./runtime/instance-lock.ts";
 import { LocalProcessHost } from "./runtime/process-host.ts";
@@ -70,6 +74,23 @@ const provider = await loadIntegration({
 // environment does not set is a deployment error, and it belongs at startup with the variable's name in the
 // message — not at the first prompt of the first case.
 await probeIntegration(provider);
+// The configuration surface reads and writes the same settings file this provider was built from,
+// resolved the same way, and its digest is recorded HERE: `running.inSync` has to mean "the file
+// has not changed since the process loaded it", which nothing can reconstruct after the fact. A
+// deployment running from a legacy profile may have no settings file at all; then there is no
+// configuration surface rather than a surface answering about a file that does not exist.
+const settingsFile = resolveSettingsPath(process.env.PNP_SETTINGS);
+const configuration = await (async (): Promise<ConfigService | undefined> => {
+  let bytes: Buffer;
+  try { bytes = await readFile(settingsFile); }
+  catch { return undefined; }
+  return new ConfigService({
+    engineId,
+    settingsPath: settingsFile,
+    engineIds: engineIds(development),
+    runningSha256: createHash("sha256").update(bytes).digest("hex"),
+  });
+})();
 const capacity = duration("PNP_MAX_RESIDENT_SESSIONS", 16, 1, 64);
 const runTimeoutMs = duration("PNP_RUN_TIMEOUT_MS", 900_000, 1_000, 86_400_000);
 const openTimeoutMs = duration("PNP_OPEN_TIMEOUT_MS", 60_000, 1_000, 600_000);
@@ -106,7 +127,7 @@ try {
     runTimeoutMs, openTimeoutMs, cancelGraceMs, interactionTimeoutMs, runQueueLimit,
     questionPolicy: questionPolicy(),
   });
-  app = buildApp(core);
+  app = buildApp(core, configuration === undefined ? {} : { configRoutes: configRoutes(configuration) });
   process.once("SIGINT", () => { void shutdown().catch(() => { process.exitCode = 1; }); });
   process.once("SIGTERM", () => { void shutdown().catch(() => { process.exitCode = 1; }); });
   await core.initialize();

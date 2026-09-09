@@ -52,6 +52,9 @@ export type AggregateColumn = {
 /** Why a numeric aggregation ignored cells, so a dirty column is visible instead of quietly averaged. */
 export type AggregateSkip = { column: string; nonNumericCount: number; emptyCount: number; samples: string[] };
 
+/** A column whose values would work as a `groupBy` key, with the values it actually holds. */
+export type GroupingCandidate = { column: string; distinctCount: number; samples: string[] };
+
 export type AggregateRow = Record<string, AggregateCell>;
 
 export type AggregateResult = {
@@ -67,6 +70,17 @@ export type AggregateResult = {
   groupBy: string[];
   aggregations: { name: string; op: AggregateOperation; column?: string }[];
   groupCount: number;
+  /**
+   * Why this answer may not be the one the caller meant, and which parameter changes it. `warnings`
+   * says "the argument you passed does nothing"; a hint says "the numbers are right but they are
+   * not the numbers you were asking for". Evaluation case office_014 is the reason it exists: a
+   * model asked for per-`defaulted` statistics, left `groupBy` out, got one whole-table row, and
+   * — with nothing in the reply naming `groupBy` — repeated the identical call until the run ended.
+   * Empty when there is nothing to say, so a well-formed call stays quiet.
+   */
+  hints: string[];
+  /** Present only when a hint above offers grouping keys, so a caller can act without asking again. */
+  groupingCandidates?: GroupingCandidate[];
   returnedRows: number;
   truncated: boolean;
   rows: AggregateRow[];
@@ -77,6 +91,21 @@ export type AggregateResult = {
 /** Above this the answer stops being an answer and becomes a second copy of the file. */
 const DEFAULT_ROW_LIMIT = 1000;
 const SAMPLE_LIMIT = 5;
+
+/**
+ * What makes a column a plausible `groupBy` key. A candidate needs at least two distinct values —
+ * one value regroups the table into the single row the caller already has — at most 20, so the
+ * reply stays a summary instead of a second copy of the file, and no more than one distinct value
+ * per two rows, so a near-unique id column can never look like a category. Against office_014's
+ * fixture `defaulted` (2 values over 200 rows) passes and `customer_id` (200 over 200) fails both
+ * the cap and the ratio. The same three numbers decide when an existing `groupBy` is reported as a
+ * listing rather than a summary, so the tool cannot recommend a shape it would then complain about.
+ */
+const MIN_GROUP_KEYS = 2;
+const MAX_GROUP_KEYS = 20;
+const MIN_ROWS_PER_GROUP = 2;
+/** Enough keys to choose between; a 50-column file must not answer with 50 suggestions. */
+const CANDIDATE_LIMIT = 6;
 
 const PLAIN_NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 const GROUPED_NUMBER = /^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/;
@@ -267,7 +296,12 @@ function resolveAggregations(
   headers: readonly string[], specs: readonly AggregateSpec[], groupBy: readonly string[],
 ): ResolvedSpec[] {
   if (specs.length === 0) {
-    throw new OfficeToolError("INVALID_ARGUMENT", "aggregations 不能为空 / must contain at least one aggregation");
+    // An empty list is a legitimate-looking argument with no legitimate reading, so it fails — but
+    // the message has to carry the fix, or the caller only learns that its call was rejected.
+    throw new OfficeToolError("INVALID_ARGUMENT",
+      "aggregations 不能是空数组：要统计行数请传 [{\"op\":\"count\"}]，省略该参数也会默认做一次 count"
+      + " / aggregations must not be an empty array; pass [{\"op\":\"count\"}] or omit the parameter"
+      + " to default to a single row count");
   }
   const used = new Set<string>(groupBy);
   return specs.map((spec, position) => {
@@ -369,6 +403,152 @@ function compareRows(left: AggregateRow, right: AggregateRow, sort: readonly Agg
   return 0;
 }
 
+/**
+ * The distinct non-empty values of a column, or `null` once there are more than `limit` of them.
+ * Stopping at the limit keeps this bounded in memory over an id column of a large file, and the
+ * exact count above the limit is not something any caller acts on: too many is too many.
+ */
+function distinctValues(rows: readonly AggregateCell[][], index: number, limit: number): string[] | null {
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const text = cellText(row[index] ?? null).trim();
+    if (text.length === 0) continue;
+    seen.add(text);
+    if (seen.size > limit) return null;
+  }
+  return [...seen];
+}
+
+function findGroupingCandidates(
+  headers: readonly string[], rows: readonly AggregateCell[][], exclude: ReadonlySet<string>,
+): GroupingCandidate[] {
+  const limit = Math.min(MAX_GROUP_KEYS, Math.floor(rows.length / MIN_ROWS_PER_GROUP));
+  if (limit < MIN_GROUP_KEYS) return [];
+  const found: GroupingCandidate[] = [];
+  headers.forEach((column, index) => {
+    if (exclude.has(column)) return;
+    const values = distinctValues(rows, index, limit);
+    if (values === null || values.length < MIN_GROUP_KEYS) return;
+    found.push({ column, distinctCount: values.length, samples: values.slice(0, SAMPLE_LIMIT) });
+  });
+  // Fewest groups first: the shortest table is the one a model can read back and act on.
+  return found.sort((left, right) => left.distinctCount - right.distinctCount).slice(0, CANDIDATE_LIMIT);
+}
+
+function describeCandidates(candidates: readonly GroupingCandidate[]): string {
+  if (candidates.length === 0) {
+    return "没有列的取值数量适合做分组键 / no column has a small enough set of distinct values to group by";
+  }
+  return "候选分组列 / grouping candidates: " + candidates
+    .map((entry) => `${JSON.stringify(entry.column)}（${entry.distinctCount} 个不同值 / distinct: ${entry.samples.join(", ")}）`)
+    .join("; ");
+}
+
+type DiagnosisInput = {
+  headers: readonly string[];
+  columns: readonly AggregateColumn[];
+  tableRows: readonly AggregateCell[][];
+  keptRows: readonly AggregateCell[][];
+  filterColumns: readonly { column: string; index: number; op: FilterOperator }[];
+  groupBy: readonly string[];
+  specs: readonly ResolvedSpec[];
+  aggregationsGiven: boolean;
+  rows: readonly AggregateRow[];
+  returnedRows: number;
+};
+
+/**
+ * Everything the numbers alone do not say. Each case here is an input that is legal, is computed
+ * correctly, and reads as a finished answer while actually answering a different question than the
+ * caller asked; a model that cannot tell the difference retries the identical call instead of
+ * fixing the argument. Nothing here changes what was computed.
+ */
+function diagnose(input: DiagnosisInput): { hints: string[]; candidates: GroupingCandidate[] } {
+  const hints: string[] = [];
+  let candidates: GroupingCandidate[] = [];
+  const kept = input.keptRows.length;
+
+  // An empty input has exactly one thing worth saying, and saying anything else on top of it is
+  // wrong: "mean is null because the column holds no number" is false when the column is fine and
+  // the row set is empty. So these two cases answer alone.
+  if (input.tableRows.length === 0) {
+    return {
+      hints: ["文件里没有数据行（只有表头或整表为空），所有统计都是对 0 行算出来的。"
+        + " / The file has no data rows (header only, or empty), so every number below counts nothing."],
+      candidates,
+    };
+  }
+  if (kept === 0) {
+    // Zeros and nulls over an empty set look exactly like a real "nothing is at risk" finding.
+    const present = input.filterColumns.map((entry) => {
+      const values = distinctValues(input.tableRows, entry.index, MAX_GROUP_KEYS);
+      const shown = values === null
+        ? "取值过多，未列出 / too many values to list"
+        : values.slice(0, SAMPLE_LIMIT).join(", ");
+      return `${JSON.stringify(entry.column)} ${entry.op}（${shown}）`;
+    }).join("; ");
+    return {
+      hints: [`filters 只匹配到 0/${input.tableRows.length} 行，下面的统计是在空集合上算出来的，`
+        + `不是"没有符合条件的行"这一结论；请先核对过滤值的拼写、大小写与类型。`
+        + ` / The filters matched 0 of ${input.tableRows.length} rows, so every number below is computed over an`
+        + ` empty set and is not a finding; check the spelling, case and type of the filter values first.`
+        + ` 被过滤列的实际取值 / values actually present: ${present}`],
+      candidates,
+    };
+  }
+
+  if (input.groupBy.length === 0) {
+    candidates = findGroupingCandidates(input.headers, input.keptRows, new Set());
+    const first = candidates[0];
+    const example = first === undefined ? "" : ` groupBy: [${JSON.stringify(first.column)}]`;
+    hints.push(`本次没有传 groupBy：返回的这 1 行是全部 ${kept} 行（过滤后）的整表汇总，`
+      + `不是按类别拆开的结果；要让每个类别各占一行，请传 groupBy`
+      + (example === "" ? "。" : `，例如${example}。`)
+      + ` / No groupBy was requested, so the single row aggregates all ${kept} filtered rows;`
+      + ` pass groupBy to get one row per category`
+      + (example === "" ? "." : `, e.g.${example}.`)
+      + ` ${describeCandidates(candidates)}`);
+  } else if (input.rows.length > MAX_GROUP_KEYS && input.rows.length * MIN_ROWS_PER_GROUP > kept) {
+    candidates = findGroupingCandidates(input.headers, input.keptRows, new Set(input.groupBy));
+    hints.push(`groupBy ${input.groupBy.map((column) => JSON.stringify(column)).join(", ")} 把 ${kept} 行拆成了`
+      + ` ${input.rows.length} 组，几乎每行一组：这是原表的另一种排列，不是汇总；`
+      + `按取值较少的列分组才能得到可读的结论。`
+      + ` / Grouping by these columns turned ${kept} rows into ${input.rows.length} groups, roughly one row each:`
+      + ` that is a re-listing of the file, not a summary. Group by a column with fewer distinct values.`
+      + ` ${describeCandidates(candidates)}`);
+  }
+
+  if (!input.aggregationsGiven) {
+    const numeric = input.columns.find((column) => column.type === "number");
+    const example = numeric === undefined
+      ? ""
+      : ` aggregations: [{"op":"mean","column":${JSON.stringify(numeric.column)}}]`;
+    hints.push("没有传 aggregations，本次只统计了行数 count；求和、均值等必须显式传 aggregations"
+      + (example === "" ? "。" : `，例如${example}。`)
+      + " / No aggregations were given, so only a row count was computed; pass aggregations for sums or means"
+      + (example === "" ? "." : `, e.g.${example}.`));
+  }
+
+  for (const spec of input.specs) {
+    if (spec.column === undefined || spec.op === "count" || spec.op === "distinct") continue;
+    if (input.rows.length === 0 || input.rows.some((row) => row[spec.name] !== null)) continue;
+    // null everywhere is correct and unreadable: it means "no number here", not "the value is 0".
+    hints.push(`${spec.name} 在每一组都是 null，因为 ${JSON.stringify(spec.column)} 里没有任何可解析的数字`
+      + `（原因见 skipped），这不等于 0。`
+      + ` / ${spec.name} is null in every group because ${JSON.stringify(spec.column)} holds no parsable number`
+      + ` (see skipped); that is not a zero.`);
+  }
+
+  if (input.returnedRows < input.rows.length) {
+    hints.push(`结果被截断：共 ${input.rows.length} 组，只返回了前 ${input.returnedRows} 组，`
+      + `对返回行求和不等于全表的合计；请提高 limit 或先用 filters 缩小范围。`
+      + ` / Truncated: ${input.rows.length} groups exist and only the first ${input.returnedRows} are returned,`
+      + ` so totals over the returned rows are not totals over the file; raise limit or narrow the filters.`);
+  }
+
+  return { hints, candidates };
+}
+
 export async function dataAggregate(request: AggregateRequest): Promise<AggregateResult> {
   const warnings: string[] = [];
   const table = await loadTable(request, warnings);
@@ -424,6 +604,20 @@ export async function dataAggregate(request: AggregateRequest): Promise<Aggregat
     ? Math.min(rows.length, DEFAULT_ROW_LIMIT)
     : Math.min(request.limit, rows.length);
 
+  const columns = describeColumns(headers, table.rows);
+  const diagnosis = diagnose({
+    headers,
+    columns,
+    tableRows: table.rows,
+    keptRows: kept,
+    filterColumns: filters.map((entry) => ({ column: entry.filter.column, index: entry.index, op: entry.filter.op })),
+    groupBy,
+    specs,
+    aggregationsGiven: request.aggregations !== undefined,
+    rows,
+    returnedRows: limit,
+  });
+
   const skipped: AggregateSkip[] = [];
   for (const [column, tally] of tallies) {
     if (tally.nonNumericCount === 0 && tally.emptyCount === 0) continue;
@@ -439,7 +633,7 @@ export async function dataAggregate(request: AggregateRequest): Promise<Aggregat
     path: request.path,
     source: table.source,
     headers,
-    columns: describeColumns(headers, table.rows),
+    columns,
     rowCount: table.rows.length,
     filteredRowCount: kept.length,
     groupBy: [...groupBy],
@@ -447,6 +641,9 @@ export async function dataAggregate(request: AggregateRequest): Promise<Aggregat
       ? { name: spec.name, op: spec.op }
       : { name: spec.name, op: spec.op, column: spec.column })),
     groupCount: rows.length,
+    // Before `rows`, so an engine that shows the model a truncated JSON blob still shows the hint.
+    hints: diagnosis.hints,
+    ...(diagnosis.candidates.length === 0 ? {} : { groupingCandidates: diagnosis.candidates }),
     returnedRows: limit,
     truncated: limit < rows.length,
     rows: rows.slice(0, limit),

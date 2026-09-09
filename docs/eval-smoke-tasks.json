@@ -1,0 +1,65 @@
+{
+  "_comment": "冒烟用例：每题一次工具调用即可完成，用于验证管道是否通畅，而不是考察模型能力。任何一题失败都指向系统缺陷。",
+  "tasks": [
+    {
+      "task_id": "smoke_csv",
+      "title": "读 CSV 行数",
+      "description": "验证 csv_read 可达",
+      "query": "请读取 D:\\test_data\\task.csv，告诉我它有多少行数据、有哪些列。只需回答，不要写文件。",
+      "category": "冒烟",
+      "secondary_category": "读取",
+      "difficulty": 1,
+      "difficulty_label": "极易"
+    },
+    {
+      "task_id": "smoke_xlsx",
+      "title": "读 XLSX 工作表名",
+      "description": "验证前缀命名空间 xlsx 读取（exceljs 读不了、需走直接 OOXML 回退的那种文件）",
+      "query": "请读取 D:\\test_data\\generate_excel_1.xlsx，告诉我工作表的名称和数据行数。只需回答，不要写文件。",
+      "category": "冒烟",
+      "secondary_category": "读取",
+      "difficulty": 1,
+      "difficulty_label": "极易"
+    },
+    {
+      "task_id": "smoke_docx",
+      "title": "读 DOCX 标题",
+      "description": "验证 docx_extract 可达",
+      "query": "请读取 D:\\test_data\\OpenClaw学术洞察报告.docx，告诉我它的前三个标题。只需回答，不要写文件。",
+      "category": "冒烟",
+      "secondary_category": "读取",
+      "difficulty": 1,
+      "difficulty_label": "极易"
+    },
+    {
+      "task_id": "smoke_group",
+      "title": "分组统计",
+      "description": "验证 data_aggregate 的 groupBy 能被正确使用；office_014 无效循环的最小复现",
+      "query": "请用 D:\\test_data\\task.csv，按 defaulted 列分组，统计每组的人数和 credit_score 平均值。只需回答，不要写文件。",
+      "category": "冒烟",
+      "secondary_category": "分析",
+      "difficulty": 1,
+      "difficulty_label": "极易"
+    },
+    {
+      "task_id": "smoke_write",
+      "title": "写 Markdown",
+      "description": "验证最基本的产物落盘",
+      "query": "请在 D:\\test_data\\smoke_write.md 写一个 Markdown 文件，内容是一行标题「# 冒烟测试通过」。",
+      "category": "冒烟",
+      "secondary_category": "写入",
+      "difficulty": 1,
+      "difficulty_label": "极易"
+    },
+    {
+      "task_id": "smoke_docx_write",
+      "title": "写 DOCX",
+      "description": "验证 docx_create；office_011 写出假 docx 的最小复现",
+      "query": "请用 office 工具创建 D:\\test_data\\smoke_write.docx，正文写一句「冒烟测试通过」。",
+      "category": "冒烟",
+      "secondary_category": "写入",
+      "difficulty": 1,
+      "difficulty_label": "极易"
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "_comment": "冒烟用例：每题一次工具调用即可完成。任何一题失败都指向系统缺陷，而不是模型能力不足。",
+  "_riskPolicy": {
+    "safe": "冒烟用例全部为本地读写，无外部副作用，随默认运行"
+  },
+  "smoke_csv": {
+    "execution": { "risk": "safe", "default": "run" },
+    "requiredSuccessfulTools": [["office_csv_read"]],
+    "outputs": []
+  },
+  "smoke_xlsx": {
+    "execution": { "risk": "safe", "default": "run" },
+    "requiredSuccessfulTools": [["office_xlsx_read"]],
+    "outputs": []
+  },
+  "smoke_docx": {
+    "execution": { "risk": "safe", "default": "run" },
+    "requiredSuccessfulTools": [["office_docx_extract"]],
+    "outputs": []
+  },
+  "smoke_group": {
+    "execution": { "risk": "safe", "default": "run" },
+    "requiredSuccessfulTools": [["office_data_aggregate"]],
+    "outputs": []
+  },
+  "smoke_write": {
+    "execution": { "risk": "safe", "default": "run" },
+    "outputs": ["D:\\test_data\\smoke_write.md"],
+    "contains": { "D:\\test_data\\smoke_write.md": ["冒烟测试通过"] },
+    "finalMustMentionOutputs": true
+  },
+  "smoke_docx_write": {
+    "execution": { "risk": "safe", "default": "run" },
+    "outputs": ["D:\\test_data\\smoke_write.docx"],
+    "requiredSuccessfulTools": [["office_docx_create"]],
+    "docxRequiredText": { "D:\\test_data\\smoke_write.docx": ["冒烟测试通过"] },
+    "finalMustMentionOutputs": true
+  }
+}

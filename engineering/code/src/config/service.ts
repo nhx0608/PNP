@@ -5,9 +5,7 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { PnpError } from "../core/errors.ts";
-import {
-  CODE_ROOT, resolvePnpSettingsDocument, validatePnpSettingsDocument,
-} from "./settings.ts";
+import { CODE_ROOT, validatePnpSettingsDocument } from "./settings.ts";
 import type { EffectiveSettings, SettingsProblem } from "./settings.ts";
 import { effectiveProvenance } from "./provenance.ts";
 import type { ProvenanceEntry } from "./provenance.ts";
@@ -176,13 +174,16 @@ function assertHttpSafeDocument(document: unknown): void {
   };
   const visit = (value: unknown, at: string, inVariableMap: boolean) => {
     if (Array.isArray(value)) {
-      // "--token=abc" hides a credential inside one argv element; "--token" followed by a
-      // separate value element is caught by the element that carries it.
+      // A credential hides in argv two ways: inside one element ("--token=abc") and across two
+      // ("--token", "abc"). Both are checked; a bare flag with no value after it is not a leak.
       if (at.endsWith(".args")) {
-        for (const entry of value) {
-          if (typeof entry !== "string" || !entry.includes("=")) continue;
-          const flag = entry.slice(0, entry.indexOf("="));
-          if (/^--?[A-Za-z0-9._-]*$/.test(flag) && namesACredential(flag, entry.slice(flag.length + 1))) fail(at);
+        const isFlag = (entry: string) => /^--?[A-Za-z0-9._-]+$/.test(entry);
+        for (const [index, entry] of value.entries()) {
+          if (typeof entry !== "string") continue;
+          if (entry.includes("=")) {
+            const flag = entry.slice(0, entry.indexOf("="));
+            if (isFlag(flag) && namesACredential(flag, entry.slice(flag.length + 1))) fail(at);
+          } else if (isFlag(entry) && namesACredential(entry, value[index + 1])) fail(at);
         }
       }
       value.forEach((entry, index) => visit(entry, `${at}.${index}`, inVariableMap));
@@ -200,7 +201,14 @@ function assertHttpSafeDocument(document: unknown): void {
         let url: URL;
         try { url = new URL(child); }
         catch { fail(childPath); return; }
-        if (url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") fail(childPath);
+        // Userinfo is what isApprovedEndpoint refuses too, so this stays in step with the loader
+        // rather than rejecting documents the gateway itself accepts. A query string is ordinary -
+        // "?api-version=2024-02-01" is how one major provider routes - so only a parameter whose
+        // NAME reads like a credential is refused.
+        if (url.username !== "" || url.password !== "") fail(childPath);
+        for (const [name, parameter] of url.searchParams) {
+          if (namesACredential(name, parameter)) fail(`${childPath}?${name}`);
+        }
       }
       visit(child, childPath, variableMap);
     }
@@ -250,6 +258,20 @@ export class ConfigService {
     this.historyDirectory = options.historyDirectory ?? path.join(CODE_ROOT, "runtime", "config-history");
   }
 
+  /**
+   * What the running process loaded, when the caller told us. Nobody may guess it from the file:
+   * adopting the first digest a read happens to see would report "in sync" for a file that was
+   * hand-edited between startup and that read, which is the one thing this field exists to catch.
+   */
+  private running(current: string): { engine: string; sha256: string | null; loadedAt: string; inSync: boolean | null } {
+    return {
+      engine: this.engineId,
+      sha256: this.runningSha256 ?? null,
+      loadedAt: this.loadedAt,
+      inSync: this.runningSha256 === undefined ? null : current === this.runningSha256,
+    };
+  }
+
   private async snapshot(): Promise<SettingsSnapshot> {
     let bytes: Buffer;
     let info;
@@ -258,10 +280,10 @@ export class ConfigService {
     } catch {
       throw new PnpError("SETTINGS_INVALID", "PNP settings could not be loaded.", 400);
     }
-    const document = parseDocument(bytes);
-    const sha256 = digest(bytes);
-    this.runningSha256 ??= sha256;
-    return { bytes, document, sha256, modifiedAt: info.mtime.toISOString() };
+    return {
+      bytes, document: parseDocument(bytes), sha256: digest(bytes),
+      modifiedAt: info.mtime.toISOString(),
+    };
   }
 
   private assertEngine(engineId: string): void {
@@ -274,9 +296,15 @@ export class ConfigService {
     this.assertEngine(engineId);
     const snapshot = await this.snapshot();
     assertHttpSafeDocument(snapshot.document);
-    const effective = await resolvePnpSettingsDocument(snapshot.document, {
+    // The validating parser rather than the throwing one: it is the same section parsers, and it
+    // is the only one that can report a warning - an optional asset whose file is missing, a Core
+    // named for an engine that is not registered - which R-09 lists as part of this answer.
+    const validation = await validatePnpSettingsDocument(snapshot.document, {
       engineId, settingsDirectory: this.settingsDirectory, environment: this.environment,
     });
+    const warnings = safeProblems(validation.problems, this.environment);
+    if (validation.effective === undefined) throw new SettingsInvalidError(warnings);
+    const effective = validation.effective;
     const provenance = effectiveProvenance(snapshot.document, engineId, effective);
     const environment = collectEnvironmentNames(snapshot.document, this.environment);
     provenance.push(...environment.flatMap((item) => item.paths.map((at) => ({
@@ -288,10 +316,7 @@ export class ConfigService {
         path: this.settingsPath, sha256: snapshot.sha256, modifiedAt: snapshot.modifiedAt,
         readonly: this.readonly,
       },
-      running: {
-        engine: this.engineId, sha256: this.runningSha256!, loadedAt: this.loadedAt,
-        inSync: snapshot.sha256 === this.runningSha256,
-      },
+      running: this.running(snapshot.sha256),
       effective,
       provenance,
       // Configured, parsed, and honestly not in force: the page shows these next to the fields
@@ -299,7 +324,7 @@ export class ConfigService {
       capabilities: inspectConfiguredCapabilities(effective, engineId),
       effect: "restart" as const,
       effects: configEffects(),
-      warnings: [] as SettingsProblem[],
+      warnings,
     };
   }
 
@@ -339,9 +364,14 @@ export class ConfigService {
     };
   }
 
+  /**
+   * Names and set-flags only - no part of the document is returned - so this route deliberately
+   * does not run the HTTP-safety check. If a hand-edited field has made /config refuse to serve
+   * the file, this is the one read that still works, and the operator needs it to see which
+   * variables the file references while they repair it.
+   */
   async environmentStatus(): Promise<{ variables: EnvironmentEntry[]; howToSet: string }> {
     const snapshot = await this.snapshot();
-    assertHttpSafeDocument(snapshot.document);
     return {
       variables: collectEnvironmentNames(snapshot.document, this.environment),
       howToSet: "Set values with .\\pnp.cmd config or runtime\\local.env, then restart the gateway.",
@@ -403,7 +433,7 @@ export class ConfigService {
       const changed = changedSections(before.document, settings);
       return {
         sha256, backup, effect: combinedEffect(changed), changed,
-        running: { sha256: this.runningSha256!, inSync: sha256 === this.runningSha256 },
+        running: this.running(sha256),
       };
     });
   }

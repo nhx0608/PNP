@@ -4,7 +4,7 @@ import type { ConfigService } from "./service.ts";
 
 /**
  * The /config family as data rather than as Fastify calls: `src/gateway/app.ts` mounts this table
- * in one loop, and every request/response pair here is exercised by tests/unit/config-routes.test.ts
+ * in one loop, and every request/response pair here is exercised by tests/unit/config-service.test.ts
  * without an HTTP server. Keeping the table transport-agnostic is also what keeps the rule
  * "no credential crosses HTTP" checkable in one place - `ConfigService` is the only thing that
  * touches the settings file, and nothing in this module can reach runtime\local.env.
@@ -65,7 +65,8 @@ function tail(request: ConfigRequest): string {
 
 /**
  * A conflict and an invalid document are both ordinary answers for an editor: it needs the digest
- * to re-base on, or the list of problems to anchor to fields. The gateway's generic error handler
+ * to re-base on, or the list of problems to anchor to fields - including on the read side, where a
+ * stored file that no longer parses is exactly what the page has been opened to repair. The gateway's generic error handler
  * would flatten both to { code, message }, so these two are answered rather than thrown.
  */
 async function answered(run: () => Promise<ConfigResponse>): Promise<ConfigResponse> {
@@ -86,10 +87,10 @@ export function configRoutes(service: ConfigService): readonly ConfigRoute[] {
     {
       method: "GET", path: "/config", write: false,
       summary: "Effective settings for one engine, every value labelled with the layer it came from.",
-      handle: async (request) => {
+      handle: async (request) => answered(async () => {
         const engine = request.query?.engine;
         return { status: 200, body: await service.read(engine === undefined || engine === "" ? undefined : engine) };
-      },
+      }),
     },
     {
       method: "GET", path: "/config/raw", write: false,

@@ -4,6 +4,7 @@ import { PnpError, asPnpError } from "../core/errors.ts";
 import type { Json, ModelSelection, PromptRequest, PublicEvent } from "../contracts/index.ts";
 import { CreateSessionSchema, PromptSchema } from "./schemas.ts";
 import type { CreateSessionBody, PromptBody } from "./schemas.ts";
+import type { ConfigRoute } from "../config/routes.ts";
 
 interface FastifyHttpError {
   code?: string;
@@ -13,6 +14,14 @@ interface FastifyHttpError {
 export interface BuildAppOptions {
   /** SSE per-connection buffer cap in bytes. Defaults to 8 MiB; overridable for tests only. */
   sseMaxBufferedBytes?: number;
+  /**
+   * The configuration surface, already built by the caller. Omitted, the `/config` family simply
+   * does not exist -- every route here stays optional so a deployment that does not want a
+   * writable configuration API is a deployment that passes nothing, not one that has to disable
+   * something. The route table is produced by src/config/routes.ts and is asserted there to live
+   * entirely under `/config`, so mounting it can never shadow a specification route.
+   */
+  configRoutes?: readonly ConfigRoute[];
 }
 
 /** Event types whose payload is a full-text content update rather than session control state.
@@ -247,6 +256,27 @@ export function buildApp(core: GatewayCore, options: BuildAppOptions = {}) {
     return { ok: true };
   });
   app.get("/diagnostics", async () => core.diagnostics());
+  // The configuration surface, when the caller built one. Mounted from a table rather than written
+  // out here so the routes stay owned by src/config/, which is where their validation, provenance
+  // and write semantics live; this layer only adapts Fastify's request to the table's shape and
+  // lets the shared error handler turn a PnpError into the standard {code,message} envelope.
+  // routes.ts asserts every path is under /config, so this loop cannot shadow a specification route.
+  for (const route of options.configRoutes ?? []) {
+    const handler = async (request: {
+      query?: unknown; params?: unknown; body?: unknown;
+    }, reply: { code(status: number): { headers(values: Record<string, string>): { send(body: unknown): unknown }; send(body: unknown): unknown } }) => {
+      const answer = await route.handle({
+        query: request.query as Readonly<Record<string, string | undefined>> | undefined,
+        params: request.params as Readonly<Record<string, string | undefined>> | undefined,
+        body: request.body,
+      });
+      const sending = reply.code(answer.status);
+      return answer.headers === undefined ? sending.send(answer.body) : sending.headers({ ...answer.headers }).send(answer.body);
+    };
+    if (route.method === "GET") app.get(route.path, handler);
+    else if (route.method === "POST") app.post(route.path, handler);
+    else app.put(route.path, handler);
+  }
   app.setNotFoundHandler((_request, reply) => reply.code(404).send({ code: "NOT_FOUND", message: "Route not found." }));
   app.get("/question", async () => core.interactions.list("question"));
   app.get("/permission", async () => core.interactions.list("permission"));

@@ -1,6 +1,6 @@
 {
   "contractVersion": "1.1.0",
-  "payloadFileCount": 272,
+  "payloadFileCount": 352,
   "files": [
     {
       "path": ".gitattributes",
@@ -97,8 +97,8 @@
       "path": "code/config/instructions/competition.md",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 3913,
-      "sha256": "8e64e834159341fff1a5d4191fb4ca47c8591b5c08654294a14215872deeed3e"
+      "bytes": 5004,
+      "sha256": "22d81a80ef9a34595e37f30c06e3678134a8ce863b9a05fb03a07407b2ef45cc"
     },
     {
       "path": "code/config/internal.example.json",
@@ -132,15 +132,15 @@
       "path": "code/config/settings.json",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 1373,
-      "sha256": "2f70df591eac1c7118c1837c008eae73d9200e51f627f7820b3e8618d7cb6bd2"
+      "bytes": 1650,
+      "sha256": "75589eae5eb9fefc888378b7cd7c0373fd4d1006d2a8599319dd3e8689c1646e"
     },
     {
       "path": "code/config/SETTINGS.md",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 26598,
-      "sha256": "66eaa04e1c76fffeba705371d033061ed4fba61b11a738f45e2d16c9b69d6c52"
+      "bytes": 49876,
+      "sha256": "a1bb84f081ff397c85c226c9790362799de2809547dad1313d604127512bcc44"
     },
     {
       "path": "code/config/START-HERE.zh-CN.md",
@@ -328,8 +328,8 @@
       "path": "code/scripts/package-release.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 29408,
-      "sha256": "709fc812a71552b28bae7ab6bfd0ef7494adb38b3269f3a261fa2592a2d2dc4b"
+      "bytes": 29686,
+      "sha256": "385995cf279c341154d5bf5e27e96d17f71227a57049a7a29c19f39c4c599d76"
     },
     {
       "path": "code/scripts/pnp-local.ps1",
@@ -405,8 +405,8 @@
       "path": "code/src/config/effects.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 5615,
-      "sha256": "b5e908c8bfc9929e162145365e43ca7253b7b1ec02bcd6d31eb464643bf3d9cc"
+      "bytes": 5852,
+      "sha256": "1f9d3ccc9e5e428ee822d227708fc7d34f9e97759133f898caee794db8e2b971"
     },
     {
       "path": "code/src/config/local-env.ts",
@@ -419,29 +419,29 @@
       "path": "code/src/config/provenance.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 5942,
-      "sha256": "5a555fc60e9da897082a157322fae52295d397d37fef9060660bb269b95bf170"
+      "bytes": 8580,
+      "sha256": "c8a3574ff20f1bf79fc88ae3b2b2f8dcd2123493810349201994228cd753cff9"
     },
     {
       "path": "code/src/config/routes.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 6742,
-      "sha256": "57533fa598994793ca2362ceea96dac239cdb9004091d071568215a322e89e01"
+      "bytes": 6891,
+      "sha256": "c02d20707f1ac3f16a4e5e307d05a9e38b53ac70296df91ab4c6fcb4e8f7153c"
     },
     {
       "path": "code/src/config/service.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 23875,
-      "sha256": "60bfcc5390188dbedb5b10fccf51789703852fb884a61040e26bbbaec9480de7"
+      "bytes": 25706,
+      "sha256": "1c2d35cddbc7e2d96293c8a217a4ce984aec6a79fb8d961f1e06db879cbc154a"
     },
     {
       "path": "code/src/config/settings.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 52901,
-      "sha256": "c050ab1b976f8011ab85f3f7ac668e0123aa1b3292afbd3b6f6ef7f0240871fa"
+      "bytes": 53588,
+      "sha256": "b9ba1ca993baf1f5b724778117dad136fb515d406158ea30d9e99645fba1b116"
     },
     {
       "path": "code/src/contracts/AGENTS.md",
@@ -482,8 +482,8 @@
       "path": "code/src/core/gateway-core.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 52911,
-      "sha256": "897ea08534e25098845764e2cb50772cc3451ee4cecf8579d786e633b6604da3"
+      "bytes": 57423,
+      "sha256": "7d03b69d221ae05f31371d79393fa8cd949a8942d6a68a4babf8afdc540a7179"
     },
     {
       "path": "code/src/core/interactions.ts",
@@ -678,8 +678,8 @@
       "path": "code/src/gateway/app.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 23602,
-      "sha256": "499bef14ee78df96a8a83bb43174af84da1e7c705360dc213bfb38d0111c054a"
+      "bytes": 25597,
+      "sha256": "60bef43047ae1fa98156f26d02083f5f46e49c5898f2c09dd3c973ea67afe7ad"
     },
     {
       "path": "code/src/gateway/schemas.ts",
@@ -727,15 +727,15 @@
       "path": "code/src/main.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 7056,
-      "sha256": "685bc4678a5cefb19484da32dbd8a4e400477357fb12c483160851b04957e18e"
+      "bytes": 8286,
+      "sha256": "8fdbf7a759b93f049e2a8424f5eede31af83bcad86c9d1d3a1d8077fff21347a"
     },
     {
       "path": "code/src/registry/index.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 1851,
-      "sha256": "56384df70ae4f36b520646e9dfcb3ac1653bca6c53eda08d19fc1067df3a4f20"
+      "bytes": 2464,
+      "sha256": "31676decbd30af576cd4ae69aa7b0e27151b65a794e8387abf07e3992deb4d1b"
     },
     {
       "path": "code/src/runtime/AGENTS.md",
@@ -874,8 +874,8 @@
       "path": "code/src/tools/office-mcp/aggregate.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 19098,
-      "sha256": "3b187d068f7cf3e565ff9e0091f222d9814fc91889d8dfe2a1fb2d9a715393dd"
+      "bytes": 29820,
+      "sha256": "1227c1ad4ed37cf38aaf11d1a7520e2a26faf9b9cf5754ccdcbcbc95a839b762"
     },
     {
       "path": "code/src/tools/office-mcp/csv.ts",
@@ -958,8 +958,8 @@
       "path": "code/src/tools/office-mcp/README.md",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 13653,
-      "sha256": "926e145a9e9ff0198dbd38417713f082c1e9a2fdb7b9f9cb97916c346a9787b2"
+      "bytes": 15022,
+      "sha256": "704c9edefb6cb9550c388935db8919cbe6ae4eeed9c036164abea5102679540c"
     },
     {
       "path": "code/src/tools/office-mcp/results.ts",
@@ -972,8 +972,8 @@
       "path": "code/src/tools/office-mcp/server.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 38692,
-      "sha256": "3fba9b197bad247abc192f69708e75fcc1177a28bb4c19d81a03d0899dd44d8d"
+      "bytes": 39171,
+      "sha256": "23cd5c4e2ffa1b53290cdc4f9e96a06174f71bfa42511db9c5c7358b4b85e6fe"
     },
     {
       "path": "code/src/tools/office-mcp/system.ts",
@@ -1009,6 +1009,531 @@
       "category": "实现源码",
       "bytes": 5129,
       "sha256": "c5bda21fab423924d8b62da0c37dc982f1d23d7419e8a25d723f4ac2bb5a857d"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf-6.13.3.dist-info/licenses/LICENSE",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 1605,
+      "sha256": "a97ac230e5f33ef10a5367a850eb01f91f1a0b064e34742c7794d2294557f524"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf-6.13.3.dist-info/METADATA",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 7229,
+      "sha256": "c330fa096258dabd0bf76bd9071e85e1d208a4c5a14b4eff09395f41f66b4d53"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf-6.13.3.dist-info/RECORD",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 4996,
+      "sha256": "8150a6a774a6b021c6706d9e403a7165a0c938b65d054a9fc1fc96d6bc76227a"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf-6.13.3.dist-info/WHEEL",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 82,
+      "sha256": "1b68144734c4b66791f27add5d425f3620775585718a03d0f9b110ba3a4d88db"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/__init__.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 1283,
+      "sha256": "612ff566b4378c13c7b1180cb2da89ac0b6cde5500a63fe530e30ae6a88b1b9c"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_cmap.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 13508,
+      "sha256": "a0f06cf6fade4f77a4461037882885c9f3bb25904474531fb45f31fd65af72da"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_codecs/__init__.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 1373,
+      "sha256": "035d44440b70b56ae91953b34d296b0b56b74fd1c29562c1591c067b7fcf7eed"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_codecs/_codecs.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 10717,
+      "sha256": "f377c8779e1713e6916f798d8bfa75a2526d67375487df07b3159708e193b512"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_codecs/adobe_glyphs.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 447213,
+      "sha256": "b7770314f0eac08cf5c3d07481d5738dd73c7842bd02e4639397fb95a130fdf6"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_codecs/core_font_metrics.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 114968,
+      "sha256": "14b3d66d3678871790597820d63a397b8a972821642846397bce54d9b2c533a9"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_codecs/pdfdoc.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 4269,
+      "sha256": "c5f4af30562cbf1b9a490d14bbdbd90ca681d16bbce61d6e0a20758bdac07145"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_codecs/std.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 2630,
+      "sha256": "0f240cb84a40184a52f6ecb58d67f87278fe92a4a13ce0228f9b08ed0d580fc1"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_codecs/symbol.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 3734,
+      "sha256": "9c86864089615822623cc1ebc149661871fefdf397c842af82e466b8a5dc1809"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_codecs/zapfding.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 3742,
+      "sha256": "3d0c63c510bad7a778d711777b15713f55bc9cce10ad97e33b7966b4bc6913fb"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_crypt_providers/__init__.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 2770,
+      "sha256": "c5441b160310bca31a38e4f7454756ddb4bc7d94a147c3c13b3eab7ac7f05855"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_crypt_providers/_base.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 1735,
+      "sha256": "34505711d85bae0f64d353d57cd37f93b94401897606481720e8b9a1f53ff91f"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_crypt_providers/_cryptography.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 5265,
+      "sha256": "7c884d347d9ab10a89af0d05ed063ad4d97551e24012bf51700a35b74f8280d0"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_crypt_providers/_fallback.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 3382,
+      "sha256": "81772ba3f2bbab82180cbe57195471a059978d75cc6ba4e57830f0c56c828f81"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_crypt_providers/_pycryptodome.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 4020,
+      "sha256": "c57e05b5af101c7133b44fbf60793ebc9b66054d71295c01f7dff2b10e939ce2"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_doc_common.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 55295,
+      "sha256": "d7cf2507aa538ed05655212980756e9f5de1b8dd687c2ffe096a0a0c64b17bcd"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_encryption.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 53649,
+      "sha256": "c39c927e0c1d9faace5c06f244603027421c50787db847535f780090eb01e0a7"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_font.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 32151,
+      "sha256": "f3f168ddb0ad4921f65e66f4f061e0e63837c2b9b8b1cac811daee0d13a82aac"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_page_labels.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 9236,
+      "sha256": "30a1c4fe1f8512737d0d14a676b62ae26e21238b81454f9f2c646666fd777078"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_page.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 91856,
+      "sha256": "ec62c8781e74fee6fcc373d5f61a4bf9b0be795517f7681068debcfba9b3457b"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_protocols.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 2123,
+      "sha256": "eeacfdd8b55d3eb6244a97543e9029f54e065b98f13414df55ca545b052110ea"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_reader.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 65986,
+      "sha256": "59b94f6599a064a5f6fa79a45ab72952a5407f7093ec6c360d7c779ff0037ec7"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_text_extraction/__init__.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 8592,
+      "sha256": "1d3c239e110d6a13024b3aa9eef270047c43ee49f57fb78060b63a0545dc281e"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_text_extraction/_layout_mode/__init__.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 340,
+      "sha256": "454408c22530ce778db5c9639d533a8e445a7a6ea980fee6383dbe3019ada6fc"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_text_extraction/_layout_mode/_fixed_width_page.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 16484,
+      "sha256": "fe34b1b188ca7bb11a4ec144033324c9277c48d8cf653c8f0ab41c8837c23838"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_text_extraction/_layout_mode/_text_state_manager.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 7517,
+      "sha256": "681fed2b85f6687313c6ba327cdac67c579a7b974a9e2d3bdcc0d1eda95d2792"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_text_extraction/_layout_mode/_text_state_params.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 6513,
+      "sha256": "710640c6fe101edfe6e41fe30fd39d34b8cc5df96e10efd81fa50f3ea8b3a9f3"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_text_extraction/_text_extractor.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 14450,
+      "sha256": "88a5ec8d34b775240371b73298234016f329bf99afc6365ea6ae0c552d034aa8"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_utils.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 21513,
+      "sha256": "a0bdd264ea7f27fc139cdc79eb96accd3b944591d7f519ed0c11c32961ebc336"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_version.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 23,
+      "sha256": "24c21a8a027649c3ceaf41aff8660a6c3ff4134aac2ce1f7709e23c1eae9855d"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/_writer.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 134780,
+      "sha256": "8a80afd907c5053e9e31186796a8e36cc6e4b51df138a02d9057192acb9fa4b7"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/annotations/__init__.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 990,
+      "sha256": "7f693ffa3027dfd082076ecac50fdef771a29e7ce40076d49e749e1899758f21"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/annotations/_base.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 961,
+      "sha256": "608453cd3764aa3f035164939b2d1fae47d3af88e87b91d41b344e5287f8a08a"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/annotations/_markup_annotations.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 11862,
+      "sha256": "b162a1181086ed7f688c0bc4691304a093fe7d8e8572b94574e9ad79f219066d"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/annotations/_non_markup_annotations.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 3656,
+      "sha256": "58a598b5ed8e89b646dcc1fb05fdbaa133a90b2c86ae43cb62715d275a2c46b6"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/constants.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 23632,
+      "sha256": "911faa0d2987ba2ccfa3c4cb03463b20745edbb8a3b2357973ab1eb7b0b94b18"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/errors.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 1947,
+      "sha256": "070d56f61c4eb03830ab053a628436974f89894c93aba979423542afe5b81850"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/filters.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 32186,
+      "sha256": "bdad44cc767bb48c31637543cdfb864fe1600e8f4e880233e69c6a946be3b370"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/generic/__init__.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 3468,
+      "sha256": "56ba9d61fb5010278f0d4dab5d532012a45a60547ccce57f7ef260a35f71feec"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/generic/_appearance_stream.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 30337,
+      "sha256": "de6bed791ace08bbcae5ef65d40680503baa9367e24ae2ae0d22f55a5371fbf1"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/generic/_base.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 33428,
+      "sha256": "57d885e8b8205b2a63ce43a944a4709ccadd9aaddbf2971fd170789b4514d94f"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/generic/_data_structures.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 68268,
+      "sha256": "3c70a3e77bf86d873288777d95d63c315c0c5994b3d5e66ab0c76d3d0af37798"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/generic/_files.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 16327,
+      "sha256": "cd86a0d42bbc6c54b21710fe90d1d289a378c3de6a31de06d9efc0a632d4c45b"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/generic/_fit.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 5515,
+      "sha256": "5ff8800c98f5618e0f512b52eeb1560b6c51d8b5154af2ad500932d001402033"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/generic/_image_inline.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 13202,
+      "sha256": "7421b0de3867e527a252c135af21cead266cb98ad8742a0fbd094086183a9b2b"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/generic/_image_xobject.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 23350,
+      "sha256": "04ae618a4f851b23d15aa70f7c573f7a8e1f4f8ad10b65fbfc78c38c89a7216a"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/generic/_link.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 6138,
+      "sha256": "c2c84e12147693db611f1431092cb1fe03e4c760bef2f7d4bbde17cadd21504e"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/generic/_outline.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 1094,
+      "sha256": "a8a6cc5f8d8e59faa7a2922213a054cba12f7532c67b766d8da89637ce49a5a6"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/generic/_rectangle.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 3924,
+      "sha256": "87a0c33fd7e0b6b332186d5aa2e679d67f57274275dddc6186a6a727148134d5"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/generic/_utils.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 7514,
+      "sha256": "af199fb36f5a6c01ea425b33a19ba29ab101403aa4f39577b9bf328586e5ca3c"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/generic/_viewerpref.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 6835,
+      "sha256": "cbdd8a1d8de2cbd15a8ee068b3dec4d6c3e4f6e9f3246f9493654277b89261e6"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/pagerange.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 7108,
+      "sha256": "d9bb76d634199bef5aab66d57f74d7b87f3fc06571edbf53e94acc1570842614"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/papersizes.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 1413,
+      "sha256": "e93cf9b1f34dff724e51aa58f3753e95a928867a57600d2148440d98e54b14bf"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/py.typed",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/types.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 1915,
+      "sha256": "b09ef01f393b111fc227b90ffacf2ef5ac459e40979c5a6bf27cdc8f50314dab"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/pypdf/xmp.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 31151,
+      "sha256": "99471d79b4f11f361bea4b97516a18a733f8dbe0d5dcb587cf1470f82649bae5"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/_vendor/README.md",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 2794,
+      "sha256": "805acbd9bde33a2b39f2d4c619aefe3a3ee743d5ddce974f50215e57a4c74fee"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/.gitignore",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 219,
+      "sha256": "a086039fb9fedb54ca9c48cb54b30992848db20c5c3062a9052edd7621dcc8ce"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/errors.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 2043,
+      "sha256": "adac5f900748a1c36395a4a5878a11b499c89d2c9da888883845acc2ebd1aa74"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/launch.ts",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 6476,
+      "sha256": "da4a6256ef0a868613f188c6ee0b279483ea916e954fe88e69024531faa9de14"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/main.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 2695,
+      "sha256": "136c39c106a262ad3fe7b91d1f9fa590027d47ed45caa40a05eb5bfc408c36df"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/mcp_stdio.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 9730,
+      "sha256": "5a30b0e2e37c36889d517d0ee956e835316fc9059f344df287831eb86e96c3b6"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/paths.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 4268,
+      "sha256": "fb9338d903ac5e1db6919a6e87375d49d71d72ee4391329aceca06ea627b50a7"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/pdf_read.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 10837,
+      "sha256": "5c0a51ca86ec409640052a7aa0baf54d260fec3ab5965f2053c03a4b31d92704"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/python.ts",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 9459,
+      "sha256": "6968d94f31c17fbe8ace76eec0c88d2af793290d518af80f23e8be014b151a93"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/README.md",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 19365,
+      "sha256": "fa81f22d6e925197d628e2324b1de909a59bb1cb29299c7d6fe60c069f70f37e"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/run-tests.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 1526,
+      "sha256": "6b3ba398fe50ff07f08111f8a72c1c07a6fa946dad94f2aee4fa279f0355eada"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/server.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 28110,
+      "sha256": "5cec45e8a35b10fdd18c415f4af76181a70fb3c7546863ed3d00eff8f56b6107"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/tables.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 8369,
+      "sha256": "d5cf9e5e059a486a5dc31bc963252876d558fcd3c5ae4317f8ea7291992889e0"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/tests/pdf_fixtures.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 9598,
+      "sha256": "d41cc252653157568a38cf7cc629a6ae00241abce961aea5f36ee6b424cded7a"
+    },
+    {
+      "path": "code/src/tools/pdf-mcp/tests/test_pdf_mcp.py",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 26852,
+      "sha256": "fa815133bee70715c5b9a1209d5d778af4df7a9487621c22ab7f6e6e7dba2ee5"
     },
     {
       "path": "code/tests/adapters/acp/cancel.test.ts",
@@ -1091,8 +1616,8 @@
       "path": "code/tests/adapters/office-mcp/aggregate.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 10888,
-      "sha256": "aa3f7f216415384f4fb1d2efcb19881ea0f1a63f9d9de35e045dec69a4630508"
+      "bytes": 20474,
+      "sha256": "1a9ec85ea66912153a656c2224309f55f1ffb8eb6cc9fe08882ce828762a3d9c"
     },
     {
       "path": "code/tests/adapters/office-mcp/data.test.ts",
@@ -1193,6 +1718,27 @@
       "sha256": "2dd28a2a0c33af36332935cb60fb707a7b6a7c07faa6de19c80a1d01af5d51be"
     },
     {
+      "path": "code/tests/adapters/pdf-mcp/harness.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 5232,
+      "sha256": "b0668c37b3aa380bdabebcb3d766d54d258d0d445930e6daba567134e52788db"
+    },
+    {
+      "path": "code/tests/adapters/pdf-mcp/launcher.test.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 3410,
+      "sha256": "501b252258f9a6c2949c16ad92782918e61b22156f3567361905e94799db0288"
+    },
+    {
+      "path": "code/tests/adapters/pdf-mcp/server.test.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 8307,
+      "sha256": "73799692700c5410c517e980f7d154f920a3ae84bfc5b9899c647adf074761ff"
+    },
+    {
       "path": "code/tests/adapters/pi/bridge-extension.test.ts",
       "owner": "B",
       "category": "测试代码",
@@ -1284,6 +1830,13 @@
       "sha256": "712bfd6c31890a2723b1bfd345588b3e6f834f5c003a128882640c9ff8e92f5e"
     },
     {
+      "path": "code/tests/contract/tool-trace.test.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 8067,
+      "sha256": "19994d4d637ac84bef8f9eb741a3e0999a3f3d2c0c704a3a0b10244a4b91a3d9"
+    },
+    {
       "path": "code/tests/kit/engine-contract.ts",
       "owner": "共同",
       "category": "测试代码",
@@ -1319,11 +1872,18 @@
       "sha256": "44a625c3d3c405b72c4357a42484136fd357e25110550252842a3f5e6a8bfbda"
     },
     {
+      "path": "code/tests/unit/config-routes-mount.test.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 9509,
+      "sha256": "578c81c65a94d1dfaae8e0bf56c041f0c8a25dcd11479371c4f8bb1e88094c35"
+    },
+    {
       "path": "code/tests/unit/config-service.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 21123,
-      "sha256": "26a8aeb550287a496d92e5b154aaad6afc7ae30f29e912fe5adb3ea8b4ea1563"
+      "bytes": 25323,
+      "sha256": "ebd96465aea5a6c31b0f33cb3138d70cb5207388cd499af67ff052103ae3a867"
     },
     {
       "path": "code/tests/unit/contracts.test.ts",
@@ -1392,8 +1952,8 @@
       "path": "code/tests/unit/settings-capabilities.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 9598,
-      "sha256": "ad64af4f68d0aac154d83d205bc28a159ed6db0e5873224edb51360a7328a91b"
+      "bytes": 11555,
+      "sha256": "0cab492790526b1d7c1268ba0b3c4e533db9618d4fe594fe13c086195c46df9b"
     },
     {
       "path": "code/tests/unit/settings.test.ts",

@@ -48,6 +48,72 @@ const owns = (value: object, key: PropertyKey): boolean => Object.hasOwn(value, 
 /** Both spellings are emitted: assessment clients read either `content` or `text`. */
 const textPart = (value: string): Json => ({ type: "text", content: value, text: value });
 
+/**
+ * Everything one tool call has shown so far, and the message that carries it.
+ *
+ * A driver reports a call as a series of partial observations, so this is the accumulated state a
+ * reader of the trajectory has to be given: the persisted message keeps ONE part per call, rebuilt
+ * from here, rather than one part per observation. `message.part.updated` says the part was updated,
+ * and the stored message has to agree with the event that announces it; the superseded states stay
+ * available in the event journal, which is what `GET /session/{id}/event` serves.
+ */
+interface TrackedCall {
+  family: "legacy" | "observed";
+  name?: string;
+  /** Where the canonical name came from; a driver may name a call by the title it announced it under. */
+  nameSource?: "name" | "announced-title";
+  /** The last non-empty display title. An update that omits it never erases the announced one. */
+  title?: string;
+  input?: Json;
+  inputObserved: boolean;
+  output?: Json;
+  outputObserved: boolean;
+  content?: Json;
+  contentObserved: boolean;
+  locations?: Json;
+  locationsObserved: boolean;
+  nativeType?: string;
+  nativeStatus?: string;
+  phase?: "created" | "updated" | "terminal";
+  message: Message;
+  canonical: boolean;
+  terminal: boolean;
+  terminalOutputObserved: boolean;
+  outputPersisted: boolean;
+  status?: "pending" | "running" | "completed" | "failed";
+}
+/**
+ * The single tool part the trajectory keeps for one observed call: its current state plus every fact
+ * the engine has shown for it. It is rebuilt on each observation instead of appended to, so the call
+ * reads as the state it actually reached and no field an earlier update established is dropped
+ * because a later one did not repeat it.
+ */
+function observedPart(callId: string, call: TrackedCall, status: string, redactor: Redactor): Json {
+  const part: { [key: string]: Json } = {
+    type: "tool", callID: callId, source: "engine",
+    ...(call.phase === undefined ? {} : { phase: call.phase }),
+    state: {
+      status,
+      ...(call.title === undefined ? {} : { title: call.title }),
+      ...(call.nameSource === undefined ? {} : { nameSource: call.nameSource }),
+      // The engine called the call terminal but never showed a result, so the trace says exactly that
+      // instead of implying one. It is a fact about the call, so it survives later observations too.
+      ...(call.terminal && !call.terminalOutputObserved ? { terminalStatus: "result_unknown" } : {}),
+      ...(call.nativeStatus === undefined ? {} : { nativeStatus: call.nativeStatus }),
+      ...(call.nativeType === undefined ? {} : { nativeType: call.nativeType }),
+    },
+  };
+  if (call.name !== undefined) part.tool = redactor.text(call.name);
+  if (call.title !== undefined) part.title = call.title;
+  if (call.inputObserved) part.input = call.input ?? null;
+  if (call.outputObserved) part.output = call.output ?? null;
+  if (call.contentObserved) part.content = call.content ?? [];
+  if (call.locationsObserved) part.locations = call.locations ?? [];
+  if (call.nativeType !== undefined) part.nativeType = call.nativeType;
+  if (call.nativeStatus !== undefined) part.nativeStatus = call.nativeStatus;
+  return part;
+}
+
 /** Owns run truth and event ordering; adapters cannot mutate storage or HTTP state. */
 export class GatewayCore {
   readonly journal: EventJournal;
@@ -363,20 +429,7 @@ export class GatewayCore {
     let acceptingEvents = true;
     let eventTail = Promise.resolve();
     let eventFailure: PnpError | undefined;
-    const tools = new Map<string, {
-      family: "legacy" | "observed";
-      name?: string;
-      /** Where the canonical name came from; a driver may name a call by the title it announced it under. */
-      nameSource?: "name" | "announced-title";
-      input?: Json;
-      inputObserved: boolean;
-      message: Message;
-      canonical: boolean;
-      terminal: boolean;
-      terminalOutputObserved: boolean;
-      outputPersisted: boolean;
-      status?: "pending" | "running" | "completed" | "failed";
-    }>();
+    const tools = new Map<string, TrackedCall>();
     const finalId = randomUUID();
     let redactor = new Redactor();
     let lastTextCheckpoint = 0;
@@ -509,7 +562,8 @@ export class GatewayCore {
               item.info = { role: "assistant", finish: "tool-calls" };
               item.parts = [{ type: "tool", tool: event.name, callID: event.callId, input: args,
                 state: { status: "running", title: event.name, nameSource: "name" } }];
-              tools.set(event.callId, { family: "legacy", name: event.name, input: args, inputObserved: true,
+              tools.set(event.callId, { family: "legacy", name: event.name, title: event.name, input: args, inputObserved: true,
+                outputObserved: false, contentObserved: false, locationsObserved: false,
                 message: item, canonical: true, terminal: false, terminalOutputObserved: false, outputPersisted: false,
                 status: "running" });
               await this.store.call("appendMessage", { sessionId, runId: run.id, message: item });
@@ -519,9 +573,17 @@ export class GatewayCore {
               const tool = tools.get(event.callId);
               if (tool?.family === "observed") throw new PnpError("ENGINE_PROTOCOL_ERROR", "Tool event families cannot be mixed.", 502);
               if (tool === undefined || tool.terminal || tool.name === undefined) throw new PnpError("UNMATCHED_TOOL_UPDATE", "Tool is not active.", 502);
+              // An empty title is no title: a driver that has nothing to show keeps the announced one.
+              const updated = redactor.text(event.title);
+              if (updated !== "") tool.title = updated;
+              const part: Json = { type: "tool", tool: tool.name, callID: event.callId, input: tool.input ?? null,
+                state: { status: "running", title: tool.title ?? tool.name, nameSource: "name" } };
+              // The progress state is stored before it is published: the trajectory a reader fetches
+              // after seeing the event has to already contain what the event announced.
+              tool.message.parts = [part];
+              await this.store.call("appendMessage", { sessionId, runId: run.id, message: tool.message });
               properties.messageID = tool.message.id;
-              properties.part = { type: "tool", tool: tool.name, callID: event.callId, input: tool.input ?? null,
-                state: { status: "running", title: redactor.text(event.title), nameSource: "name" } };
+              properties.part = part;
             } else if (event.type === "tool.finished") {
               const tool = tools.get(event.callId);
               if (tool?.family === "observed") throw new PnpError("ENGINE_PROTOCOL_ERROR", "Tool event families cannot be mixed.", 502);
@@ -534,7 +596,7 @@ export class GatewayCore {
               item.tool_call_id = event.callId;
               item.tool_name = tool.name;
               const part: Json = { type: "tool", tool: tool.name, callID: event.callId, input: tool.input ?? null, output,
-                state: { status: event.failed ? "error" : "completed", title: tool.name, source: "engine", nameSource: "name" } };
+                state: { status: event.failed ? "error" : "completed", title: tool.title ?? tool.name, source: "engine", nameSource: "name" } };
               tool.message.parts = [part];
               await this.store.call("appendMessage", { sessionId, runId: run.id, message: tool.message });
               await this.store.call("appendMessage", { sessionId, runId: run.id, message: item });
@@ -549,17 +611,23 @@ export class GatewayCore {
               const hasLocations = owns(event, "locations") && event.locations !== undefined;
               let tool = tools.get(event.callId);
               if (tool === undefined) {
-                tool = { family: "observed", message: makeMessage("assistant", ""), inputObserved: false, canonical: false,
+                tool = { family: "observed", message: makeMessage("assistant", ""), inputObserved: false,
+                  outputObserved: false, contentObserved: false, locationsObserved: false, canonical: false,
                   terminal: false, terminalOutputObserved: false, outputPersisted: false };
                 tools.set(event.callId, tool);
               }
               if (tool.family !== "observed") throw new PnpError("ENGINE_PROTOCOL_ERROR", "Tool event families cannot be mixed.", 502);
+              // The engine has already reported this call's terminal state, so a late observation may
+              // still add a fact that was never shown, but it may not rewrite one that was: the recorded
+              // result of a finished call is not revised by whatever the engine says afterwards.
+              const superseded = tool.terminal;
+              const revisable = (observed: boolean): boolean => !superseded || !observed;
               if (hasName) {
                 if (tool.name !== undefined && tool.name !== name) throw new PnpError("ENGINE_PROTOCOL_ERROR", "Tool identity changed during execution.", 502);
                 tool.name = name;
                 if (event.nameSource !== undefined) tool.nameSource = event.nameSource;
               }
-              if (hasInput) {
+              if (hasInput && revisable(tool.inputObserved)) {
                 tool.input = redactor.json(event.input ?? null);
                 tool.inputObserved = true;
               }
@@ -572,32 +640,35 @@ export class GatewayCore {
               }
               const observedTerminal = event.status === "completed" || event.status === "failed";
               if (observedTerminal && hasOutput) tool.terminalOutputObserved = true;
+              if (hasOutput && revisable(tool.outputObserved)) {
+                tool.output = redactor.json(event.output ?? null);
+                tool.outputObserved = true;
+              }
+              if (hasContent && revisable(tool.contentObserved)) {
+                tool.content = redactor.json(event.content ?? []);
+                tool.contentObserved = true;
+              }
+              if (hasLocations && revisable(tool.locationsObserved)) {
+                tool.locations = redactor.json(event.locations ?? []);
+                tool.locationsObserved = true;
+              }
+              // An omitted title, kind or native status is silence, not a retraction. The announcement is
+              // often the only place a call is ever named - opencode names its calls by title alone - so a
+              // later update that repeats none of it must not leave the finished call anonymous.
+              const observedTitle = event.title === undefined ? undefined : redactor.text(event.title);
+              if (observedTitle !== undefined && observedTitle !== "" && revisable(tool.title !== undefined)) tool.title = observedTitle;
+              if (event.nativeType !== undefined && revisable(tool.nativeType !== undefined)) tool.nativeType = redactor.text(event.nativeType);
+              if (event.nativeStatus !== undefined && revisable(tool.nativeStatus !== undefined)) tool.nativeStatus = redactor.text(event.nativeStatus);
+              if (!superseded) tool.phase = event.phase;
               if (!tool.terminal && event.status !== undefined) tool.status = event.status;
               if (!tool.terminal && observedTerminal) tool.terminal = true;
               const status = tool.terminal ? (tool.status ?? "failed") : (event.status ?? tool.status ?? "pending");
               // The spec's tool part is {type, tool, state:{status, title}}; the observation keeps its own
               // fields and mirrors that shape, so a reader of the reference shape sees the call as well.
-              const observedTitle = event.title === undefined ? undefined : redactor.text(event.title);
-              const observation: { [key: string]: Json } = {
-                type: "tool", callID: event.callId, source: event.source, phase: event.phase,
-                state: {
-                  status,
-                  ...(observedTitle === undefined ? {} : { title: observedTitle }),
-                  ...(tool.nameSource === undefined ? {} : { nameSource: tool.nameSource }),
-                  ...(observedTerminal && !tool.terminalOutputObserved ? { terminalStatus: "result_unknown" } : {}),
-                  ...(event.nativeStatus === undefined ? {} : { nativeStatus: redactor.text(event.nativeStatus) }),
-                  ...(event.nativeType === undefined ? {} : { nativeType: redactor.text(event.nativeType) }),
-                },
-              };
-              if (tool.name !== undefined) observation.tool = redactor.text(tool.name);
-              if (observedTitle !== undefined) observation.title = observedTitle;
-              if (hasInput) observation.input = redactor.json(event.input ?? null);
-              if (hasOutput) observation.output = redactor.json(event.output ?? null);
-              if (hasContent) observation.content = redactor.json(event.content ?? []);
-              if (hasLocations) observation.locations = redactor.json(event.locations ?? []);
-              if (event.nativeType !== undefined) observation.nativeType = redactor.text(event.nativeType);
-              if (event.nativeStatus !== undefined) observation.nativeStatus = redactor.text(event.nativeStatus);
-              tool.message.parts = [...(tool.message.parts ?? []), observation];
+              // One call is one part: this rewrites the call's part rather than appending a second one,
+              // because that is what the `message.part.updated` published below says happened.
+              const observation = observedPart(event.callId, tool, status, redactor);
+              tool.message.parts = [observation];
               await this.store.call("appendMessage", { sessionId, runId: run.id, message: tool.message });
               properties.messageID = tool.message.id;
               properties.part = observation;
@@ -728,8 +799,12 @@ export class GatewayCore {
           // `result_unknown`, so nothing is invented and nothing is silently dropped.
           for (const [callId, tool] of tools) {
             if (tool.terminal) continue;
+            // The gateway's own closing observation is a part of its own, kept distinct from the engine's
+            // by `source`, and it carries the call's identity so the last thing a reader sees is still
+            // the call it belongs to rather than an anonymous error.
             tool.message.parts = [...(tool.message.parts ?? []), { type: "tool",
               ...(tool.name === undefined ? {} : { tool: tool.name }),
+              ...(tool.title === undefined ? {} : { title: tool.title }),
               ...(tool.inputObserved ? { input: tool.input ?? null } : {}), callID: callId,
               state: { status: "error", terminalStatus: state === "cancelled" ? "cancelled" : "result_unknown",
                 source: "gateway-observation", quiescent, title: "No complete engine tool result was received." } }];

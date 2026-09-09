@@ -169,12 +169,25 @@ function nonEmptyString(value: unknown, label: string): string {
   }
   return value;
 }
+/**
+ * A slot that holds the NAME of an environment variable, never its value. Enforcing the identifier
+ * shape here is what makes that claim checkable: a deployment that pastes a secret where a name
+ * belongs is refused at load with the field's path, instead of storing the secret in settings.json
+ * and having every reader treat it as a variable that simply happens not to exist.
+ */
+function variableName(value: unknown, label: string): string {
+  const name = nonEmptyString(value, label);
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    throw new PnpError("SETTINGS_INVALID", `${label} must name an environment variable, not hold its value.`, 400);
+  }
+  return name;
+}
 function optionalStringMap(value: unknown, label: string): Readonly<Record<string, string>> {
   if (value === undefined) return {};
   const item = object(value, label);
   return Object.fromEntries(Object.entries(item).map(([name, variable]) => [
     name,
-    nonEmptyString(variable, `${label}.${name}`),
+    variableName(variable, `${label}.${name}`),
   ]));
 }
 function optionalStringArray(value: unknown, label: string): readonly string[] {
@@ -241,7 +254,7 @@ function headerEnvironment(value: unknown, label: string): Readonly<Record<strin
       throw new PnpError("SETTINGS_INVALID", `${label} contains an invalid or duplicate HTTP header name.`, 400);
     }
     seen.add(normalized);
-    parsed[name] = nonEmptyString(variable, `${label}.${name}`);
+    parsed[name] = variableName(variable, `${label}.${name}`);
   }
   // Collected on a null prototype so a header literally named __proto__ becomes an own property
   // instead of reaching Object.prototype; spread hands back an ordinary object, because every
@@ -280,13 +293,13 @@ export function parseSettingsModel(
     selection: parseSettingsSelection(item.selection, `${label}.selection`),
     protocol,
     headerEnvironment: headerEnvironment(item.headerEnvironment, `${label}.headerEnvironment`),
-    ...(modelIDEnvironment === undefined ? {} : { modelIDEnvironment: nonEmptyString(modelIDEnvironment, `${label}.modelIDEnvironment`) }),
-    ...(apiKeyEnvironment === undefined ? {} : { apiKeyEnvironment: nonEmptyString(apiKeyEnvironment, `${label}.apiKeyEnvironment`) }),
-    ...(headersEnvironment === undefined ? {} : { headersEnvironment: nonEmptyString(headersEnvironment, `${label}.headersEnvironment`) }),
-    ...(caFileEnvironment === undefined ? {} : { caFileEnvironment: nonEmptyString(caFileEnvironment, `${label}.caFileEnvironment`) }),
+    ...(modelIDEnvironment === undefined ? {} : { modelIDEnvironment: variableName(modelIDEnvironment, `${label}.modelIDEnvironment`) }),
+    ...(apiKeyEnvironment === undefined ? {} : { apiKeyEnvironment: variableName(apiKeyEnvironment, `${label}.apiKeyEnvironment`) }),
+    ...(headersEnvironment === undefined ? {} : { headersEnvironment: variableName(headersEnvironment, `${label}.headersEnvironment`) }),
+    ...(caFileEnvironment === undefined ? {} : { caFileEnvironment: variableName(caFileEnvironment, `${label}.caFileEnvironment`) }),
   } as const;
   if (hasEndpointEnvironment) {
-    return { ...common, endpointEnvironment: nonEmptyString(item.endpointEnvironment, `${label}.endpointEnvironment`) };
+    return { ...common, endpointEnvironment: variableName(item.endpointEnvironment, `${label}.endpointEnvironment`) };
   }
   const endpoint = nonEmptyString(item.endpoint, `${label}.endpoint`);
   let url: URL;
@@ -484,7 +497,7 @@ function parseMcpServer(id: string, value: unknown, label: string, environment: 
     const headerEnv = headerEnvironment(item.headerEnvironment, `${label}.headerEnvironment`);
     if (hasUrlEnvironment) {
       return {
-        id, transport, urlEnvironment: nonEmptyString(item.urlEnvironment, `${label}.urlEnvironment`),
+        id, transport, urlEnvironment: variableName(item.urlEnvironment, `${label}.urlEnvironment`),
         headerEnvironment: headerEnv, enabled, sideEffect,
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
       };
@@ -794,7 +807,7 @@ async function inspectAsset(entry: AssetEntry, roots: readonly AssetRoot[], labe
 }
 /** An unset or empty `PNP_SETTINGS` means the shipped file; anything else is a path, and a relative
  *  one is taken from the package root so a deployment can write `config/settings.json`. */
-function settingsPath(explicit: string | undefined): string {
+export function resolveSettingsPath(explicit: string | undefined): string {
   if (explicit === undefined || explicit.trim() === "") return DEFAULT_SETTINGS;
   return resolveCodePath(explicit.trim());
 }
@@ -811,7 +824,7 @@ export async function loadPnpSettings(input: {
   settingsPath?: string;
   environment?: NodeJS.ProcessEnv;
 }): Promise<EffectiveSettings> {
-  const file = settingsPath(input.settingsPath);
+  const file = resolveSettingsPath(input.settingsPath);
   return resolvePnpSettingsDocument(await readSettingsFile(file), {
     engineId: input.engineId, settingsDirectory: path.dirname(file), environment: input.environment,
   });

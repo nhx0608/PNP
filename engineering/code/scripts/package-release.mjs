@@ -98,7 +98,10 @@ if (args["include-tests"]) KEEP_DIRS.push("tests");
 // `runtime` is deliberately NOT in this set: it is a name matched at any depth, and src/runtime/
 // is real source code (the process host, the instance lock, crash recovery). The operator's
 // code/runtime/ directory is kept out by the allow-list above, which never copies it.
-const EXCLUDE_NAMES = new Set(["node_modules", "dist", "data", ".git", ".DS_Store"]);
+// `__pycache__` joins the list now that a Python MCP server ships under src/tools/pdf-mcp/: running
+// it once leaves ~1.7 MiB of one interpreter's bytecode, which is both dead weight in solution.zip
+// and wrong for a judge on a different Python minor version.
+const EXCLUDE_NAMES = new Set(["node_modules", "dist", "data", ".git", ".DS_Store", "__pycache__"]);
 const EXCLUDE_FILE_PATTERN = /\.(db|db-wal|db-shm|sqlite|sqlite3|pem|key|pfx|p12|log|pid)$|^\.env(\..*)?$/i;
 // Repository-only example files. They are useful next to the code and have no place in a package an
 // external assessor reads: a second settings example naming a different deployment's variables is

@@ -156,7 +156,12 @@ function Get-ToolTrace($Messages) {
         }
         $call = $byId[$callId]
         if (Has-Property $part 'tool') { $call.name = [string]$part.tool }
-        if ((Has-Property $part 'input') -and $null -ne $part.input -and $part.input.PSObject.Properties.Count -gt 0) { $call.input = $part.input }
+        # 必须先 @(...) 再取 Count：PSObject.Properties 是集合本身没有 Count 成员，
+        # 而本脚本开了 Set-StrictMode -Version 2.0，于是每一个带 input 的工具 part 都会在这里抛
+        # 「在此对象上找不到属性 Count」。整个 Get-ToolTrace 随之中断，tool_calls 恒为空数组，
+        # requiredSuccessfulTools 因此从来没有真正生效过——六道产物明明正确的题被判 PARTIAL，
+        # 根因就是这一行，而不是引擎或轨迹。
+        if ((Has-Property $part 'input') -and $null -ne $part.input -and @($part.input.PSObject.Properties).Count -gt 0) { $call.input = $part.input }
         if ((Has-Property $part 'state') -and (Has-Property $part.state 'status')) { $call.status = [string]$part.state.status }
         elseif (Has-Property $part 'nativeStatus') { $call.status = [string]$part.nativeStatus }
         if ((Has-Property $part 'output') -and (Has-Property $part.output 'error')) {
