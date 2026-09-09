@@ -93,7 +93,7 @@
     "pptxRequiredText": {
       "D:\\test_data\\openclaw.pptx": ["基本介绍", "核心功能", "核心架构", "部署方式", "部署依赖"]
     },
-    "forbiddenEvents": ["question.asked"],
+    "noBlockingQuestion": true,
     "finalMustMentionOutputs": true,
     "manual": "PPT 可正常打开、内容不是空壳；五个主题均有实质内容；未在中途询问大纲"
   },

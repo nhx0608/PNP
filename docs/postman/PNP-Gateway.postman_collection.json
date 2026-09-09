@@ -1,0 +1,515 @@
+{
+  "info": {
+    "_postman_id": "796411dd-f2eb-4ad1-87ec-6db22f8079d4",
+    "name": "PNP Agent 网关 (6217)",
+    "description": "PNP 多引擎 Agent 网关的调试集合。\n\n用法：\n1. 启动网关：在 engineering\\code 下执行 .\\gateway.cmd --engine opencode --port 6217\n2. 先跑「0. 就绪探测」确认 engine 是本轮引擎\n3. 「1. 建会话」会把 id 自动存进 {{sessionId}}\n4. 发任务前把 Postman 的 Request timeout 改成 900000 毫秒\n   （Settings → General → Request timeout in ms），否则阻塞式 prompt_async 会被客户端先掐断\n5. 「2. 取轨迹」自带赛题 8.4 完成规则的断言\n\n换引擎：停掉网关，改 --engine pi 重启，重跑同一套请求。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "0. 就绪探测",
+      "item": [
+        {
+          "name": "GET /health/ready",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/health/ready",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "health",
+                "ready"
+              ]
+            },
+            "description": "返回 {status:'ready', engine:'opencode'|'pi'}。启动中返回 503，属正常。"
+          }
+        },
+        {
+          "name": "GET /health/live",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/health/live",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "health",
+                "live"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. 会话生命周期",
+      "item": [
+        {
+          "name": "POST /session  建会话",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json; charset=utf-8"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/session",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "session"
+              ]
+            },
+            "description": "directory 必填、必须绝对路径、不存在会自动创建。返回的 id 会自动存到 {{sessionId}}。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"office_014\",\n  \"directory\": \"D:\\test_data\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// 把新建会话的 id 存进环境变量，后面的请求直接用 {{sessionId}}",
+                  "if (pm.response.code === 200) { pm.environment.set('sessionId', pm.response.json().id); }",
+                  "pm.test('200 且返回 id/status', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json()).to.have.property('id');",
+                  "  pm.expect(pm.response.json().status).to.be.oneOf(['idle','busy']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /session/{id}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/session/{{sessionId}}",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "session",
+                "{{sessionId}}"
+              ]
+            },
+            "description": "含 message_count"
+          }
+        },
+        {
+          "name": "GET /session/status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/session/status",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "session",
+                "status"
+              ]
+            },
+            "description": "{ses_xxx: {type:'idle'|'busy'}}"
+          }
+        },
+        {
+          "name": "DELETE /session/{id}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/session/{{sessionId}}",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "session",
+                "{{sessionId}}"
+              ]
+            },
+            "description": "只删网关记录与引擎会话数据，不删产物"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. 下发任务与取轨迹",
+      "item": [
+        {
+          "name": "POST /session/{id}/prompt_async  发任务",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json; charset=utf-8"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/session/{{sessionId}}/prompt_async",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "session",
+                "{{sessionId}}",
+                "prompt_async"
+              ]
+            },
+            "description": "会一直阻塞到本轮全部结束（含所有工具调用），默认上限 15 分钟。请把 Postman 的 Request timeout 调到 900000ms，否则客户端会先超时。model 填任何值都会映射到配置的模型。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"parts\": [\n    {\n      \"type\": \"text\",\n      \"text\": \"请在 D:\\test_data 目录下创建 demo.txt，内容写：网关连通性验证 OK。然后告诉我文件的绝对路径。\"\n    }\n  ],\n  \"model\": {\n    \"providerID\": \"any\",\n    \"modelID\": \"any\"\n  },\n  \"agent\": \"assistant\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// 204 = 本轮（含所有工具调用）全部结束。这个请求会阻塞，Postman 超时请设为 900000ms。",
+                  "pm.test('204 No Content', function () { pm.response.to.have.status(204); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /session/{id}/message  完整轨迹",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/session/{{sessionId}}/message",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "session",
+                "{{sessionId}}",
+                "message"
+              ]
+            },
+            "description": "评测方判完成用的就是这个。测试脚本已按赛题 8.4 规则断言。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// 赛题 8.4 完成规则：最后一条 assistant + finish=stop + parts 含 step-finish",
+                  "const msgs = pm.response.json();",
+                  "const last = msgs[msgs.length - 1];",
+                  "pm.test('最后一条是 assistant', () => pm.expect(last.role).to.eql('assistant'));",
+                  "pm.test('info.finish = stop', () => pm.expect(last.info.finish).to.eql('stop'));",
+                  "pm.test('含 step-finish', () => pm.expect(last.parts.some(p => p.type === 'step-finish')).to.be.true);",
+                  "console.log('工具调用:', msgs.flatMap(m => (m.tool_calls||[]).map(c => c.name)).join(', ') || '(无)');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /session/{id}/abort  中止",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/session/{{sessionId}}/abort",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "session",
+                "{{sessionId}}",
+                "abort"
+              ]
+            },
+            "description": "返回 {ok:true}；被中止那次 prompt_async 返回 204，轨迹最后 info.finish='cancelled'。/stop 是等价路径。",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. 反问与授权（裁判模型自动作答用）",
+      "item": [
+        {
+          "name": "GET /question",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/question",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "question"
+              ]
+            },
+            "description": "默认 auto 策略下通常为空数组"
+          }
+        },
+        {
+          "name": "POST /question/{id}/reply",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json; charset=utf-8"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/question/{{requestId}}/reply",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "question",
+                "{{requestId}}",
+                "reply"
+              ]
+            },
+            "description": "扁平的 [\"方案 A\"] 也接受",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"answers\": [\n    [\n      \"方案 A\"\n    ]\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET /permission",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/permission",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "permission"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "POST /permission/{id}/reply",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json; charset=utf-8"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/permission/{{requestId}}/reply",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "permission",
+                "{{requestId}}",
+                "reply"
+              ]
+            },
+            "description": "once / always / reject",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reply\": \"once\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. 错误模型（应该长这样）",
+      "item": [
+        {
+          "name": "404 NOT_FOUND",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/session/ses_nonexistent",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "session",
+                "ses_nonexistent"
+              ]
+            },
+            "description": "{code:'NOT_FOUND', message:'…'}"
+          }
+        },
+        {
+          "name": "400 VALIDATION_ERROR（缺 directory）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json; charset=utf-8"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/session",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "session"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"x\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "400（directory 不是绝对路径）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json; charset=utf-8"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/session",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "session"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"x\",\n  \"directory\": \"relative/path\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. 扩展面（赛题规范之外，本网关自有）",
+      "item": [
+        {
+          "name": "GET /diagnostics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/diagnostics",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "diagnostics"
+              ]
+            },
+            "description": "脱敏诊断快照"
+          }
+        },
+        {
+          "name": "GET /event  SSE 事件流",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/event",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "event"
+              ]
+            },
+            "description": "text/event-stream。Postman 新版支持 SSE：发送后切到 Response 的事件视图。\n本轮会看到：server.connected → model.resolved → session.status{busy} → engine.extension（引擎原生事件透传）\n→ message.part.updated… → run.usage → session.status{idle} → session.idle。\nserver.heartbeat 约每 15 秒一次。\nengine.extension 的 payload 形如 {namespace:'pi'|'acp', nativeType:'compaction_start'|…, payload:{…}}，\n这是各引擎自己的原生能力，网关只感知不改写。\n断线重连带 Last-Event-ID 头可以补齐缺口。"
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base",
+      "value": "http://127.0.0.1:6217"
+    },
+    {
+      "key": "sessionId",
+      "value": ""
+    },
+    {
+      "key": "requestId",
+      "value": ""
+    }
+  ]
+}

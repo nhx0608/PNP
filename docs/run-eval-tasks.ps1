@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   用赛题格式的 JSON 驱动 PNP 网关执行评测任务，并保存可复核证据。
 
@@ -282,6 +282,7 @@ foreach ($task in $tasks) {
     delete_matches_before = @($beforeDeleteMatches); leftovers = @()
     required_tools_missing = @(); tool_failures = @(); effect_checks_failed = @()
     structure_failures = @(); final_text_failures = @(); event_failures = @()
+    final_text_notes = @()
     events = @(); tool_calls = @(); tools = @(); final_text = ''; manual = ''
     verdict = 'FAIL'; note = ''
   }
@@ -499,14 +500,34 @@ foreach ($task in $tasks) {
         if ($result.events -contains [string]$eventType) { $result.event_failures += "出现禁止事件 $eventType" }
       }
     }
+    # "无人值守"要判的是没有人被卡住等着回答，而不是没有出现过 question.asked。
+    # 网关在默认 PNP_QUESTION_POLICY=auto 下的正确行为，就是先发布 question.asked（让轨迹里
+    # 留下这个问题），随即自己作答并发布 question.resolved。把事件本身列为禁止项，等于把网关
+    # 设计好的自动应答判成失败。真正的失败是问了却没有被解决，那才会真的阻塞自动评测。
+    if ((Has-Property $expectation 'noBlockingQuestion') -and [bool]$expectation.noBlockingQuestion) {
+      $asked = @($result.events | Where-Object { $_ -eq 'question.asked' }).Count
+      $resolved = @($result.events | Where-Object { $_ -eq 'question.resolved' }).Count
+      if ($asked -gt $resolved) {
+        $result.event_failures += "有 $asked 次反问但只有 $resolved 次被解决：本轮不是无人值守"
+      }
+    }
     if ((Has-Property $expectation 'finalMustMentionOutputs') -and [bool]$expectation.finalMustMentionOutputs -and (Has-Property $expectation 'outputs')) {
       foreach ($file in @($expectation.outputs)) {
         $leaf = Split-Path -Leaf ([string]$file)
         if ([string]$result.final_text -notlike "*$leaf*") { $result.final_text_failures += "最终回复未提及产物 $leaf" }
       }
     }
-    if ((Has-Property $expectation 'outputs') -and [string]$result.final_text -match '(?i)无法|未能|不能|失败|不存在|请提供|请确认|unable|cannot|failed|error') {
-      $result.final_text_failures += '最终回复包含未完成或失败信号'
+    # 只匹配"智能体自述没做成"的说法，不匹配任务内容里的同形词。
+    # 旧的宽匹配（无法|不能|失败|error 任意出现即判失败）会误杀本题就在讨论失败的报告：
+    # office_014/015 是违约风险分析，正确结论里几乎必然出现"失败""不能"；office_018 的补货建议
+    # 同理。产物是否真的生成，已经由 outputs_missing / outputs_unchanged 用哈希独立判定，
+    # 这条规则只负责补上"文件在、但模型自己说没做完"这一种情况。
+    if ((Has-Property $expectation 'outputs') -and [string]$result.final_text -match '(?i)我无法|无法完成|无法生成|无法保存|无法创建|无法访问|未能完成|未能生成|不能完成|没有完成|执行失败|生成失败|保存失败|创建失败|写入失败|请提供|请确认|请补充|unable to|cannot complete|could not|failed to') {
+      $result.final_text_failures += '最终回复自述未完成'
+    }
+    # 宽匹配降级为提示：不参与判定，但留给人工复核时扫一眼。
+    if ((Has-Property $expectation 'outputs') -and [string]$result.final_text -match '(?i)失败|不存在|error') {
+      $result.final_text_notes += '最终回复出现失败类字样（可能只是任务内容，需人工确认）'
     }
   }
 
@@ -584,6 +605,7 @@ foreach ($row in $results) {
   if ($row.tool_failures.Count -gt 0) { $report += "- 未恢复工具失败：$($row.tool_failures -join '；')" }
   if ($row.structure_failures.Count -gt 0) { $report += "- 结构失败：$($row.structure_failures -join '；')" }
   if ($row.final_text_failures.Count -gt 0) { $report += "- 最终回复失败信号：$($row.final_text_failures -join '；')" }
+  if ($row.final_text_notes.Count -gt 0) { $report += "- 提示（不影响判定）：$($row.final_text_notes -join '；')" }
   $report += ''
 }
 $reportPath = Join-Path $runRoot 'report.md'
