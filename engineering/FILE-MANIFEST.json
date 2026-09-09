@@ -31,13 +31,6 @@
       "sha256": "8bd135728d4d1c7e9eb9aeed5b09ee8e69ca42133fe9eb6ab2197c36a276167c"
     },
     {
-      "path": "CLAUDE.md",
-      "owner": "共同",
-      "category": "入口与配置",
-      "bytes": 11,
-      "sha256": "336cc4fbf19beaada7ccf9986414fa91851a8d7a07dfb3ccbe800a69eed0ab49"
-    },
-    {
       "path": "code/.env.example",
       "owner": "共同",
       "category": "入口与配置",
@@ -328,8 +321,8 @@
       "path": "code/scripts/package-release.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 29686,
-      "sha256": "385995cf279c341154d5bf5e27e96d17f71227a57049a7a29c19f39c4c599d76"
+      "bytes": 31307,
+      "sha256": "1b18875690a6de0cfe5d89f16ed4a28859626a2a62dada3a6df60233d661b963"
     },
     {
       "path": "code/scripts/pnp-local.ps1",
@@ -349,8 +342,8 @@
       "path": "code/scripts/refresh-manifest.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 7140,
-      "sha256": "17406839d31059b90fdc6bf14792b7faecab9148996e646f3424b4280920d653"
+      "bytes": 7129,
+      "sha256": "47ec19083aa787c022310f8dccb1c8c1b6ca8b5049dc64f6f087fa65d6ab3b53"
     },
     {
       "path": "code/scripts/release-check.mjs",
@@ -363,8 +356,8 @@
       "path": "code/scripts/source-stamp.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 2738,
-      "sha256": "0c688729a48bf748bac5cbe4ed5e8daa71fe80afe127e662d454a85be6a04ead"
+      "bytes": 3446,
+      "sha256": "a76555754549bda1d9d0c5a2bf78d63987ef2cbee1f1b932fbfe5136945723fe"
     },
     {
       "path": "code/scripts/start.ps1",
@@ -1987,8 +1980,8 @@
       "path": "docs/ARCHITECTURE.md",
       "owner": "共同",
       "category": "其他",
-      "bytes": 49517,
-      "sha256": "6aaf66769abb7ed4326c5f25aaf9f6d73f7b83ac5b7da5c68f9d6e924f07a01d"
+      "bytes": 68525,
+      "sha256": "7198b6fad50d73eb78f7aed6f5ff594dfb012d4e399d1ced12e5cfa4d3090431"
     },
     {
       "path": "docs/design/capability-packs.md",
@@ -2180,11 +2173,18 @@
       "sha256": "976eae0536f28376075d42430c6e560d9b6ab3555a9ec679f4a96a14bde09824"
     },
     {
+      "path": "docs/USAGE.md",
+      "owner": "共同",
+      "category": "其他",
+      "bytes": 14766,
+      "sha256": "27bbcc59d1d301281e2d1a1f077c75b6dffb0b2db32149c2699abb52b4559c24"
+    },
+    {
       "path": "INSTRUCTION.md",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 14379,
-      "sha256": "06f036f50293fca9cb77b00b816801ae18c7fa05540acb33efc8a5494bd85908"
+      "bytes": 14587,
+      "sha256": "00137e67a360cfd8300088c6d5f937aaa6bdf1acddf3b7088aa7ad91f3e821cd"
     },
     {
       "path": "prompts/00-baseline-check.md",

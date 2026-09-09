@@ -20,11 +20,23 @@ import { codeRoot } from "./lib.mjs";
 /** Every build input, relative to code/, in a stable order. */
 const EXTRA_INPUTS = ["tsconfig.json"];
 
+/**
+ * Directories that are generated output, never source, and therefore never shipped. They must be
+ * skipped HERE as well as by the packager: the launcher compares this stamp against the one recorded
+ * in the delivered package to decide whether `dist/` is still current, so a directory the packager
+ * drops but this walk counts would make the two numbers permanently disagree and force a rebuild --
+ * needing TypeScript and a network -- on the assessor's machine. `__pycache__` appears the first
+ * time the Python MCP server runs and is specific to one interpreter version.
+ */
+const IGNORED_DIRECTORIES = new Set(["__pycache__"]);
+
 function walkSorted(dir, root, into) {
   for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) walkSorted(full, root, into);
-    else if (entry.isFile()) into.push(path.relative(root, full).split(path.sep).join("/"));
+    if (entry.isDirectory()) {
+      if (IGNORED_DIRECTORIES.has(entry.name)) continue;
+      walkSorted(full, root, into);
+    } else if (entry.isFile()) into.push(path.relative(root, full).split(path.sep).join("/"));
   }
   return into;
 }

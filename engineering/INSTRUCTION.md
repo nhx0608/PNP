@@ -192,7 +192,7 @@ $env:AGENT_ENGINE = 'pi'
 - **提示 `INSECURE_MODEL_ENDPOINT`**：模型地址是 `http://`，执行 `$env:PNP_ALLOW_HTTP_ENDPOINTS = '1'` 后重启。
 - **`.\pnp.cmd livecheck` 失败但 `selfcheck` 通过**：网关没问题，是模型或网络：检查 Key 是否正确、地址是不是基地址（多带了 `/chat/completions` 就会失败）、模型是否支持工具调用。
 - **提示 `INSTANCE_LOCKED`**：上一个网关还在跑，先 `.\pnp.cmd stop`。
-- **端口被占用**：`.\pnp.cmd start --port 6218`。
+- **端口被占用**：换一个端口重启，例如 `.\gateway.cmd --engine opencode --port 6218`。用 `pnp.cmd` 也可以，但它必须知道引擎：`.\pnp.cmd start --engine opencode --port 6218`（只写 `--port` 会以「No engine selected」退出）。
 - **想看引擎到底做了什么**：`GET /session/{id}/message`，或 `code\runtime\logs\`。
 
 ## 附录 B：更多配置（都可选）
