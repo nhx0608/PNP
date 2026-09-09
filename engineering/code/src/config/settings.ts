@@ -1,8 +1,8 @@
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, realpath, stat, readdir, lstat, readlink } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ModelSelection, PermissionEffect, PermissionPolicy, ToolSideEffect } from "../contracts/index.ts";
+import type { Json, ModelSelection, PermissionEffect, PermissionPolicy, ToolSideEffect } from "../contracts/index.ts";
 import { PnpError } from "../core/errors.ts";
 
 /** The policy and side-effect shapes are public contract; this module parses into them, never into a copy. */
@@ -51,6 +51,43 @@ export interface McpStreamableHttpServerSettings {
   timeoutMs?: number;
 }
 export type McpServerSettings = McpStdioServerSettings | McpStreamableHttpServerSettings;
+export interface AssetEntry {
+  id: string;
+  kind: string;
+  path: string;
+  layout: "file" | "directory";
+  entry?: string;
+  required: boolean;
+  enabled: boolean;
+  engines?: readonly string[];
+  parameters?: Json;
+  permitted?: boolean;
+}
+export interface PackSelection {
+  id: string;
+  enabled: boolean;
+  required: boolean;
+  root?: string;
+  permitNativeExtensions: boolean;
+  contributions: Record<string, Record<string, Partial<Pick<AssetEntry, "enabled" | "required" | "parameters">>>>;
+}
+export interface AssetRoot { name: string; path: string }
+export interface SettingsProblem {
+  severity: "error" | "warning";
+  path: string;
+  code: string;
+  message: string;
+}
+export interface SettingsDocumentOptions {
+  engineId: string;
+  settingsDirectory: string;
+  environment?: NodeJS.ProcessEnv;
+}
+export interface SettingsDocumentValidation {
+  ok: boolean;
+  problems: SettingsProblem[];
+  effective?: EffectiveSettings;
+}
 export interface EffectiveSettings {
   model: {
     default: ModelSelection;
@@ -62,6 +99,11 @@ export interface EffectiveSettings {
   mcp: {
     servers: readonly McpServerSettings[];
   };
+  skills: readonly AssetEntry[];
+  assets: Record<string, Record<string, AssetEntry>>;
+  packs: readonly PackSelection[];
+  native: Record<string, Json>;
+  assetRoots: readonly AssetRoot[];
 }
 
 type JsonObject = Record<string, unknown>;
@@ -116,8 +158,9 @@ function object(value: unknown, label: string): JsonObject {
   return value as JsonObject;
 }
 function exactKeys(value: JsonObject, allowed: readonly string[], label: string): void {
-  if (Object.keys(value).some((key) => !allowed.includes(key))) {
-    throw new PnpError("SETTINGS_INVALID", `${label} contains an unknown field.`, 400);
+  const unknown = Object.keys(value).find((key) => !allowed.includes(key));
+  if (unknown !== undefined) {
+    throw new PnpError("SETTINGS_INVALID", `${label}.${unknown} is an unknown field.`, 400);
   }
 }
 function nonEmptyString(value: unknown, label: string): string {
@@ -190,7 +233,7 @@ function headerEnvironment(value: unknown, label: string): Readonly<Record<strin
   if (value === undefined) return {};
   const item = object(value, label);
   const headerName = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
-  const parsed: Record<string, string> = {};
+  const parsed: Record<string, string> = Object.create(null) as Record<string, string>;
   const seen = new Set<string>();
   for (const [name, variable] of Object.entries(item)) {
     const normalized = name.toLowerCase();
@@ -200,7 +243,10 @@ function headerEnvironment(value: unknown, label: string): Readonly<Record<strin
     seen.add(normalized);
     parsed[name] = nonEmptyString(variable, `${label}.${name}`);
   }
-  return parsed;
+  // Collected on a null prototype so a header literally named __proto__ becomes an own property
+  // instead of reaching Object.prototype; spread hands back an ordinary object, because every
+  // existing caller (and test) compares this map against a plain object literal.
+  return { ...parsed };
 }
 /**
  * A model declares its endpoint either literally or, like its headers, by the NAME of an
@@ -460,7 +506,7 @@ function resolveMcp(
   const ids = [...new Set([...Object.keys(commonServers), ...Object.keys(coreServers)])];
   return ids.map((id) => parseMcpServer(
     id,
-    mergedServerObject(commonServers[id], coreServers[id], `mcp.servers.${id}`),
+    mergedServerObject(own(commonServers, id), own(coreServers, id), `mcp.servers.${id}`),
     `effective.mcp.servers.${id}`,
     environment,
   ));
@@ -469,6 +515,282 @@ function resolveMcp(
 async function readSettingsFile(file: string): Promise<unknown> {
   try { return JSON.parse(await readFile(file, "utf8")); }
   catch { throw new PnpError("SETTINGS_INVALID", "PNP settings could not be loaded.", 400); }
+}
+
+const SETTINGS_KEYS = ["model", "permissions", "instructions", "mcp", "skills", "assets", "packs", "native"];
+const ASSET_KEYS = ["path", "layout", "entry", "required", "enabled", "engines", "parameters", "permitted"];
+function own(value: JsonObject, key: string): unknown {
+  return Object.hasOwn(value, key) ? value[key] : undefined;
+}
+function mapObject(value: unknown, label: string): JsonObject {
+  return value === undefined ? {} : object(value, label);
+}
+function json(value: unknown, label: string, ancestors = new Set<object>()): Json {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "object" || value === null || ancestors.has(value)) {
+    throw new PnpError("SETTINGS_INVALID", `${label} must contain JSON values.`, 400);
+  }
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) {
+    throw new PnpError("SETTINGS_INVALID", `${label} must contain JSON values.`, 400);
+  }
+  ancestors.add(value);
+  const parsed = Array.isArray(value)
+    ? value.map((item, index) => json(item, `${label}[${index}]`, ancestors))
+    : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, json(item, `${label}.${key}`, ancestors)]));
+  ancestors.delete(value);
+  return parsed;
+}
+function nativeObject(value: unknown, label: string): Record<string, Json> {
+  return json(mapObject(value, label), label) as Record<string, Json>;
+}
+function mergeParameters(base: JsonObject, override: JsonObject, label: string): JsonObject {
+  const merged = { ...base, ...override };
+  if (Object.hasOwn(base, "parameters")) json(base.parameters, `${label}.parameters`);
+  if (Object.hasOwn(override, "parameters")) json(override.parameters, `${label}.parameters`);
+  const left = base.parameters;
+  const right = override.parameters;
+  if (typeof left === "object" && left !== null && !Array.isArray(left)
+    && typeof right === "object" && right !== null && !Array.isArray(right)) {
+    merged.parameters = { ...left, ...right };
+  }
+  return merged;
+}
+function within(root: string, target: string): boolean {
+  const relative = path.relative(root, target);
+  return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
+}
+/** Resolve a missing leaf through its nearest existing ancestor as well: an optional missing file
+ * beneath a junction must not turn into a way of approving a path outside the deployment roots. */
+async function canonicalPath(target: string, label: string, depth = 0): Promise<string> {
+  if (depth > 128) throw new PnpError("SETTINGS_INVALID", `${label} contains too many path links.`, 400);
+  try { return await realpath(target); }
+  catch (error) {
+    if (!(error instanceof Error) || !("code" in error) || (error.code !== "ENOENT" && error.code !== "ENOTDIR")) {
+      throw new PnpError("SETTINGS_INVALID", `${label} cannot be resolved.`, 400);
+    }
+    // realpath also reports ENOENT for dangling links. Follow the link text before falling back
+    // to an existing ancestor, otherwise a missing external target would appear to be in-root.
+    let link = false;
+    try { link = (await lstat(target)).isSymbolicLink(); }
+    catch (missing) {
+      if (!(missing instanceof Error) || !("code" in missing) || (missing.code !== "ENOENT" && missing.code !== "ENOTDIR")) {
+        throw new PnpError("SETTINGS_INVALID", `${label} cannot be resolved.`, 400);
+      }
+    }
+    if (link) return canonicalPath(path.resolve(path.dirname(target), await readlink(target)), label, depth + 1);
+    const parent = path.dirname(target);
+    if (parent === target) throw new PnpError("SETTINGS_INVALID", `${label} cannot be resolved.`, 400);
+    return path.join(await canonicalPath(parent, label, depth + 1), path.basename(target));
+  }
+}
+export async function resolveAssetRoots(
+  settingsDirectory: string, environment: NodeJS.ProcessEnv = process.env,
+): Promise<AssetRoot[]> {
+  const roots: AssetRoot[] = [
+    { name: "delivery", path: path.join(CODE_ROOT, "assets", "packs") },
+    { name: "config", path: path.resolve(settingsDirectory) },
+  ];
+  const configured = environment.PNP_PACK_ROOTS;
+  if (configured !== undefined && configured.trim() !== "") {
+    for (const [index, value] of configured.split(";").entries()) {
+      const directory = value.trim();
+      if (!path.isAbsolute(directory)) {
+        throw new PnpError("SETTINGS_INVALID", `PNP_PACK_ROOTS[${index}] must be an absolute path.`, 400);
+      }
+      roots.push({ name: `extra:${index}`, path: path.normalize(directory) });
+    }
+  }
+  return Promise.all(roots.map(async (root) => ({ ...root, path: await canonicalPath(root.path, root.name) })));
+}
+async function assetPath(file: string, roots: readonly AssetRoot[], label: string): Promise<string> {
+  const canonical = await canonicalPath(file, label);
+  if (!roots.some((root) => within(root.path, canonical))) {
+    throw new PnpError("ASSET_OUTSIDE_ROOT", `${label} is outside the approved asset roots.`, 403);
+  }
+  return canonical;
+}
+function relativeEntry(value: unknown, label: string): string {
+  const entry = nonEmptyString(value, label);
+  if (path.isAbsolute(entry) || path.win32.isAbsolute(entry) || entry.includes(":")
+    || entry.split(/[\\/]/).some((part) => part === ".." || part === "" || part === ".")) {
+    throw new PnpError("ASSET_OUTSIDE_ROOT", `${label} must be a relative path within its asset directory.`, 403);
+  }
+  return entry;
+}
+function validateAssetFields(item: JsonObject, label: string): void {
+  exactKeys(item, ASSET_KEYS, label);
+  for (const field of ["enabled", "required", "permitted"]) optionalBoolean(item[field], `${label}.${field}`, false);
+  if (item.path !== undefined) nonEmptyString(item.path, `${label}.path`);
+  if (item.layout !== undefined && item.layout !== "file" && item.layout !== "directory") {
+    throw new PnpError("SETTINGS_INVALID", `${label}.layout must be file or directory.`, 400);
+  }
+  if (item.entry !== undefined) relativeEntry(item.entry, `${label}.entry`);
+  if (item.engines !== undefined) {
+    for (const engine of optionalStringArray(item.engines, `${label}.engines`)) nonEmptyString(engine, `${label}.engines`);
+  }
+  if (Object.hasOwn(item, "parameters")) json(item.parameters, `${label}.parameters`);
+}
+async function resolveAssetMap(
+  commonValue: unknown, coreValue: unknown, kind: string, commonLabel: string, coreLabel: string,
+  directory: string, roots: readonly AssetRoot[],
+): Promise<Record<string, AssetEntry>> {
+  const common = mapObject(commonValue, commonLabel);
+  const core = mapObject(coreValue, coreLabel);
+  const result: [string, AssetEntry][] = [];
+  for (const id of new Set([...Object.keys(common), ...Object.keys(core)])) {
+    const label = `${Object.hasOwn(core, id) ? coreLabel : commonLabel}.${id}`;
+    nonEmptyString(id, label);
+    if (kind === "skill" && !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(id)) {
+      throw new PnpError("SETTINGS_INVALID", `${label} has an invalid skill id.`, 400);
+    }
+    const base = mapObject(own(common, id), `${commonLabel}.${id}`);
+    const override = mapObject(own(core, id), `${coreLabel}.${id}`);
+    validateAssetFields(base, `${commonLabel}.${id}`);
+    validateAssetFields(override, `${coreLabel}.${id}`);
+    const merged = mergeParameters(base, override, label);
+    if (merged.enabled === false) {
+      if (merged.path !== undefined) await assetPath(path.resolve(directory, nonEmptyString(merged.path, `${label}.path`)), roots, `${label}.path`);
+      continue;
+    }
+    const declared = nonEmptyString(merged.path, `${label}.path`);
+    const resolved = await assetPath(path.resolve(directory, declared), roots, `${label}.path`);
+    const layout = merged.layout ?? (kind === "skill" ? "directory" : "file");
+    if (layout === "file" && merged.entry !== undefined) {
+      throw new PnpError("SETTINGS_INVALID", `${label}.entry is only allowed with directory layout.`, 400);
+    }
+    const entry = layout === "directory" ? relativeEntry(merged.entry ?? "SKILL.md", `${label}.entry`) : undefined;
+    if (entry !== undefined) {
+      const target = await assetPath(path.resolve(resolved, entry), roots, `${label}.entry`);
+      if (!within(resolved, target)) throw new PnpError("ASSET_OUTSIDE_ROOT", `${label}.entry escapes its asset directory.`, 403);
+    }
+    result.push([id, {
+      id, kind, path: resolved, layout: layout as "file" | "directory",
+      ...(entry === undefined ? {} : { entry }),
+      required: optionalBoolean(merged.required, `${label}.required`, false), enabled: true,
+      ...(merged.engines === undefined ? {} : { engines: optionalStringArray(merged.engines, `${label}.engines`) }),
+      ...(Object.hasOwn(merged, "parameters") ? { parameters: json(merged.parameters, `${label}.parameters`) } : {}),
+      ...(merged.permitted === undefined ? {} : { permitted: optionalBoolean(merged.permitted, `${label}.permitted`, false) }),
+    }]);
+  }
+  return Object.fromEntries(result);
+}
+async function resolveAssets(
+  commonValue: unknown, coreValue: unknown, engineId: string, directory: string, roots: readonly AssetRoot[],
+): Promise<Record<string, Record<string, AssetEntry>>> {
+  const common = mapObject(commonValue, "common.assets");
+  const core = mapObject(coreValue, `cores.${engineId}.assets`);
+  const entries: [string, Record<string, AssetEntry>][] = [];
+  for (const kind of new Set([...Object.keys(common), ...Object.keys(core)])) {
+    nonEmptyString(kind, "assets domain");
+    if (kind === "instruction" || kind === "skill") {
+      const label = Object.hasOwn(core, kind) ? `cores.${engineId}.assets.${kind}` : `common.assets.${kind}`;
+      throw new PnpError("SETTINGS_INVALID", `${label} is an alias; use ${kind === "skill" ? "skills" : "instructions"} instead.`, 400);
+    }
+    entries.push([kind, await resolveAssetMap(own(common, kind), own(core, kind), kind,
+      `common.assets.${kind}`, `cores.${engineId}.assets.${kind}`, directory, roots)]);
+  }
+  return Object.fromEntries(entries);
+}
+function contributionMap(value: unknown, label: string): PackSelection["contributions"] {
+  return Object.fromEntries(Object.entries(mapObject(value, label)).map(([kind, entries]) => [kind,
+    Object.fromEntries(Object.entries(object(entries, `${label}.${kind}`)).map(([id, value]) => {
+      nonEmptyString(kind, label);
+      nonEmptyString(id, `${label}.${kind}`);
+      const item = object(value, `${label}.${kind}.${id}`);
+      exactKeys(item, ["enabled", "required", "parameters"], `${label}.${kind}.${id}`);
+      return [id, {
+        ...(item.enabled === undefined ? {} : { enabled: optionalBoolean(item.enabled, `${label}.${kind}.${id}.enabled`, true) }),
+        ...(item.required === undefined ? {} : { required: optionalBoolean(item.required, `${label}.${kind}.${id}.required`, false) }),
+        ...(Object.hasOwn(item, "parameters") ? { parameters: json(item.parameters, `${label}.${kind}.${id}.parameters`) } : {}),
+      }];
+    })),
+  ]));
+}
+function resolvePacks(commonValue: unknown, coreValue: unknown, engineId: string, roots: readonly AssetRoot[]): PackSelection[] {
+  const common = mapObject(commonValue, "common.packs");
+  const core = mapObject(coreValue, `cores.${engineId}.packs`);
+  return [...new Set([...Object.keys(common), ...Object.keys(core)])].flatMap((id) => {
+    const label = `${Object.hasOwn(core, id) ? `cores.${engineId}` : "common"}.packs.${id}`;
+    if (!/^[a-z0-9-]+$/.test(id)) throw new PnpError("SETTINGS_INVALID", `${label} has an invalid pack id.`, 400);
+    const base = mapObject(own(common, id), `common.packs.${id}`);
+    const override = mapObject(own(core, id), `cores.${engineId}.packs.${id}`);
+    for (const [item, itemLabel] of [[base, `common.packs.${id}`], [override, `cores.${engineId}.packs.${id}`]] as const) {
+      exactKeys(item, ["enabled", "required", "root", "permitNativeExtensions", "contributions"], itemLabel);
+      for (const field of ["enabled", "required", "permitNativeExtensions"]) optionalBoolean(item[field], `${itemLabel}.${field}`, false);
+      if (item.root !== undefined && !roots.some((root) => root.name === item.root)) {
+        throw new PnpError("SETTINGS_INVALID", `${itemLabel}.root must name an approved asset root.`, 400);
+      }
+    }
+    const left = contributionMap(base.contributions, `common.packs.${id}.contributions`);
+    const right = contributionMap(override.contributions, `cores.${engineId}.packs.${id}.contributions`);
+    const contributions = Object.fromEntries([...new Set([...Object.keys(left), ...Object.keys(right)])].map((kind) => {
+      const a = mapObject(own(left, kind), label);
+      const b = mapObject(own(right, kind), label);
+      return [kind, Object.fromEntries([...new Set([...Object.keys(a), ...Object.keys(b)])].map((entryId) => [entryId,
+        mergeParameters(mapObject(own(a, entryId), label), mapObject(own(b, entryId), label), label),
+      ]))];
+    })) as PackSelection["contributions"];
+    const merged = { ...base, ...override };
+    return merged.enabled === false ? [] : [{
+      id, enabled: true, required: optionalBoolean(merged.required, `${label}.required`, false),
+      ...(merged.root === undefined ? {} : { root: nonEmptyString(merged.root, `${label}.root`) }),
+      permitNativeExtensions: optionalBoolean(merged.permitNativeExtensions, `${label}.permitNativeExtensions`, false), contributions,
+    }];
+  });
+}
+
+async function inspectAsset(entry: AssetEntry, roots: readonly AssetRoot[], label: string, problems?: SettingsProblem[]): Promise<void> {
+  let information;
+  try { information = await stat(entry.path); }
+  catch {
+    if (entry.required) throw new PnpError("SETTINGS_INVALID", `${label}.path is missing or unreadable.`, 400);
+    problems?.push({ severity: "warning", path: `${label}.path`, code: "ASSET_MISSING", message: `${label}.path is missing or unreadable; optional asset will be skipped.` });
+    return;
+  }
+  if (entry.layout === "directory" ? !information.isDirectory() : !information.isFile()) {
+    throw new PnpError("SETTINGS_INVALID", `${label}.path does not match its layout.`, 400);
+  }
+  if (entry.layout === "directory") {
+    let count = 0;
+    const visited = new Set<string>();
+    async function inspectTree(directory: string): Promise<void> {
+      const canonical = await assetPath(directory, roots, `${label}.path`);
+      if (!within(entry.path, canonical)) throw new PnpError("ASSET_OUTSIDE_ROOT", `${label}.path contains a link outside its directory.`, 403);
+      if (visited.has(canonical)) throw new PnpError("SETTINGS_INVALID", `${label}.path contains a directory cycle.`, 400);
+      visited.add(canonical);
+      for (const child of await readdir(canonical, { withFileTypes: true })) {
+        if (++count > 512) throw new PnpError("SETTINGS_INVALID", `${label}.path exceeds 512 entries.`, 400);
+        const file = await assetPath(path.join(canonical, child.name), roots, `${label}.path`);
+        if (!within(entry.path, file)) throw new PnpError("ASSET_OUTSIDE_ROOT", `${label}.path contains a link outside its directory.`, 403);
+        if ((await stat(file)).isDirectory()) await inspectTree(file);
+      }
+    }
+    await inspectTree(entry.path);
+  }
+  const file = entry.layout === "directory" ? path.join(entry.path, entry.entry!) : entry.path;
+  let text: string;
+  try {
+    await access(file, constants.R_OK);
+    if (entry.kind !== "skill") return;
+    if ((await stat(file)).size > 1024 * 1024) throw new PnpError("SETTINGS_INVALID", `${label}.entry exceeds 1 MiB.`, 400);
+    text = await readFile(file, "utf8");
+  } catch (error) {
+    if (error instanceof PnpError) throw error;
+    if (entry.required) throw new PnpError("SETTINGS_INVALID", `${label}.entry is missing or unreadable.`, 400);
+    problems?.push({ severity: "warning", path: `${label}.entry`, code: "ASSET_MISSING", message: `${label}.entry is missing or unreadable; optional asset will be skipped.` });
+    return;
+  }
+  const frontmatter = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text)?.[1];
+  const name = frontmatter?.match(/^name:\s*([^\r\n]+)$/m)?.[1]?.trim();
+  const description = frontmatter?.match(/^description:\s*([^\r\n]+)$/m)?.[1]?.trim();
+  if (!name || !description || ["''", '""'].includes(name) || ["''", '""'].includes(description)) {
+    throw new PnpError("SETTINGS_INVALID", `${label}.entry is missing Agent Skills frontmatter (name, description).`, 400);
+  }
+  if (name.replace(/^['"]|['"]$/g, "") !== entry.id) problems?.push({
+    severity: "warning", path: `${label}.entry`, code: "SKILL_NAME_MISMATCH", message: `${label}.entry frontmatter name differs from the configured id.`,
+  });
 }
 /** An unset or empty `PNP_SETTINGS` means the shipped file; anything else is a path, and a relative
  *  one is taken from the package root so a deployment can write `config/settings.json`. */
@@ -489,30 +811,47 @@ export async function loadPnpSettings(input: {
   settingsPath?: string;
   environment?: NodeJS.ProcessEnv;
 }): Promise<EffectiveSettings> {
-  const environment = input.environment ?? process.env;
   const file = settingsPath(input.settingsPath);
-  const directory = path.dirname(file);
-  const root = object(await readSettingsFile(file), "settings");
+  return resolvePnpSettingsDocument(await readSettingsFile(file), {
+    engineId: input.engineId, settingsDirectory: path.dirname(file), environment: input.environment,
+  });
+}
+
+export async function resolvePnpSettingsDocument(document: unknown, input: SettingsDocumentOptions): Promise<EffectiveSettings> {
+  return resolveDocument(document, input);
+}
+
+async function resolveDocument(document: unknown, input: SettingsDocumentOptions, problems?: SettingsProblem[]): Promise<EffectiveSettings> {
+  const environment = input.environment ?? process.env;
+  const directory = path.resolve(input.settingsDirectory);
+  const root = object(document, "settings");
   exactKeys(root, ["version", "common", "cores"], "settings");
   if (root.version !== 1) throw new PnpError("SETTINGS_INVALID", "settings.version must be 1.", 400);
 
   const common = object(root.common, "common");
-  exactKeys(common, ["model", "permissions", "instructions", "mcp"], "common");
+  exactKeys(common, SETTINGS_KEYS, "common");
   const commonModel = parseModelSection(common.model, "common.model", true, environment);
   const commonPermissions = parseCommonPermissions(common.permissions);
   const commonInstructions = parseInstructions(common.instructions, "common.instructions", directory) ?? [];
+  const roots = await resolveAssetRoots(directory, environment);
+  const commonNative = nativeObject(common.native, "common.native");
 
   const cores = object(root.cores, "cores");
   for (const [engineId, value] of Object.entries(cores)) {
     const core = object(value, `cores.${engineId}`);
-    exactKeys(core, ["model", "permissions", "instructions", "mcp"], `cores.${engineId}`);
+    exactKeys(core, SETTINGS_KEYS, `cores.${engineId}`);
     if (core.model !== undefined) parseModelSection(core.model, `cores.${engineId}.model`, false, environment);
     parseCorePermissions(core.permissions, engineId);
     parseInstructions(core.instructions, `cores.${engineId}.instructions`, directory);
     resolveMcp(common.mcp, core.mcp, engineId, environment);
+    nativeObject(core.native, `cores.${engineId}.native`);
+    await resolveAssetMap(common.skills, core.skills, "skill", "common.skills", `cores.${engineId}.skills`, directory, roots);
+    await resolveAssets(common.assets, core.assets, engineId, directory, roots);
+    resolvePacks(common.packs, core.packs, engineId, roots);
   }
 
-  const selected = cores[input.engineId] === undefined ? undefined : object(cores[input.engineId], `cores.${input.engineId}`);
+  const selectedValue = own(cores, input.engineId);
+  const selected = selectedValue === undefined ? undefined : object(selectedValue, `cores.${input.engineId}`);
   const coreModel = selected?.model === undefined ? { models: [] } : parseModelSection(selected.model, `cores.${input.engineId}.model`, false, environment);
   const corePermissions = parseCorePermissions(selected?.permissions, input.engineId);
   const models = mergeModels(commonModel.models, coreModel.models);
@@ -527,6 +866,19 @@ export async function loadPnpSettings(input: {
   // handing the engine an instruction set that silently lost a file.
   await assertInstructionsReadable(instructions);
 
+  const skills = Object.values(await resolveAssetMap(common.skills, selected?.skills, "skill", "common.skills", `cores.${input.engineId}.skills`, directory, roots));
+  const assets = await resolveAssets(common.assets, selected?.assets, input.engineId, directory, roots);
+  const packs = resolvePacks(common.packs, selected?.packs, input.engineId, roots);
+  for (const entry of [...skills, ...Object.values(assets).flatMap((domain) => Object.values(domain))]) {
+    if (entry.engines !== undefined && !entry.engines.includes(input.engineId)) continue;
+    const section = entry.kind === "skill" ? "skills" : "assets";
+    const selectedMap = mapObject(selected?.[section], `cores.${input.engineId}.${section}`);
+    const defined = entry.kind === "skill" ? Object.hasOwn(selectedMap, entry.id)
+      : Object.hasOwn(mapObject(own(selectedMap, entry.kind), section), entry.id);
+    const label = `${defined ? `cores.${input.engineId}` : "common"}.${section}${entry.kind === "skill" ? "" : `.${entry.kind}`}.${entry.id}`;
+    await inspectAsset(entry, roots, label, problems);
+  }
+
   return {
     model: { default: defaultSelection, models },
     permissions: {
@@ -535,5 +887,69 @@ export async function loadPnpSettings(input: {
     },
     instructions,
     mcp: { servers: resolveMcp(common.mcp, selected?.mcp, input.engineId, environment) },
+    skills, assets, packs, assetRoots: roots,
+    native: { ...commonNative, ...nativeObject(selected?.native, `cores.${input.engineId}.native`) },
   };
+}
+
+/** Read-only validation uses the same section parsers as runtime loading. Independent sections
+ * are checked separately so one bad field does not hide a second section's error. */
+export async function validatePnpSettingsDocument(document: unknown, input: SettingsDocumentOptions): Promise<SettingsDocumentValidation> {
+  const problems: SettingsProblem[] = [];
+  const environment = input.environment ?? process.env;
+  const directory = path.resolve(input.settingsDirectory);
+  async function check<T>(label: string, operation: () => T | Promise<T>): Promise<T | undefined> {
+    try { return await operation(); }
+    catch (error) {
+      const failure = error instanceof PnpError ? error : new PnpError("SETTINGS_INVALID", `${label} could not be validated.`, 400);
+      const leading = /^(common(?:\.[^\s]+)?|cores(?:\.[^\s]+)?|settings(?:\.[^\s]+)?|PNP_PACK_ROOTS\[\d+\])/.exec(failure.message)?.[1];
+      const problem = { severity: "error" as const, path: leading ?? label, code: failure.code, message: failure.message };
+      if (!problems.some((existing) => existing.path === problem.path && existing.message === problem.message)) problems.push(problem);
+      return undefined;
+    }
+  }
+  const root = await check("settings", () => {
+    const value = object(document, "settings");
+    exactKeys(value, ["version", "common", "cores"], "settings");
+    if (value.version !== 1) throw new PnpError("SETTINGS_INVALID", "settings.version must be 1.", 400);
+    return value;
+  });
+  if (root === undefined) return { ok: false, problems };
+  const common = await check("common", () => object(root.common, "common"));
+  const cores = await check("cores", () => object(root.cores, "cores"));
+  const roots = await check("PNP_PACK_ROOTS", () => resolveAssetRoots(directory, environment));
+  if (common !== undefined) {
+    await check("common", () => exactKeys(common, SETTINGS_KEYS, "common"));
+    await check("common.model", () => parseModelSection(common.model, "common.model", true, environment));
+    await check("common.permissions", () => parseCommonPermissions(common.permissions));
+    await check("common.instructions", () => parseInstructions(common.instructions, "common.instructions", directory));
+    await check("common.native", () => nativeObject(common.native, "common.native"));
+    await check("common.mcp", () => resolveMcp(common.mcp, undefined, input.engineId, environment));
+  }
+  for (const [engineId, value] of Object.entries(cores ?? {})) {
+    const label = `cores.${engineId}`;
+    const core = await check(label, () => object(value, label));
+    if (core === undefined) continue;
+    await check(label, () => exactKeys(core, SETTINGS_KEYS, label));
+    await check(`${label}.model`, () => core.model === undefined ? undefined : parseModelSection(core.model, `${label}.model`, false, environment));
+    await check(`${label}.permissions`, () => parseCorePermissions(core.permissions, engineId));
+    await check(`${label}.instructions`, () => parseInstructions(core.instructions, `${label}.instructions`, directory));
+    await check(`${label}.native`, () => nativeObject(core.native, `${label}.native`));
+    await check(`${label}.mcp`, () => resolveMcp(common?.mcp, core.mcp, engineId, environment));
+  }
+  // Common entries may intentionally be disabled/partially overridden by a Core. Validate their
+  // effective form, as the runtime parser does, instead of requiring complete override entries.
+  const targets = cores === undefined ? [] : [...new Set([...Object.keys(cores), input.engineId])];
+  for (const engineId of targets) {
+    const coreValue = own(cores!, engineId);
+    if (coreValue !== undefined && (typeof coreValue !== "object" || coreValue === null || Array.isArray(coreValue))) continue;
+    const core = coreValue as JsonObject | undefined;
+    if (roots === undefined) continue;
+    await check(`cores.${engineId}.skills`, () => resolveAssetMap(common?.skills, core?.skills, "skill", "common.skills", `cores.${engineId}.skills`, directory, roots));
+    await check(`cores.${engineId}.assets`, () => resolveAssets(common?.assets, core?.assets, engineId, directory, roots));
+    await check(`cores.${engineId}.packs`, () => resolvePacks(common?.packs, core?.packs, engineId, roots));
+  }
+  if (problems.some((problem) => problem.severity === "error")) return { ok: false, problems };
+  const effective = await check("settings", () => resolveDocument(document, input, problems));
+  return { ok: effective !== undefined, problems, ...(effective === undefined ? {} : { effective }) };
 }

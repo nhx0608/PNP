@@ -9,6 +9,7 @@ import type {
   EffectiveSettings, McpServerSettings, McpStreamableHttpServerSettings, SettingsModelDefinition,
 } from "../config/settings.ts";
 import { PnpError } from "../core/errors.ts";
+import { assertConfiguredCapabilitiesApplicable, inspectConfiguredCapabilities } from "../config/capability-readiness.ts";
 import { ConfiguredIntegration, type ConfiguredModel } from "./configured/provider.ts";
 import { InternalIntegration } from "./internal/provider.ts";
 import { MockIntegration } from "./mock/provider.ts";
@@ -370,6 +371,15 @@ export async function loadIntegration(input: {
   // legacy profile without an explicit PNP_SETTINGS is the whole source, and that profile shape has
   // no instructions. Every other deployment takes them from the unified settings file.
   const instructions = legacyOnly ? [] : (await settings()).instructions;
+  // P2 makes arbitrary domains parseable. Applying them still requires real native
+  // projectors; reject required gaps before an EnginePack can create a channel.
+  const capabilityReport = legacyOnly ? undefined : inspectConfiguredCapabilities(await settings(), input.engineId ?? "");
+  if (capabilityReport !== undefined) {
+    assertConfiguredCapabilitiesApplicable(capabilityReport);
+    if (capabilityReport.skipped.length > 0) {
+      console.warn(JSON.stringify({ event: "configuration.capabilities.skipped", ...capabilityReport }));
+    }
+  }
   if (new Set(tools.map((entry) => entry.id)).size !== tools.length) {
     throw new PnpError("INTEGRATION_CONFIG_INVALID", "Tool identifiers must be unique.", 400);
   }
@@ -391,7 +401,7 @@ export async function loadIntegration(input: {
   // R2). A deployment that would rather answer 403 sets PNP_MODEL_STRICT=1.
   const strictModel = environment.PNP_MODEL_STRICT === "1";
   return new ConfiguredIntegration(
-    models, tools, decide, environment, strictModel, defaultSelection, permissionPolicy, instructions,
+    models, tools, decide, environment, strictModel, defaultSelection, permissionPolicy, instructions, capabilityReport,
   );
 }
 

@@ -5,6 +5,7 @@ import type { AssetBinding, IntegrationContext, IntegrationProvider, ModelResolu
 import { isApprovedEndpoint, resolveCodePath } from "../../config/settings.ts";
 import { resolveAsset } from "../../assets/resolver.ts";
 import { PnpError } from "../../core/errors.ts";
+import type { ConfiguredCapabilityReport } from "../../config/capability-readiness.ts";
 /** A variable holding nothing but blanks names nothing. Load, probe and prepare all read it the same
  *  way, so a variable exported without a value cannot be "set" for one of them and unset for another. */
 function unset(value: string | undefined): boolean {
@@ -54,11 +55,17 @@ export class ConfiguredIntegration implements IntegrationProvider {
   private readonly permissions?: PermissionPolicy;
   /** Absolute instruction files from the effective settings, in declaration order. */
   private readonly instructions: readonly string[];
+  private readonly configuredCapabilityReport?: ConfiguredCapabilityReport;
   // Competition default is allow; deny is reserved for policy that explicitly opts in (see
   // config/settings.json). This does not weaken an explicit organizational deny: a policy function
   // derived from actual settings (loadIntegration) always wins over this default.
-  constructor(models: readonly ConfiguredModel[], tools: readonly ToolBinding[] = [], policy: (operation: string) => AuthorizationDecision = () => ({ effect: "allow", reasonCode: "COMPETITION_DEFAULT_ALLOW" }), environment: NodeJS.ProcessEnv = process.env, strictModel = false, defaultSelection?: ModelSelection, permissions?: PermissionPolicy, instructions: readonly string[] = []) {
+  constructor(models: readonly ConfiguredModel[], tools: readonly ToolBinding[] = [], policy: (operation: string) => AuthorizationDecision = () => ({ effect: "allow", reasonCode: "COMPETITION_DEFAULT_ALLOW" }), environment: NodeJS.ProcessEnv = process.env, strictModel = false, defaultSelection?: ModelSelection, permissions?: PermissionPolicy, instructions: readonly string[] = [], capabilityReport?: ConfiguredCapabilityReport) {
     this.models = models; this.tools = tools; this.policy = policy; this.environment = environment; this.strictModel = strictModel; this.defaultSelection = defaultSelection; this.permissions = permissions; this.instructions = instructions;
+    this.configuredCapabilityReport = capabilityReport === undefined ? undefined : structuredClone(capabilityReport);
+  }
+  /** Readable local report; contains identifiers and reasons, never paths, parameters or credentials. */
+  capabilityReport(): ConfiguredCapabilityReport | undefined {
+    return this.configuredCapabilityReport === undefined ? undefined : structuredClone(this.configuredCapabilityReport);
   }
   private defaultModel(): ConfiguredModel {
     const configured = this.defaultSelection === undefined ? undefined : this.models.find((m) =>

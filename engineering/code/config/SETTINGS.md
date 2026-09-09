@@ -123,6 +123,20 @@ common.instructions
 
 common.mcp.servers
   + cores.<id>.mcp.servers      (same server id is partially overridden by the Core)
+
+common.skills
+  + cores.<id>.skills           (same skill id is partially overridden; enabled:false removes it)
+
+common.assets.<kind>
+  + cores.<id>.assets.<kind>    (same asset id is partially overridden; enabled:false removes it;
+                                 the set of <kind> keys is the union of both layers)
+
+common.packs
+  + cores.<id>.packs            (same pack id is partially overridden; enabled:false removes it)
+
+common.native
+  + cores.<id>.native           (shallow: the Core's top-level keys win; the Engine Pack, not this
+                                 parser, decides what the merged object means)
 ```
 
 Therefore an empty Core section inherits everything:
@@ -406,6 +420,128 @@ effective MCP server into OpenCode, Pi, Hermes, or another native Core configura
 and does not change this schema. A native channel that cannot carry a transport drops that server and
 reports it rather than reaching it by some other route: an ACP engine, for instance, receives a
 `streamable-http` server only when its `initialize` declared `mcpCapabilities.http`.
+
+## Capability domains
+
+`model`, `permissions`, `instructions` and `mcp` are joined by four keys that carry capabilities
+into an engine. The envelope is closed and the domains inside it are open: `common` and
+`cores.<id>` accept exactly these eight keys and nothing else — a misspelled `permisions` is still
+`SETTINGS_INVALID` — but the *kinds* of capability under `assets` are not enumerated anywhere in
+the parser.
+
+| Key | Shape | Meaning |
+|---|---|---|
+| `skills` | `<id>: AssetEntry` | A skill directory, `SKILL.md` by default. Equivalent to `assets.skill`, which is refused with a pointer here |
+| `assets` | `<kind>: { <id>: AssetEntry }` | Any capability domain. `<kind>` is an arbitrary string: this is the open point |
+| `packs` | `<packId>: PackEntry` | A capability pack, resolved under an approved root |
+| `native` | any JSON object | Engine-private options, passed through opaquely. The parser checks only that it is an object |
+
+`assets.instruction` and `assets.skill` are refused on purpose: `instructions` is the one domain
+with ordering and whole-list replacement, and `skills` is its readable shorthand. Two ways to say
+the same thing would drift.
+
+An `AssetEntry` is `{ path, layout, entry, required, enabled, engines, parameters }`. `path` is
+relative to the settings directory or absolute, and must resolve inside an approved root:
+
+| Root | Location |
+|---|---|
+| `delivery` | `<CODE_ROOT>/assets/packs/` |
+| `config` | the directory holding this settings file |
+| `extra:<n>` | the nth `;`-separated **absolute** path in `PNP_PACK_ROOTS` |
+
+A path that leaves every root fails with `ASSET_OUTSIDE_ROOT` (403) at load, and a junction inside
+a root that points out of it is resolved and refused the same way. `packs.<id>.root` names a root
+(`"config"`, `"extra:0"`), never a path — the settings file must not become a way to widen its own
+reach.
+
+### Adding a third engine that has a capability this one does not
+
+Nothing in `src/config/settings.ts` knows the name of a domain, so a new engine with a domain no
+current engine has — say `memory` — needs no change to the parser or to this envelope. It is
+configured the day the engine exists:
+
+```json
+"cores": {
+  "hermes": {
+    "assets": { "memory": { "team-glossary": { "path": "memory/glossary.md" } } },
+    "native": { "compaction": { "reserveTokens": 8192 } }
+  }
+}
+```
+
+### What this delivery actually applies
+
+Accepting the syntax is not the same as carrying the capability, so the two are reported separately.
+`instructions` and `mcp` reach both engines through their proven path. The other four keys parse,
+merge and resolve, but the native projectors that would place them are not part of this delivery,
+so at load:
+
+- a **required** asset, skill or pack whose domain has no projector fails before any channel opens,
+  with `ENGINE_ASSET_KIND_UNSUPPORTED` (or `PACK_LOADER_UNAVAILABLE`) naming the domain and every
+  asset id involved;
+- an **optional** one is recorded in a `configuration.capabilities.skipped` report — never silently
+  dropped, and never reported as applied;
+- a non-empty `native` block fails with `NATIVE_OPTIONS_UNSUPPORTED`, because no engine has a
+  validator for it yet and quietly ignoring engine options would be a lie;
+- an asset whose `engines` list excludes the selected engine is filtered as `not-targeted`, which
+  is not a failure even when the entry is `required`.
+
+## Configuration API
+
+The `/config` routes read and write this file. Two properties hold for every one of them: no route
+reads or writes `runtime\local.env`, and no environment variable's **value** is ever returned —
+only its name and whether it is set. A field whose name reads like a credential and whose value is
+a string (`apiKey`, `auth_token`, an `--api-key=…` argv element), or a URL carrying userinfo, a
+query or a fragment, is refused in both directions with `CONFIG_HTTP_UNSAFE_FIELD` (400).
+
+| Route | Answers |
+|---|---|
+| `GET /config?engine=<id>` | `{ file, running, effective, provenance, effect, warnings }` — every effective value labelled `common`, `core`, `environment` (with the variable name and its set flag) or `default` |
+| `GET /config/raw` | the document as stored, ETag = its sha256 |
+| `POST /config/validate` | `{ settings, engines? }` → `{ ok, problems[], effective, provenance }`, using the same parser that loads the file, and touching nothing on disk |
+| `GET /config/environment` | the variable names this document references, each with `set` and where it is referenced |
+| `GET /config/files?kind=instruction` | the instruction files that can be opened, with their digests |
+| `GET /config/files/instruction/*` | one instruction file as text, with its digest |
+| `PUT /config` | `{ settings, baseSha256, label? }` → validate for every registered engine, back up, then replace atomically |
+| `PUT /config/files/instruction/*` | `{ text, ifMatch }` → replace one instruction file atomically |
+
+A write validates first, then copies the current file to `runtime/config-history/settings-<ISO>[-label].json`,
+writes a temporary file beside the target and renames it over the original — a failed write leaves
+the previous file intact and never a half-written one. `baseSha256` (and `ifMatch` for a file)
+must match what is on disk, or the answer is `409 CONFIG_CONFLICT` carrying the current digest.
+`PNP_CONFIG_READONLY=1` turns both writing routes into `403 CONFIG_READONLY`, and `GET /config`
+reports `file.readonly`.
+
+`GET /config` also carries `capabilities`: the capability-readiness report for the selected
+engine, so a page can mark a domain that was configured and accepted but that this engine cannot
+currently carry. `POST /config/validate` carries the same report per engine, so the gap is visible
+before anything is saved.
+
+**Effect.** A saved change is a change to the file, not to the running gateway. `GET /config`
+returns the whole `effects` table, and `PUT /config` returns `changed` — only the sections that
+actually differ from what was on disk — with `effect` being the strictest of them.
+
+| Section | Effect | Sessions already open |
+|---|---|---|
+| `model`, `permissions`, `instructions` (the list), `mcp`, `skills`, `assets`, `packs`, `native` | `restart` | unaffected |
+| the text inside a listed instruction file | `new-sessions` | ACP: refused at the next prompt with `ENGINE_BINDINGS_CHANGED`; Pi: keeps the text it launched with |
+
+The split is not a policy, it is where the code reads. `loadIntegration` runs once in `main.ts`, so
+the model catalogue, the policy, the MCP servers, the instruction *list* and the four capability
+keys are frozen for the life of the process. `ConfiguredIntegration.prepare()` runs once per turn
+and re-reads every listed instruction file through the asset resolver, which is why editing one
+reaches a new session without a restart.
+
+**Resident sessions are fenced, never hot-patched.** No route rewrites an engine's native
+configuration in place. An ACP session compares an integration fingerprint that includes each
+asset's sha256, so an edited instruction file stops that session at its next prompt with
+`409 ENGINE_BINDINGS_CHANGED` — open a new session rather than continuing with an ambiguous
+binding. A Pi session injects its instructions once at launch via `--append-system-prompt` and does
+not compare assets, so it keeps what it started with; that asymmetry is real and is not papered
+over here.
+
+**Credentials.** The page edits variable *names*. Values are set with `.\pnp.cmd config` or by
+editing `runtime\local.env` directly, and the gateway is restarted afterwards.
 
 ## Compatibility
 
