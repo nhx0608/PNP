@@ -8,8 +8,8 @@ import type { DocxExtraction, DocxReplacementResult } from "../../../src/tools/o
 import type { DocxCreateResult } from "../../../src/tools/office-mcp/docx-create.ts";
 import { removeTree } from "../../kit/fs.ts";
 import {
-  DOCX_HEADING, DOCX_PARAGRAPH_ONE, DOCX_PARAGRAPH_TWO, expectError, makeWorkspace, startOfficeClient, structured,
-  writeFixtureDocx, type ToolResult,
+  DOCX_HEADING, DOCX_MERGED_TABLE_ROWS, DOCX_PARAGRAPH_ONE, DOCX_PARAGRAPH_TWO, expectError, makeWorkspace,
+  startOfficeClient, structured, writeFixtureDocx, writeMergedTableDocx, type ToolResult,
 } from "./harness.ts";
 
 let session: Awaited<ReturnType<typeof startOfficeClient>> | null = null;
@@ -45,6 +45,40 @@ test("docx_extract reports paragraphs, tables and headings in document order", a
     assert.equal(extraction.tableCount, 1);
     assert.deepEqual(extraction.tables[0]?.rows, [["物料", "数量"], ["螺栓", "120"]]);
     assert.equal(extraction.tables[0]?.bodyIndex, 3);
+    assert.equal(extraction.tables[0]?.hasMergedCells, false, "a table without merges must not be reported as merged");
+    assert.deepEqual(extraction.tables[0]?.cells[1], [
+      { row: 1, column: 0, columnSpan: 1, rowSpan: 1, text: "螺栓" },
+      { row: 1, column: 1, columnSpan: 1, rowSpan: 1, text: "120" },
+    ]);
+  } finally {
+    await removeTree(workspace);
+  }
+});
+
+test("docx_extract keeps a merged table on its real column grid instead of shifting the row", async () => {
+  const workspace = await makeWorkspace("docx-merged");
+  try {
+    const source = path.join(workspace, "库存表.docx");
+    await writeMergedTableDocx(source);
+    const client = await connect();
+    const extraction = structured<DocxExtraction>(await client.callTool({ name: "docx_extract", arguments: { path: source } }));
+    const table = extraction.tables[0];
+    assert.ok(table !== undefined);
+    assert.deepEqual(table.rows, DOCX_MERGED_TABLE_ROWS,
+      "the gridSpan header must occupy two columns so 备注 stays in the third, and the vMerge continuation must not repeat 西安");
+    assert.equal(table.columnCount, 3);
+    assert.equal(table.hasMergedCells, true);
+    assert.ok(table.rows.every((row) => row.length === table.columnCount),
+      "every row must be as wide as the grid, or a sheet export lands values under the wrong header");
+
+    assert.deepEqual(table.cells[0], [
+      { row: 0, column: 0, columnSpan: 2, rowSpan: 1, text: "库存汇总" },
+      { row: 0, column: 2, columnSpan: 1, rowSpan: 1, text: "备注" },
+    ]);
+    assert.deepEqual(table.cells[2]?.[0], { row: 2, column: 0, columnSpan: 1, rowSpan: 2, text: "西安" },
+      "a vertical merge is reported as a rowSpan on the cell that started it");
+    assert.deepEqual(table.cells[3]?.map((cell) => cell.column), [1, 2],
+      "the continued column contributes no cell of its own to the row below");
   } finally {
     await removeTree(workspace);
   }

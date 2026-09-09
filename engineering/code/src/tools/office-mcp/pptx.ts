@@ -1,7 +1,8 @@
 import { OfficeToolError } from "./errors.ts";
 import {
   openPackage, readPartTree, readRelationships, readRelationshipTree, relationshipsPartOf, removePart,
-  removeRelationships, resolveRelationshipTarget, savePackage, writePartTree, type OfficePackage,
+  removeRelationships, resolveRelationshipTarget, savePackage, writePartTree,
+  type OfficePackage, type Relationship,
 } from "./package-file.ts";
 import {
   attribute, childrenOf, cloneNode, element, findChild, findDescendant, flattenText, setChildren, tagName, textNode,
@@ -12,10 +13,46 @@ const PRESENTATION_PART = "ppt/presentation.xml";
 const CONTENT_TYPES_PART = "[Content_Types].xml";
 const SLIDE_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
 const NOTES_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
+const CHART_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
 
 export type PptxShape = { shapeId: string; name?: string; placeholder?: string; text: string };
-export type PptxSlide = { index: number; part: string; title?: string; notes?: string; texts: PptxShape[] };
-export type PptxExtraction = { path: string; slideCount: number; slides: PptxSlide[] };
+
+/** A slide table (`a:tbl` inside a `p:graphicFrame`), kept as rows of cells rather than one string. */
+export type PptxTable = { shapeId: string; name?: string; rowCount: number; columnCount: number; rows: string[][] };
+
+export type PptxChartSeries = { name?: string; categories: string[]; values: (number | string)[] };
+
+/**
+ * The numbers a chart shows come from its cached copy of the source data (`c:strCache`/`c:numCache`
+ * in the chart part), which is what PowerPoint renders and what a reader sees. Reporting them is the
+ * only way "keep the existing data points" can be checked for a slide whose figures live in a chart.
+ */
+export type PptxChart = {
+  shapeId: string;
+  name?: string;
+  part: string;
+  chartTypes: string[];
+  title?: string;
+  series: PptxChartSeries[];
+};
+
+export type PptxSlide = {
+  index: number;
+  part: string;
+  title?: string;
+  notes?: string;
+  texts: PptxShape[];
+  tables?: PptxTable[];
+  charts?: PptxChart[];
+};
+
+export type PptxExtraction = {
+  path: string;
+  slideCount: number;
+  tableCount: number;
+  chartCount: number;
+  slides: PptxSlide[];
+};
 
 type SlideReference = { index: number; part: string; relationshipId: string; element: XmlNode };
 
@@ -95,16 +132,34 @@ function collectShapes(nodes: XmlNode[], out: XmlNode[]): void {
   }
 }
 
-function shapeTree(slide: XmlNode[]): XmlNode[] {
+/** Every `p:graphicFrame` of a slide — the element that hosts a table, a chart or a diagram. */
+function collectFrames(nodes: XmlNode[], out: XmlNode[]): void {
+  for (const node of nodes) {
+    const name = tagName(node);
+    if (name === "p:graphicFrame") out.push(node);
+    else if (name === "p:grpSp") collectFrames(childrenOf(node), out);
+  }
+}
+
+function shapeTreeChildren(slide: XmlNode[]): XmlNode[] {
   const root = slide.find((node) => tagName(node) === "p:sld") ?? slide.find((node) => tagName(node) === "p:notes");
   if (root === undefined) return [];
   const common = findChild(childrenOf(root), "p:cSld");
   if (common === undefined) return [];
   const tree = findChild(childrenOf(common), "p:spTree");
-  if (tree === undefined) return [];
+  return tree === undefined ? [] : childrenOf(tree);
+}
+
+function shapeTree(slide: XmlNode[]): XmlNode[] {
   const shapes: XmlNode[] = [];
-  collectShapes(childrenOf(tree), shapes);
+  collectShapes(shapeTreeChildren(slide), shapes);
   return shapes;
+}
+
+function graphicFrames(slide: XmlNode[]): XmlNode[] {
+  const frames: XmlNode[] = [];
+  collectFrames(shapeTreeChildren(slide), frames);
+  return frames;
 }
 
 function describeShape(shape: XmlNode): PptxShape {
@@ -121,8 +176,177 @@ function describeShape(shape: XmlNode): PptxShape {
   return described;
 }
 
-async function notesText(pkg: OfficePackage, slidePart: string): Promise<string | undefined> {
-  const relationships = await readRelationships(pkg, slidePart);
+function frameIdentity(frame: XmlNode): { shapeId: string; name?: string } {
+  const visual = findChild(childrenOf(frame), "p:nvGraphicFramePr");
+  const properties = visual === undefined ? undefined : findChild(childrenOf(visual), "p:cNvPr");
+  const shapeId = properties === undefined ? "" : attribute(properties, "id") ?? "";
+  const name = properties === undefined ? undefined : attribute(properties, "name");
+  return name !== undefined && name.length > 0 ? { shapeId, name } : { shapeId };
+}
+
+function graphicData(frame: XmlNode): XmlNode | undefined {
+  const graphic = findChild(childrenOf(frame), "a:graphic");
+  return graphic === undefined ? undefined : findChild(childrenOf(graphic), "a:graphicData");
+}
+
+function tableCellText(cell: XmlNode): string {
+  const body = findChild(childrenOf(cell), "a:txBody");
+  if (body === undefined) return "";
+  return childrenOf(body)
+    .filter((node) => tagName(node) === "a:p")
+    .map((paragraph) => runText(childrenOf(paragraph)))
+    .join("\n");
+}
+
+/**
+ * A slide table as a rectangular grid. PowerPoint keeps one `a:tc` per grid position even for a
+ * merged cell (the covered ones carry `hMerge`/`vMerge` and no text), so reading the cells in order
+ * already puts every value under its own column.
+ */
+function tableOf(frame: XmlNode): PptxTable | undefined {
+  const data = graphicData(frame);
+  const table = data === undefined ? undefined : findChild(childrenOf(data), "a:tbl");
+  if (table === undefined) return undefined;
+  const rows: string[][] = [];
+  for (const row of childrenOf(table)) {
+    if (tagName(row) !== "a:tr") continue;
+    const cells: string[] = [];
+    for (const cell of childrenOf(row)) {
+      if (tagName(cell) !== "a:tc") continue;
+      cells.push(tableCellText(cell));
+    }
+    rows.push(cells);
+  }
+  const identity = frameIdentity(frame);
+  return {
+    ...identity,
+    rowCount: rows.length,
+    columnCount: rows.reduce((widest, row) => Math.max(widest, row.length), 0),
+    rows,
+  };
+}
+
+function chartRelationshipId(frame: XmlNode): string | undefined {
+  const data = graphicData(frame);
+  const chart = data === undefined ? undefined : findChild(childrenOf(data), "c:chart");
+  return chart === undefined ? undefined : attribute(chart, "r:id");
+}
+
+/** Every `c:pt` under the given nodes, keyed by its `idx` so a sparse cache keeps its positions. */
+function collectPoints(nodes: XmlNode[], out: { index: number; value: string }[]): void {
+  for (const node of nodes) {
+    const name = tagName(node);
+    if (name === null) continue;
+    if (name === "c:pt") {
+      const raw = attribute(node, "idx");
+      const value = findChild(childrenOf(node), "c:v");
+      out.push({
+        index: raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : out.length,
+        value: value === undefined ? "" : flattenText(childrenOf(value)),
+      });
+    } else collectPoints(childrenOf(node), out);
+  }
+}
+
+function cachedValues(parent: XmlNode | undefined): string[] {
+  if (parent === undefined) return [];
+  const points: { index: number; value: string }[] = [];
+  collectPoints(childrenOf(parent), points);
+  const size = points.reduce((largest, point) => Math.max(largest, point.index + 1), 0);
+  const values = new Array<string>(size).fill("");
+  for (const point of points) values[point.index] = point.value;
+  return values;
+}
+
+function asChartValue(text: string): number | string {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return text;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : text;
+}
+
+function collectDescendants(nodes: XmlNode[], name: string, out: XmlNode[]): void {
+  for (const node of nodes) {
+    if (tagName(node) === name) out.push(node);
+    else collectDescendants(childrenOf(node), name, out);
+  }
+}
+
+/** The title's own runs, not every text node under `c:title` — the layout XML around them is indented. */
+function chartTitle(chart: XmlNode | undefined): string | undefined {
+  const title = chart === undefined ? undefined : findChild(childrenOf(chart), "c:title");
+  if (title === undefined) return undefined;
+  const runs: XmlNode[] = [];
+  collectDescendants(childrenOf(title), "a:t", runs);
+  const text = runs.map((run) => flattenText(childrenOf(run))).join("").trim();
+  return text.length === 0 ? undefined : text;
+}
+
+/** A series name is normally a one-point cache; a hand-written chart may carry a literal `c:v`. */
+function seriesName(series: XmlNode[]): string | undefined {
+  const holder = findChild(series, "c:tx");
+  if (holder === undefined) return undefined;
+  const cached = cachedValues(holder)[0];
+  if (cached !== undefined && cached.trim().length > 0) return cached;
+  const literal = findChild(childrenOf(holder), "c:v");
+  const text = literal === undefined ? "" : flattenText(childrenOf(literal)).trim();
+  return text.length === 0 ? undefined : text;
+}
+
+function describeSeries(series: XmlNode): PptxChartSeries {
+  const children = childrenOf(series);
+  const name = seriesName(children);
+  const described: PptxChartSeries = {
+    categories: cachedValues(findChild(children, "c:cat")),
+    values: cachedValues(findChild(children, "c:val")).map((value) => asChartValue(value)),
+  };
+  if (name !== undefined) described.name = name;
+  return described;
+}
+
+/**
+ * Reads a chart part. A frame whose chart part is missing is still reported (with no series) rather
+ * than dropped: "this slide has a chart whose data I could not read" is a fact the caller needs,
+ * while an empty list would read as "this slide has no chart".
+ */
+async function readChart(pkg: OfficePackage, part: string, identity: { shapeId: string; name?: string }): Promise<PptxChart> {
+  const described: PptxChart = { ...identity, part, chartTypes: [], series: [] };
+  if (pkg.zip.file(part) === null) return described;
+  const tree = await readPartTree(pkg, part);
+  const space = tree.find((node) => tagName(node) === "c:chartSpace");
+  const chart = space === undefined ? undefined : findChild(childrenOf(space), "c:chart");
+  const plotArea = chart === undefined ? undefined : findChild(childrenOf(chart), "c:plotArea");
+  const title = chartTitle(chart);
+  if (title !== undefined) described.title = title;
+  if (plotArea === undefined) return described;
+  described.chartTypes = childrenOf(plotArea)
+    .map((node) => tagName(node))
+    .filter((name): name is string => name !== null && /^c:.+Chart$/.test(name))
+    .map((name) => name.slice("c:".length));
+  const series: XmlNode[] = [];
+  collectDescendants(childrenOf(plotArea), "c:ser", series);
+  described.series = series.map((entry) => describeSeries(entry));
+  return described;
+}
+
+async function slideCharts(
+  pkg: OfficePackage, slidePart: string, relationships: readonly Relationship[], frames: readonly XmlNode[],
+): Promise<PptxChart[]> {
+  const byId = new Map(relationships.filter((entry) => entry.type === CHART_RELATIONSHIP).map((entry) => [entry.id, entry]));
+  const charts: PptxChart[] = [];
+  for (const frame of frames) {
+    const relationshipId = chartRelationshipId(frame);
+    if (relationshipId === undefined) continue;
+    const relationship = byId.get(relationshipId);
+    if (relationship === undefined) continue;
+    charts.push(await readChart(pkg, resolveRelationshipTarget(slidePart, relationship.target), frameIdentity(frame)));
+  }
+  return charts;
+}
+
+async function notesText(
+  pkg: OfficePackage, slidePart: string, relationships: readonly Relationship[],
+): Promise<string | undefined> {
   const notes = relationships.find((relationship) => relationship.type === NOTES_RELATIONSHIP);
   if (notes === undefined) return undefined;
   const part = resolveRelationshipTarget(slidePart, notes.target);
@@ -144,12 +368,18 @@ export async function pptxExtract(file: string): Promise<PptxExtraction> {
   const presentation = await readPartTree(pkg, PRESENTATION_PART);
   const references = await slideReferences(pkg, presentation);
   const slides: PptxSlide[] = [];
+  let tableCount = 0;
+  let chartCount = 0;
   for (const reference of references) {
     const tree = await readPartTree(pkg, reference.part);
     const shapes = shapeTree(tree).map((shape) => describeShape(shape));
     const titleShape = shapes.find((shape) => shape.placeholder === "title" || shape.placeholder === "ctrTitle");
     const title = titleShape?.text ?? shapes.find((shape) => shape.text.trim().length > 0)?.text.split("\n")[0];
-    const notes = await notesText(pkg, reference.part);
+    const relationships = await readRelationships(pkg, reference.part);
+    const notes = await notesText(pkg, reference.part, relationships);
+    const frames = graphicFrames(tree);
+    const tables = frames.map((frame) => tableOf(frame)).filter((table): table is PptxTable => table !== undefined);
+    const charts = await slideCharts(pkg, reference.part, relationships, frames);
     const slide: PptxSlide = {
       index: reference.index,
       part: reference.part,
@@ -157,9 +387,13 @@ export async function pptxExtract(file: string): Promise<PptxExtraction> {
     };
     if (title !== undefined && title.trim().length > 0) slide.title = title.trim();
     if (notes !== undefined) slide.notes = notes;
+    if (tables.length > 0) slide.tables = tables;
+    if (charts.length > 0) slide.charts = charts;
+    tableCount += tables.length;
+    chartCount += charts.length;
     slides.push(slide);
   }
-  return { path: file, slideCount: slides.length, slides };
+  return { path: file, slideCount: slides.length, tableCount, chartCount, slides };
 }
 
 export type SlideEdit = { slide: number; shapeId?: string; match?: string; text: string };

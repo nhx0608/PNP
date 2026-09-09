@@ -95,6 +95,47 @@ function cell(text: string): TableCell {
   return new TableCell({ children: [new Paragraph(text)] });
 }
 
+function spanCell(text: string, span: { columnSpan?: number; rowSpan?: number }): TableCell {
+  return new TableCell({
+    children: [new Paragraph(text)],
+    ...(span.columnSpan === undefined ? {} : { columnSpan: span.columnSpan }),
+    ...(span.rowSpan === undefined ? {} : { rowSpan: span.rowSpan }),
+  });
+}
+
+/** What the extraction must produce once `w:gridSpan` and `w:vMerge` are honoured. */
+export const DOCX_MERGED_TABLE_ROWS = [
+  ["库存汇总", "", "备注"],
+  ["仓库", "物料", "数量"],
+  ["西安", "螺栓", "120"],
+  ["", "垫片", "45"],
+];
+
+/**
+ * A .docx whose table has both merge kinds: a header cell spanning two grid columns (so the cell
+ * after it starts at column 2, not column 1) and a warehouse cell merged down two rows (so the row
+ * below carries no cell of its own at column 0). Reading the cells positionally shifts every value
+ * of the header row one column left, which is what corrupts a table export.
+ */
+export async function writeMergedTableDocx(file: string): Promise<void> {
+  const document = new Document({
+    sections: [{
+      children: [
+        new Paragraph({ text: "库存表 Inventory", heading: HeadingLevel.HEADING_1 }),
+        new Table({
+          rows: [
+            new TableRow({ children: [spanCell("库存汇总", { columnSpan: 2 }), cell("备注")] }),
+            new TableRow({ children: [cell("仓库"), cell("物料"), cell("数量")] }),
+            new TableRow({ children: [spanCell("西安", { rowSpan: 2 }), cell("螺栓"), cell("120")] }),
+            new TableRow({ children: [cell("垫片"), cell("45")] }),
+          ],
+        }),
+      ],
+    }],
+  });
+  await writeFile(file, await Packer.toBuffer(document));
+}
+
 export const XLSX_SHEET_ONE = "库存管理台账";
 export const XLSX_SHEET_TWO = "Summary";
 
@@ -124,6 +165,53 @@ export async function writeFixturePptx(file: string): Promise<void> {
     slide.addNotes(`备注 ${index + 1}`);
   });
   await deck.writeFile({ fileName: file });
+}
+
+export const PPTX_TABLE_ROWS = [
+  ["平台", "月活"],
+  ["A 平台", "6.8"],
+  ["B 平台", "4.2"],
+];
+export const PPTX_CHART_SERIES = "月活用户";
+export const PPTX_CHART_LABELS = ["2023", "2024"];
+export const PPTX_CHART_VALUES = [8.2, 9.6];
+
+/**
+ * A deck whose numbers live where `p:sp` shapes cannot see them: one slide holds a table inside a
+ * `p:graphicFrame`, the next holds a chart whose values only exist in its cached chart part.
+ */
+export async function writeFixturePptxWithData(file: string): Promise<void> {
+  const deck = new PptxGen();
+  const first = deck.addSlide();
+  first.addText("行业概览", { x: 0.5, y: 0.3, w: 8.5, h: 0.8, fontSize: 24, bold: true });
+  first.addTable(PPTX_TABLE_ROWS.map((row) => row.map((text) => ({ text }))), { x: 0.5, y: 1.4, w: 8 });
+  const second = deck.addSlide();
+  second.addText("用户规模", { x: 0.5, y: 0.3, w: 8.5, h: 0.8, fontSize: 24, bold: true });
+  second.addChart(deck.ChartType.bar,
+    [{ name: PPTX_CHART_SERIES, labels: [...PPTX_CHART_LABELS], values: [...PPTX_CHART_VALUES] }],
+    { x: 0.5, y: 1.4, w: 6, h: 3 });
+  await deck.writeFile({ fileName: file });
+}
+
+/**
+ * A stock ledger with the three shapes that break naive arithmetic: an empty cell, a cell that says
+ * 未统计 instead of a number, and a whole warehouse whose only quantity is unreadable. The numeric
+ * formats a spreadsheet export really produces — a thousands separator, a currency sign, a percent
+ * sign — are here too, so the parser is tested against them rather than against clean integers.
+ */
+export const AGGREGATE_CSV_TEXT = [
+  "物料,仓库,当前库存,安全库存,单价,金额,占比",
+  "螺栓,西安,120,80,1.5,\"1,200\",12%",
+  "垫片,西安,45,60,0.8,¥800,8%",
+  "轴承,北京,10,25,25,250,25%",
+  "法兰,北京,未统计,30,3,N/A,—",
+  "密封圈,西安,,15,2,30,3%",
+  "角铁,上海,未统计,10,4,40,4%",
+  "",
+].join("\n");
+
+export async function writeAggregateCsv(file: string): Promise<void> {
+  await writeFile(file, AGGREGATE_CSV_TEXT, "utf8");
 }
 
 export const CSV_TEXT = [

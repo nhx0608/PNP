@@ -10,7 +10,8 @@ import type {
 import type { PptxCreateResult } from "../../../src/tools/office-mcp/pptx-create.ts";
 import { removeTree } from "../../kit/fs.ts";
 import {
-  expectError, makeWorkspace, PPTX_TITLES, startOfficeClient, structured, writeFixturePptx, type ToolResult,
+  expectError, makeWorkspace, PPTX_CHART_LABELS, PPTX_CHART_SERIES, PPTX_CHART_VALUES, PPTX_TABLE_ROWS, PPTX_TITLES,
+  startOfficeClient, structured, writeFixturePptx, writeFixturePptxWithData, type ToolResult,
 } from "./harness.ts";
 
 let session: Awaited<ReturnType<typeof startOfficeClient>> | null = null;
@@ -43,6 +44,43 @@ test("pptx_extract reports slides in presentation order with their shapes and no
     assert.equal(extraction.slides[0]?.texts.length, 3);
     assert.equal(extraction.slides[0]?.texts[1]?.text, "要点 1A\n要点 1B");
     assert.ok((extraction.slides[0]?.texts[0]?.shapeId ?? "").length > 0, "every shape needs an addressable id");
+    assert.equal(extraction.tableCount, 0);
+    assert.equal(extraction.chartCount, 0);
+  } finally {
+    await removeTree(workspace);
+  }
+});
+
+test("pptx_extract reports the data points held in a slide table and in a chart's cached values", async () => {
+  const workspace = await makeWorkspace("pptx-data");
+  try {
+    const source = path.join(workspace, "差异化分析.pptx");
+    await writeFixturePptxWithData(source);
+    const client = await connect();
+    const extraction = structured<PptxExtraction>(await client.callTool({ name: "pptx_extract", arguments: { path: source } }));
+    assert.equal(extraction.slideCount, 2);
+    assert.equal(extraction.tableCount, 1);
+    assert.equal(extraction.chartCount, 1);
+
+    const table = extraction.slides[0]?.tables?.[0];
+    assert.ok(table !== undefined, "a table inside a graphicFrame must not be invisible to the extractor");
+    assert.deepEqual(table.rows, PPTX_TABLE_ROWS, "cells come back as rows, not flattened into one string");
+    assert.equal(table.rowCount, 3);
+    assert.equal(table.columnCount, 2);
+    assert.ok(table.shapeId.length > 0);
+
+    const chart = extraction.slides[1]?.charts?.[0];
+    assert.ok(chart !== undefined, "a chart's numbers must be readable, or a restructure cannot preserve them");
+    assert.match(chart.part, /^ppt\/charts\//);
+    assert.ok(chart.chartTypes.includes("barChart"), `expected a bar chart, got ${chart.chartTypes.join(", ")}`);
+    assert.equal(chart.series.length, 1);
+    assert.equal(chart.series[0]?.name, PPTX_CHART_SERIES);
+    assert.deepEqual(chart.series[0]?.categories, PPTX_CHART_LABELS);
+    assert.deepEqual(chart.series[0]?.values, PPTX_CHART_VALUES,
+      "cached numbers must come back as numbers so they can be compared before and after an edit");
+
+    assert.ok((extraction.slides[0]?.texts.length ?? 0) > 0, "the existing shape texts must still be reported");
+    assert.equal(extraction.slides[0]?.charts, undefined, "a slide without charts carries no chart list");
   } finally {
     await removeTree(workspace);
   }

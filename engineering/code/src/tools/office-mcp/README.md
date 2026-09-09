@@ -43,17 +43,18 @@ stdout 只承载 JSON-RPC，日志一律走 stderr。
 
 | 工具 | sideEffect | 输入 / input | 输出 / output |
 |---|---|---|---|
-| `docx_extract` | read | `path` | `paragraphs[{index,bodyIndex,style?,headingLevel?,text}]`、`tables[{index,bodyIndex,rowCount,columnCount,rows[][]}]`、`headings[{paragraphIndex,level,text,style?}]` |
+| `docx_extract` | read | `path` | `paragraphs[{index,bodyIndex,style?,headingLevel?,text}]`、`tables[{index,bodyIndex,rowCount,columnCount,rows[][],cells[][{row,column,columnSpan,rowSpan,text}],hasMergedCells}]`、`headings[{paragraphIndex,level,text,style?}]` |
 | `docx_replace_paragraphs` | write | `path`, `outputPath`, `replacements[{index?,match?,text}]`, `overwrite?` | `replaced[{index,previousText,text}]`、`paragraphCount`、`bytes` |
 | `docx_create` | write | `outputPath`, `title?`, `blocks[{type,level?,text?,items?,rows?}]`, `overwrite?` | `blockCount`、`paragraphCount`、`tableCount`、`bytes` |
 | `xlsx_read` | read | `path`, `sheet?`, `maxRows?` | `sheets[]`、`sheet`、`rows[][]`、`rowCount`、`columnCount`、`truncated` |
 | `xlsx_write` | write | `outputPath`, `sheets[{name?,rows[][]}]`, `overwrite?` | `sheets[{name,requestedName?,rowCount,columnCount}]`、`bytes` |
-| `pptx_extract` | read | `path` | `slides[{index,part,title?,notes?,texts[{shapeId,name?,placeholder?,text}]}]` |
+| `pptx_extract` | read | `path` | `slideCount`、`tableCount`、`chartCount`、`slides[{index,part,title?,notes?,texts[{shapeId,name?,placeholder?,text}],tables?[{shapeId,name?,rowCount,columnCount,rows[][]}],charts?[{shapeId,name?,part,chartTypes[],title?,series[{name?,categories[],values[]}]}]}]` |
 | `pptx_replace_text` | write | `path`, `outputPath`, `edits[{slide,shapeId?,match?,text}]`, `overwrite?` | `edits[{slide,shapeId,previousText,text}]`、`bytes` |
 | `pptx_reorder_slides` | write | `path`, `outputPath`, `order[]`, `overwrite?` | `order[]`、`slideCount`、`bytes` |
 | `pptx_delete_slides` | write | `path`, `outputPath`, `slides[]`, `overwrite?` | `deleted[{slide,part}]`、`remainingSlides`、`bytes` |
 | `pptx_create` | write | `outputPath`, `slides[{title,bullets?,notes?}]`, `theme?`, `overwrite?` | `slideCount`、`bytes` |
 | `csv_read` | read | `path`, `delimiter?`, `maxRows?` | `headers[]`、`rows[][]`、`rowCount`、`numericColumns[{column,count,min,max,mean,sum}]`、`textColumns[{column,distinctCount,sample[]}]` |
+| `data_aggregate` | read | `path`（`.csv`/`.xlsx`）, `sheet?`, `delimiter?`, `filters[{column,op,value?,values?}]?`, `filterMode?`, `groupBy[]?`, `aggregations[{op,column?,as?}]?`, `sort[{by,direction?}]?`, `limit?` | `rows[{<分组列>,<统计列>}]`、`columns[{column,index,type,numericCount,textCount,emptyCount}]`、`rowCount`、`filteredRowCount`、`groupCount`、`skipped[{column,nonNumericCount,emptyCount,samples[]}]`、`warnings[]` |
 | `fs_find` | read | `root`, `nameContains?`, `extensions?`, `recursive?`, `maxResults?` | `files[{path,name,size,modifiedAt}]`、`directories[{path,name}]`、`truncated` |
 | `fs_delete` | external | `paths?` 或 `root`+`nameContains`/`extensions`, `recursive?`, `dryRun?` | `matched[]`、`deleted[]`、`failed[{path,reason}]`、`skippedDirectories[]` |
 | `app_open` | external | `name` | `name`、`command`、`argv[]`、`exitCode` |
@@ -73,6 +74,13 @@ stdout 只承载 JSON-RPC，日志一律走 stderr。
   `index`）；pptx 幻灯片序号从 1 开始，且按 `p:sldIdLst` 的演示顺序而不是文件名顺序。
 - **匹配**：`match` 先按整段/整形状全文匹配，再退化为子串匹配；命中多个时报 `AMBIGUOUS_MATCH` 并列出
   候选索引，绝不猜测。
+- **数值解析**：`data_aggregate` 只把这些形状当成数字：数字本身、普通小数、千分位（`1,250.5`）、
+  货币符号前缀（`¥800`）、百分号后缀（`12%` 读作 `12`，与 `csv_read` 一致）。`N/A`、`未统计`、`120 件`
+  这类单元格既不参与统计也不会被当成 0，而是计入 `skipped`（含样例）；某一组完全没有数值时该统计项返回
+  `null` 而不是 `0`，因为 `0` 与真实的零无法区分。
+- **表格网格**：`docx_extract` 按真实列网格返回表格。`w:gridSpan`（横向合并）与 `w:vMerge`（纵向合并）
+  都被展开成列位置：`rows` 中被合并覆盖的位置是空串（不重复文本），`cells` 里给出每个单元格的
+  `column`/`columnSpan`/`rowSpan`。这样"每个表格导出成一个 sheet"不会整行错位。
 - **错误码**：`PATH_NOT_ABSOLUTE`、`PATH_NOT_FOUND`、`NOT_A_FILE`、`OUTPUT_EXISTS`、`INVALID_ARGUMENT`、
   `NO_MATCH`、`AMBIGUOUS_MATCH`、`INDEX_OUT_OF_RANGE`、`UNSUPPORTED_FORMAT`、`PROTECTED_LOCATION`、
   `PLATFORM_UNSUPPORTED`、`REQUEST_FAILED`、`UNEXPECTED`。
@@ -91,12 +99,19 @@ stdout 只承载 JSON-RPC，日志一律走 stderr。
 - **pptx 文本改写**：保留第一段的 `a:pPr` 与第一个 run 的 `a:rPr` 并克隆到每一行；形状内原有的分段
   格式差异、`a:fld`（页码等域）、超链接会丢失。文本自动缩放不会重新计算，把短标题换成长标题可能在
   PowerPoint 里溢出占位符。
-- **pptx 读取范围**：只遍历 `p:sp`（含组合内的形状）。表格（`p:graphicFrame`）、图表、SmartArt、图片
-  不在 `texts` 里，也不能改写。备注可读、在重排与删页时会跟随幻灯片，但没有备注编辑工具。
+- **pptx 读取范围**：`texts` 只包含 `p:sp`（含组合内的形状）；表格与图表另外报在 `tables` 与 `charts` 里，
+  但都只能读不能改（`pptx_replace_text` 仍只处理 `p:sp`）。图表读的是图表部件里的缓存值
+  （`c:strCache`/`c:numCache`），即 PowerPoint 当前显示的数据；外部链接的工作簿不会被打开，图表部件缺失时
+  该图表仍会被报出来（`series` 为空），不会被当作"没有图表"。SmartArt（`ppt/diagrams/`）与图片仍不可读。
+  备注可读、在重排与删页时会跟随幻灯片，但没有备注编辑工具。
 - **xlsx**：`xlsx_write` 总是新建工作簿，不做原位编辑，因此图表、透视表、宏、条件格式不会被保留；
   `xlsx_read` 只返回值，不返回格式、合并单元格几何或批注。公式单元格返回缓存结果，没有缓存结果时为 `null`。
   工作表名按 Excel 规则清洗并去重，实际使用的名字在 `sheets[].name` 里回报。
 - **csv**：按 UTF-8（可带 BOM）读取，不做 GBK 等编码探测。
+- **data_aggregate**：只读 `.csv`/`.tsv`/`.txt` 与 `.xlsx`/`.xlsm`，首行必须是表头；过滤条件只比较"列与常量"，
+  不比较两列（"低于安全库存"这类判断请分组取出两列的值后自行比较）。默认最多返回 1000 组，超出时
+  `truncated:true`。`gt/gte/lt/lte` 在两侧都能解析成数字时按数值比较，否则退化为字符串比较；空单元格不参与
+  任何大小比较。
 - **web_fetch**：不执行 JavaScript，HTML 转文本是启发式的。Node 的全局 `fetch` 默认不读代理环境变量；
   需要代理时在 Node 24 上设 `NODE_USE_ENV_PROXY=1`。
 - **app_open**：仅 Windows，走 `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`

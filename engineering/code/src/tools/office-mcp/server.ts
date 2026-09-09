@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { dataAggregate, type AggregateFilter, type AggregateSpec } from "./aggregate.ts";
 import { csvRead } from "./csv.ts";
 import { docxExtract, docxReplaceParagraphs } from "./docx.ts";
 import { docxCreate, type DocxBlock } from "./docx-create.ts";
@@ -61,8 +62,13 @@ function registerDocxTools(server: McpServer, catalog: ToolInfo[]): void {
     title: "读取 Word 文档 / Read a Word document",
     sideEffect: "read",
     description: "按文档顺序提取 .docx 的段落、表格与标题。段落索引从 0 开始，可直接用于 docx_replace_paragraphs。"
+      + "表格按真实列网格返回：合并单元格（w:gridSpan 横向合并、w:vMerge 纵向合并）不会让后面的单元格串列，"
+      + "rows 中被合并覆盖的位置是空串，cells 里给出每个单元格的 column/columnSpan/rowSpan。"
       + " Extracts paragraphs, tables and headings from a .docx in document order; paragraph indexes are"
-      + " zero-based and are exactly the indexes docx_replace_paragraphs accepts.",
+      + " zero-based and are exactly the indexes docx_replace_paragraphs accepts. Table rows are laid out"
+      + " on the real column grid, so a merged header cell no longer shifts the rest of its row: a"
+      + " position covered by a horizontal or vertical merge comes back as \"\", and `cells` reports each"
+      + " cell's column, columnSpan and rowSpan.",
     inputSchema: z.object({ path: z.string().describe(`.docx 文件路径 / path to the .docx file; ${ABSOLUTE_PATH_NOTE}`) }),
   }, async (args) => {
     const file = await requireExistingFile("path", args.path);
@@ -192,13 +198,22 @@ function registerPptxTools(server: McpServer, catalog: ToolInfo[]): void {
     title: "读取 PowerPoint / Read a PowerPoint deck",
     sideEffect: "read",
     description: "按演示顺序提取每页的形状文本、标题与备注；index 从 1 开始，shapeId 可直接用于 pptx_replace_text。"
+      + "同时提取页内表格（tables，按行列返回单元格文本）与图表的缓存数据（charts：系列名、类别与数值），"
+      + "所以改版前后可以逐个核对数据点是否保留。"
       + " Extracts every slide in presentation order (as stored in p:sldIdLst, not by file name) with its"
-      + " title, shape texts and speaker notes; slide indexes are 1-based and shapeIds feed pptx_replace_text.",
+      + " title, shape texts and speaker notes; slide indexes are 1-based and shapeIds feed"
+      + " pptx_replace_text. Slide tables come back as rows of cells and charts as their cached series,"
+      + " categories and values, so a data point that lives in a table or a chart can be checked before"
+      + " and after a restructure instead of being invisible.",
     inputSchema: z.object({ path: z.string().describe(`.pptx 文件路径 / path to the deck; ${ABSOLUTE_PATH_NOTE}`) }),
   }, async (args) => {
     const file = await requireExistingFile("path", args.path);
     const result = await pptxExtract(file);
-    return { summary: `pptx_extract: ${result.slideCount} 页 / slides (${file})`, data: result };
+    return {
+      summary: `pptx_extract: ${result.slideCount} 页 / slides, ${result.tableCount} 表格 / tables,`
+        + ` ${result.chartCount} 图表 / charts (${file})`,
+      data: result,
+    };
   });
 
   register(server, catalog, {
@@ -320,6 +335,81 @@ function registerDataTools(server: McpServer, catalog: ToolInfo[]): void {
     return {
       summary: `csv_read: ${result.rowCount} 行 / rows, ${result.headers.length} 列 / columns`
         + `（数值列 / numeric: ${result.numericColumns.map((column) => column.column).join(", ") || "无 / none"}）`,
+      data: result,
+    };
+  });
+
+  register(server, catalog, {
+    name: "data_aggregate",
+    title: "分组统计 / Aggregate table data",
+    sideEffect: "read",
+    description: "对 .csv 或 .xlsx 直接算出结论需要的数字：先按 filters 过滤（filterMode=and/or），再按 groupBy 分组"
+      + "（groupBy 为空表示整表一组），对每组执行 aggregations：count（不给 column 时是行数，给了是该列非空数）、"
+      + "sum、mean、min、max、median、distinct，可用 as 指定输出列名，并支持 sort（按输出列名）与 limit。"
+      + "数值解析是显式的：只接受数字、千分位、货币符号前缀与百分号后缀（\"12%\" 读作 12），"
+      + "\"N/A\"、\"约 120\" 这类单元格不会被当成 0，而是计入 skipped，整组没有数值时该项返回 null 而不是 0。"
+      + "返回 rows（每组一行）、columns（推断出的列类型与计数）、skipped 与 warnings。"
+      + " Computes the numbers an analysis needs from a .csv or .xlsx instead of leaving the arithmetic"
+      + " to the model: filter rows, group by zero or more columns (no groupBy means one group over the"
+      + " whole table) and apply count (row count, or non-empty cells when a column is named), sum,"
+      + " mean, min, max, median and distinct, with optional per-aggregation output names, sorting by an"
+      + " output column and a row limit. Numeric parsing is explicit — plain numbers, thousands"
+      + " separators, a currency prefix and a trailing percent sign (\"12%\" reads as 12) — and a cell"
+      + " that is not a number is never coerced to 0: it is counted in `skipped` with samples, and an"
+      + " aggregation whose group held no number at all returns null rather than a fake zero.",
+    inputSchema: z.object({
+      path: z.string().describe(`.csv 或 .xlsx 文件路径 / path to the .csv or .xlsx; ${ABSOLUTE_PATH_NOTE}`),
+      sheet: z.string().optional().describe("工作表名或 1 开始的序号，仅对 .xlsx 有效 / sheet name or 1-based index, .xlsx only"),
+      delimiter: z.string().optional().describe("CSV 分隔符，缺省自动判断 / CSV delimiter, auto-detected when omitted"),
+      filters: z.array(z.object({
+        column: z.string().describe("列名（表头）/ column header"),
+        op: z.enum(["eq", "ne", "gt", "gte", "lt", "lte", "contains", "notContains", "in", "notIn", "empty", "notEmpty"])
+          .describe("比较方式；两侧都是数字时按数值比较 / comparison; numeric when both sides parse as numbers"),
+        value: z.union([z.string(), z.number(), z.boolean()]).optional().describe("比较值 / value to compare against"),
+        values: z.array(z.union([z.string(), z.number(), z.boolean()])).optional().describe("in/notIn 的取值集合 / values for in and notIn"),
+      })).optional().describe("行过滤条件 / row filters"),
+      filterMode: z.enum(["and", "or"]).optional().describe("多个过滤条件的组合方式，默认 and / how filters combine, default and"),
+      groupBy: z.array(z.string()).optional().describe("分组列，可为空 / grouping columns; empty means one group"),
+      aggregations: z.array(z.object({
+        op: z.enum(["count", "sum", "mean", "min", "max", "median", "distinct"]).describe("统计方式 / aggregation"),
+        column: z.string().optional().describe("被统计的列；count 以外必须提供 / column to aggregate; required except for count"),
+        as: z.string().optional().describe("输出列名，缺省为 <op>_<column> / output column name, defaults to <op>_<column>"),
+      })).optional().describe("统计项，缺省为一次 count / aggregations, defaults to a single count"),
+      sort: z.array(z.object({
+        by: z.string().describe("输出列名（分组列或统计列）/ an output column name"),
+        direction: z.enum(["asc", "desc"]).optional().describe("默认 asc / defaults to asc"),
+      })).optional().describe("结果排序 / result ordering"),
+      limit: z.number().int().min(1).optional().describe("最多返回的分组行数 / maximum result rows"),
+    }),
+  }, async (args) => {
+    const file = await requireExistingFile("path", args.path);
+    const filters: AggregateFilter[] | undefined = args.filters?.map((filter) => ({
+      column: filter.column,
+      op: filter.op,
+      ...(filter.value === undefined ? {} : { value: filter.value }),
+      ...(filter.values === undefined ? {} : { values: filter.values }),
+    }));
+    const aggregations: AggregateSpec[] | undefined = args.aggregations?.map((aggregation) => ({
+      op: aggregation.op,
+      ...(aggregation.column === undefined ? {} : { column: aggregation.column }),
+      ...(aggregation.as === undefined ? {} : { as: aggregation.as }),
+    }));
+    const result = await dataAggregate({
+      path: file,
+      ...(args.sheet === undefined ? {} : { sheet: args.sheet }),
+      ...(args.delimiter === undefined ? {} : { delimiter: args.delimiter }),
+      ...(filters === undefined ? {} : { filters }),
+      ...(args.filterMode === undefined ? {} : { filterMode: args.filterMode }),
+      ...(args.groupBy === undefined ? {} : { groupBy: args.groupBy }),
+      ...(aggregations === undefined ? {} : { aggregations }),
+      ...(args.sort === undefined ? {} : { sort: args.sort }),
+      ...(args.limit === undefined ? {} : { limit: args.limit }),
+    });
+    const dirty = result.skipped.reduce((total, entry) => total + entry.nonNumericCount, 0);
+    return {
+      summary: `data_aggregate: ${result.filteredRowCount}/${result.rowCount} 行 / rows → ${result.groupCount} 组 / groups`
+        + `（统计 / aggregations: ${result.aggregations.map((entry) => entry.name).join(", ")}）`
+        + (dirty > 0 ? `，${dirty} 个非数值单元格被跳过 / non-numeric cells skipped` : ""),
       data: result,
     };
   });

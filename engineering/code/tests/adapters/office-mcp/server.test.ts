@@ -18,7 +18,7 @@ const EXPECTED_TOOLS = [
   "docx_extract", "docx_replace_paragraphs", "docx_create",
   "xlsx_read", "xlsx_write",
   "pptx_extract", "pptx_replace_text", "pptx_reorder_slides", "pptx_delete_slides", "pptx_create",
-  "csv_read", "fs_find", "fs_delete", "app_open", "web_fetch", "server_info",
+  "csv_read", "data_aggregate", "fs_find", "fs_delete", "app_open", "web_fetch", "server_info",
 ];
 
 type ServerInfo = {

@@ -15,12 +15,33 @@ export type DocxParagraph = {
   text: string;
 };
 
+/**
+ * One real cell of a table, placed at the grid column it actually occupies. A cell that continues a
+ * vertical merge is not a cell of its own: it is reported through the `rowSpan` of the cell that
+ * started the merge, so the text is never duplicated down the column.
+ */
+export type DocxTableCell = {
+  row: number;
+  column: number;
+  columnSpan: number;
+  rowSpan: number;
+  text: string;
+};
+
 export type DocxTable = {
   index: number;
   bodyIndex: number;
   rowCount: number;
   columnCount: number;
+  /**
+   * Grid-aligned text, one entry per grid column: a column covered by a `w:gridSpan` or by a
+   * `w:vMerge` continuation carries "" so every following value stays under its own column. That is
+   * what makes "export each table to a sheet" line up.
+   */
   rows: string[][];
+  /** Per row, the cells that begin in it, with their spans. */
+  cells: DocxTableCell[][];
+  hasMergedCells: boolean;
 };
 
 export type DocxExtraction = {
@@ -119,19 +140,79 @@ function headingLevel(paragraph: XmlNode, style: string | undefined): number | u
   return undefined;
 }
 
-function tableRows(table: XmlNode): string[][] {
-  const rows: string[][] = [];
-  for (const row of childrenOf(table)) {
-    if (tagName(row) !== "w:tr") continue;
-    const cells: string[] = [];
-    for (const cell of childrenOf(row)) {
-      if (tagName(cell) !== "w:tc") continue;
-      const paragraphs = childrenOf(cell).filter((node) => tagName(node) === "w:p");
-      cells.push(paragraphs.map((node) => paragraphText(node)).join("\n"));
+function cellText(cell: XmlNode): string {
+  return childrenOf(cell)
+    .filter((node) => tagName(node) === "w:p")
+    .map((node) => paragraphText(node))
+    .join("\n");
+}
+
+function cellProperties(cell: XmlNode): XmlNode | undefined {
+  return findChild(childrenOf(cell), "w:tcPr");
+}
+
+/** `w:gridSpan` is how many grid columns one cell covers; absent means one. */
+function gridSpan(cell: XmlNode): number {
+  const properties = cellProperties(cell);
+  const span = properties === undefined ? undefined : findChild(childrenOf(properties), "w:gridSpan");
+  const value = span === undefined ? undefined : attribute(span, "w:val");
+  if (value === undefined || !/^\d+$/.test(value)) return 1;
+  const parsed = Number(value);
+  return parsed >= 1 ? parsed : 1;
+}
+
+/** `w:vMerge` without a `w:val` means "continue"; only `w:val="restart"` opens a vertical merge. */
+function verticalMerge(cell: XmlNode): "restart" | "continue" | undefined {
+  const properties = cellProperties(cell);
+  const merge = properties === undefined ? undefined : findChild(childrenOf(properties), "w:vMerge");
+  if (merge === undefined) return undefined;
+  return attribute(merge, "w:val") === "restart" ? "restart" : "continue";
+}
+
+type TableGrid = { rows: string[][]; cells: DocxTableCell[][]; columnCount: number; merged: boolean };
+
+/**
+ * Lays the cells of a table out on its real column grid. A `w:gridSpan` header cell covers several
+ * columns, so every cell after it in that row starts two (or more) columns further right; reading
+ * the cells positionally, as this used to, silently shifted the whole row and corrupted a table
+ * export. Word writes one `w:tc` per grid position for a vertical merge, so the running column
+ * cursor is enough — the continuation cells are counted but reported as span, never as repeated text.
+ */
+function tableGrid(table: XmlNode): TableGrid {
+  const rowNodes = childrenOf(table).filter((node) => tagName(node) === "w:tr");
+  const cells: DocxTableCell[][] = [];
+  const grids: string[][] = [];
+  const anchors = new Map<number, DocxTableCell>();
+  let columnCount = 0;
+  let merged = false;
+  rowNodes.forEach((rowNode, rowIndex) => {
+    const rowCells: DocxTableCell[] = [];
+    const grid: string[] = [];
+    let column = 0;
+    for (const cellNode of childrenOf(rowNode)) {
+      if (tagName(cellNode) !== "w:tc") continue;
+      const span = gridSpan(cellNode);
+      const merge = verticalMerge(cellNode);
+      if (span > 1 || merge !== undefined) merged = true;
+      const anchor = merge === "continue" ? anchors.get(column) : undefined;
+      if (anchor === undefined) {
+        const cell: DocxTableCell = { row: rowIndex, column, columnSpan: span, rowSpan: 1, text: cellText(cellNode) };
+        rowCells.push(cell);
+        grid[column] = cell.text;
+        for (let offset = 0; offset < span; offset += 1) anchors.delete(column + offset);
+        if (merge === "restart") anchors.set(column, cell);
+      } else {
+        anchor.rowSpan += 1;
+      }
+      for (let offset = 0; offset < span; offset += 1) if (grid[column + offset] === undefined) grid[column + offset] = "";
+      column += span;
     }
-    rows.push(cells);
-  }
-  return rows;
+    columnCount = Math.max(columnCount, column);
+    cells.push(rowCells);
+    grids.push(grid);
+  });
+  const rows = grids.map((grid) => Array.from({ length: columnCount }, (_unused, index) => grid[index] ?? ""));
+  return { rows, cells, columnCount, merged };
 }
 
 export async function docxExtract(file: string): Promise<DocxExtraction> {
@@ -157,13 +238,15 @@ export async function docxExtract(file: string): Promise<DocxExtraction> {
           : { paragraphIndex: index, level, text, style });
       }
     } else {
-      const rows = tableRows(block.node);
+      const grid = tableGrid(block.node);
       tables.push({
         index: tables.length,
         bodyIndex,
-        rowCount: rows.length,
-        columnCount: rows.reduce((widest, row) => Math.max(widest, row.length), 0),
-        rows,
+        rowCount: grid.rows.length,
+        columnCount: grid.columnCount,
+        rows: grid.rows,
+        cells: grid.cells,
+        hasMergedCells: grid.merged,
       });
     }
   });
