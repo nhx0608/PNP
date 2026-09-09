@@ -15,6 +15,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { codeRoot } from "./lib.mjs";
 
 /** Every build input, relative to code/, in a stable order. */
@@ -60,7 +61,17 @@ export function computeSourceStamp(root = codeRoot) {
   return { stamp: digest.digest("hex"), files: relative.length };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// pathToFileURL, not a `file://` template: argv[1] is a Windows path with backslashes and a drive
+// letter, which never equals import.meta.url, so the template form made this script print nothing
+// and exit 0 on the one platform the package ships for. pnp-local.ps1 reads that empty output as
+// "cannot compute a stamp", concludes the prebuilt dist/ is stale, and fails the delivered bundle
+// with "dist\main.js is missing or out of date and the TypeScript compiler is not installed" --
+// the bundle omits devDependencies, so it never has one. Silent, and fatal exactly on the
+// assessor's machine.
+// argv[1] is undefined when this module is imported by `node -e`, and pathToFileURL(undefined)
+// throws -- which would break every importer, not just the CLI. Checked, not assumed.
+const invokedAs = process.argv[1];
+if (invokedAs !== undefined && import.meta.url === pathToFileURL(invokedAs).href) {
   const result = computeSourceStamp();
   process.stdout.write(process.argv.includes("--json")
     ? `${JSON.stringify(result)}\n`
