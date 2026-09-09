@@ -135,3 +135,6 @@ engineering/private/
 
 # Agent worktrees created by the harness
 .claude/
+
+# IDE 本地设置：属于开发者个人环境，不属于交付件。
+.idea/
