@@ -24,6 +24,20 @@ export type AggregateFilter = { column: string; op: FilterOperator; value?: Filt
 
 export type AggregateSpec = { op: AggregateOperation; column?: string; as?: string };
 
+/**
+ * An aggregation exactly as it arrived, before `normalizeAggregateRequest` has had a look at it.
+ * `op` is a plain string and `value`/`values` are accepted here even though an aggregation has no
+ * use for them, because that is the shape of the call this tool actually receives when it is
+ * misused — see the normaliser for what happens next. Nothing downstream sees this type.
+ */
+export type RawAggregateSpec = {
+  op: string;
+  column?: string | null;
+  as?: string | null;
+  value?: FilterValue | null;
+  values?: FilterValue[] | null;
+};
+
 export type AggregateSort = { by: string; direction?: "asc" | "desc" };
 
 export type AggregateRequest = {
@@ -33,9 +47,9 @@ export type AggregateRequest = {
   filters?: AggregateFilter[];
   filterMode?: "and" | "or";
   groupBy?: string[];
-  aggregations?: AggregateSpec[];
+  aggregations?: readonly RawAggregateSpec[];
   sort?: AggregateSort[];
-  limit?: number;
+  limit?: number | null;
 };
 
 export type ColumnKind = "number" | "text" | "boolean" | "empty" | "mixed";
@@ -291,6 +305,120 @@ function defaultName(spec: AggregateSpec): string {
 }
 
 type ResolvedSpec = { name: string; op: AggregateOperation; column?: string; index?: number };
+
+/** The seven things this tool can compute. Anything else in `op` is a caller mistake, not a feature. */
+const AGGREGATE_OPERATIONS = new Set<string>(["count", "sum", "mean", "min", "max", "median", "distinct"]);
+/** The twelve comparisons `filters[].op` accepts, kept here so the normaliser can recognise one in the wrong field. */
+const FILTER_OPERATORS = new Set<string>([
+  "eq", "ne", "gt", "gte", "lt", "lte", "contains", "notContains", "in", "notIn", "empty", "notEmpty",
+]);
+/**
+ * Names for the same seven operations that a model reaches for first. Accepting them costs nothing
+ * and removes a whole class of round trip: "avg" is not an ambiguous request, it is `mean` spelled
+ * the way most tools spell it.
+ */
+const OPERATION_ALIASES = new Map<string, AggregateOperation>([
+  ["avg", "mean"], ["average", "mean"],
+  ["total", "sum"],
+  ["cnt", "count"], ["size", "count"], ["rows", "count"], ["rowcount", "count"], ["row_count", "count"],
+  ["nunique", "distinct"], ["unique", "distinct"], ["uniquecount", "distinct"],
+  ["countdistinct", "distinct"], ["count_distinct", "distinct"], ["distinctcount", "distinct"],
+]);
+
+function canonicalOperation(op: string): AggregateOperation | undefined {
+  const lower = op.trim().toLowerCase();
+  if (AGGREGATE_OPERATIONS.has(lower)) return lower as AggregateOperation;
+  return OPERATION_ALIASES.get(lower);
+}
+
+/** A filter operator, spelled the way `filters[].op` wants it, or undefined when `op` is not one. */
+function canonicalFilterOperator(op: string): FilterOperator | undefined {
+  const lower = op.trim().toLowerCase();
+  for (const candidate of FILTER_OPERATORS) {
+    if (candidate.toLowerCase() === lower) return candidate as FilterOperator;
+  }
+  return undefined;
+}
+
+export type NormalizedAggregateRequest = {
+  aggregations: AggregateSpec[];
+  filters: AggregateFilter[];
+  filterMode: "and" | "or";
+};
+
+/**
+ * Reads the call the caller meant when the one they sent cannot be read literally.
+ *
+ * Evaluation case office_014 is why this exists. A model wanted "how many rows have credit_score
+ * above 700" and wrote it as `aggregations:[{op:"gt", column:"credit_score", value:700}]` — a
+ * filter in the field that names a statistic. The schema rejected it, the rejection said only
+ * which strings `op` accepts, and the model sent the identical call four more times before giving
+ * up and writing the report without any numbers in it. The information needed to answer was
+ * present in the very first call; only the shape was wrong.
+ *
+ * So exactly one reading is repaired, the one that has no second interpretation: a single
+ * aggregation whose `op` is a comparison and which carries the value to compare against. That is
+ * "count the rows matching this condition", it becomes a filter plus a count, and the repair is
+ * stated in `warnings` and in the tool summary — the caller is told what was run, never left to
+ * assume its own call was executed as written. Two such aggregations in one call are not repaired:
+ * whether they meant one filtered count or two separate ones is a guess, and a guessed number
+ * presented as an answer is the failure this whole module is built to avoid.
+ *
+ * Everything else is rejected with the corrected call written out in the message, because a
+ * rejection a model cannot act on costs the same as a wrong answer.
+ */
+export function normalizeAggregateRequest(request: AggregateRequest, warnings: string[]): NormalizedAggregateRequest {
+  const filters: AggregateFilter[] = [...(request.filters ?? [])];
+  const filterMode = request.filterMode ?? "and";
+  const raw = request.aggregations ?? [{ op: "count" }];
+  const misplaced = raw.filter((spec) => canonicalOperation(spec.op) === undefined
+    && canonicalFilterOperator(spec.op) !== undefined);
+
+  if (misplaced.length === 1 && raw.length === 1) {
+    const spec = misplaced[0]!;
+    const operator = canonicalFilterOperator(spec.op)!;
+    const needsValue = operator !== "empty" && operator !== "notEmpty";
+    const hasValue = spec.value !== undefined && spec.value !== null;
+    const hasValues = Array.isArray(spec.values) && spec.values.length > 0;
+    if (typeof spec.column === "string" && spec.column.length > 0 && (!needsValue || hasValue || hasValues)) {
+      const repaired: AggregateFilter = {
+        column: spec.column, op: operator,
+        ...(hasValue ? { value: spec.value as FilterValue } : {}),
+        ...(hasValues ? { values: spec.values as FilterValue[] } : {}),
+      };
+      filters.push(repaired);
+      const name = typeof spec.as === "string" && spec.as.length > 0 ? spec.as : `count_${spec.column}`;
+      warnings.push(
+        `aggregations[0].op=${JSON.stringify(spec.op)} 是过滤条件，不是统计方式；已按“先筛选再计数”执行：`
+        + `filters 追加 ${JSON.stringify(repaired)}，统计项改为 {"op":"count","as":${JSON.stringify(name)}}。`
+        + `下次请直接写在 filters 里 / a comparison was passed where an aggregation was expected; it was`
+        + ` moved into filters and the aggregation became a count. Pass comparisons in filters.`,
+      );
+      return { aggregations: [{ op: "count", as: name }], filters, filterMode };
+    }
+  }
+
+  const aggregations: AggregateSpec[] = raw.map((spec, position) => {
+    const canonical = canonicalOperation(spec.op);
+    if (canonical === undefined) {
+      const label = `aggregations[${position}]`;
+      const filterOperator = canonicalFilterOperator(spec.op);
+      const example = filterOperator === undefined ? "" :
+        `。它是过滤条件：应写成 filters:[{"column":${JSON.stringify(spec.column ?? "列名")},`
+        + `"op":${JSON.stringify(filterOperator)},"value":${JSON.stringify(spec.value ?? 0)}}]`
+        + `，同时 aggregations 传 [{"op":"count"}] / it is a filter: move it into filters and count`;
+      throw new OfficeToolError("INVALID_ARGUMENT",
+        `${label}.op=${JSON.stringify(spec.op)} 不是统计方式，只能是 `
+        + `count / sum / mean / min / max / median / distinct${example}`);
+    }
+    return {
+      op: canonical,
+      ...(typeof spec.column === "string" && spec.column.length > 0 ? { column: spec.column } : {}),
+      ...(typeof spec.as === "string" && spec.as.length > 0 ? { as: spec.as } : {}),
+    };
+  });
+  return { aggregations, filters, filterMode };
+}
 
 function resolveAggregations(
   headers: readonly string[], specs: readonly AggregateSpec[], groupBy: readonly string[],
@@ -555,13 +683,14 @@ export async function dataAggregate(request: AggregateRequest): Promise<Aggregat
   const headers = table.headers;
   const groupBy = request.groupBy ?? [];
   const groupIndexes = groupBy.map((column, position) => columnIndex(headers, column, `groupBy[${position}]`));
-  const specs = resolveAggregations(headers, request.aggregations ?? [{ op: "count" }], groupBy);
-  const filters = (request.filters ?? []).map((filter, position) => ({
+  const normalized = normalizeAggregateRequest(request, warnings);
+  const specs = resolveAggregations(headers, normalized.aggregations, groupBy);
+  const filters = normalized.filters.map((filter, position) => ({
     filter,
     label: `filters[${position}]`,
     index: columnIndex(headers, filter.column, `filters[${position}]`),
   }));
-  const mode = request.filterMode ?? "and";
+  const mode = normalized.filterMode;
   const kept = filters.length === 0 ? table.rows : table.rows.filter((row) => {
     const outcomes = filters.map((entry) => matchesFilter(row[entry.index] ?? null, entry.filter, entry.label));
     return mode === "or" ? outcomes.some((value) => value) : outcomes.every((value) => value);
@@ -600,7 +729,7 @@ export async function dataAggregate(request: AggregateRequest): Promise<Aggregat
     }
   }
   if (sort.length > 0) rows.sort((left, right) => compareRows(left, right, sort));
-  const limit = request.limit === undefined || request.limit <= 0
+  const limit = request.limit === undefined || request.limit === null || request.limit <= 0
     ? Math.min(rows.length, DEFAULT_ROW_LIMIT)
     : Math.min(request.limit, rows.length);
 

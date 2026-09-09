@@ -452,3 +452,60 @@ test("data_aggregate refuses an unknown column, an unusable sort key and an unsu
     await removeTree(workspace);
   }
 });
+
+/**
+ * The call office_014 actually sent, five times in a row: a comparison written into
+ * `aggregations[].op`, the value beside it, and `limit: null` for "no limit". Under the previous
+ * schema none of it reached the tool — the model was told which strings `op` accepts and nothing
+ * more. It has to come back as a filtered count, with the reinterpretation stated rather than
+ * silently applied.
+ */
+test("data_aggregate 把写错位置的过滤条件读成筛选后计数", async () => {
+  const client = await connect();
+  const workspace = await makeWorkspace();
+  try {
+    const source = path.join(workspace, "库存台账.csv");
+    await writeAggregateCsv(source);
+
+    const repaired = structured<AggregateResult>(await client.callTool({
+      name: "data_aggregate",
+      arguments: {
+        path: source,
+        aggregations: [{ as: "高库存", column: "当前库存", op: "gt", value: 40 }],
+        limit: null,
+      },
+    }) as ToolResult);
+    // 螺栓 120 and 垫片 45 are above 40; 轴承 10 is not, and the two unparseable cells are not numbers.
+    assert.equal(repaired.filteredRowCount, 2);
+    assert.equal(repaired.rows.length, 1);
+    assert.equal(repaired.rows[0]?.["高库存"], 2);
+    assert.ok(repaired.warnings.some((warning) => warning.includes("filters")),
+      `the repair must be stated, got ${JSON.stringify(repaired.warnings)}`);
+
+    // A synonym is just a spelling, and costs a round trip if refused.
+    const averaged = structured<AggregateResult>(await client.callTool({
+      name: "data_aggregate",
+      arguments: { path: source, aggregations: [{ op: "avg", column: "单价", as: "均价" }] },
+    }) as ToolResult);
+    assert.equal(averaged.rows[0]?.["均价"], round6((1.5 + 0.8 + 25 + 3 + 2 + 4) / 6));
+
+    // Two comparisons in one call have more than one reading, so they are refused — with the
+    // corrected call in the message rather than a bare list of legal strings.
+    const refused = await client.callTool({
+      name: "data_aggregate",
+      arguments: {
+        path: source,
+        aggregations: [{ column: "当前库存", op: "gt", value: 40 }, { column: "单价", op: "lt", value: 5 }],
+      },
+    }) as ToolResult;
+    expectError(refused, "INVALID_ARGUMENT");
+    const text = refused.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+    assert.ok(text.includes("filters"), `the message must name filters, got ${text}`);
+  } finally {
+    await removeTree(workspace);
+  }
+});
+
+function round6(value: number): number {
+  return Number.isInteger(value) ? value : Number(value.toFixed(6));
+}

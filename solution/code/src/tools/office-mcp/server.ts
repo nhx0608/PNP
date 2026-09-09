@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { dataAggregate, type AggregateFilter, type AggregateSpec } from "./aggregate.ts";
+import { dataAggregate, type AggregateFilter, type RawAggregateSpec } from "./aggregate.ts";
 import { csvRead } from "./csv.ts";
 import { docxExtract, docxReplaceParagraphs } from "./docx.ts";
 import { docxCreate, type DocxBlock } from "./docx-create.ts";
@@ -369,8 +369,8 @@ function registerDataTools(server: McpServer, catalog: ToolInfo[]): void {
       + " aggregation whose group held no number at all returns null rather than a fake zero.",
     inputSchema: z.object({
       path: z.string().describe(`.csv 或 .xlsx 文件路径 / path to the .csv or .xlsx; ${ABSOLUTE_PATH_NOTE}`),
-      sheet: z.string().optional().describe("工作表名或 1 开始的序号，仅对 .xlsx 有效 / sheet name or 1-based index, .xlsx only"),
-      delimiter: z.string().optional().describe("CSV 分隔符，缺省自动判断 / CSV delimiter, auto-detected when omitted"),
+      sheet: z.string().nullish().describe("工作表名或 1 开始的序号，仅对 .xlsx 有效 / sheet name or 1-based index, .xlsx only"),
+      delimiter: z.string().nullish().describe("CSV 分隔符，缺省自动判断 / CSV delimiter, auto-detected when omitted"),
       filters: z.array(z.object({
         column: z.string().describe("列名（表头）/ column header"),
         op: z.enum(["eq", "ne", "gt", "gte", "lt", "lte", "contains", "notContains", "in", "notIn", "empty", "notEmpty"])
@@ -381,15 +381,30 @@ function registerDataTools(server: McpServer, catalog: ToolInfo[]): void {
       filterMode: z.enum(["and", "or"]).optional().describe("多个过滤条件的组合方式，默认 and / how filters combine, default and"),
       groupBy: z.array(z.string()).optional().describe("分组列，可为空 / grouping columns; empty means one group"),
       aggregations: z.array(z.object({
-        op: z.enum(["count", "sum", "mean", "min", "max", "median", "distinct"]).describe("统计方式 / aggregation"),
-        column: z.string().optional().describe("被统计的列；count 以外必须提供 / column to aggregate; required except for count"),
-        as: z.string().optional().describe("输出列名，缺省为 <op>_<column> / output column name, defaults to <op>_<column>"),
-      })).optional().describe("统计项，缺省为一次 count / aggregations, defaults to a single count"),
+        // Deliberately a string rather than an enum. An enum makes the schema layer reject the call
+        // with a list of legal strings and nothing else, which is what happened in office_014: the
+        // model had asked a perfectly answerable question in the wrong field and retried the same
+        // call five times. As a string it reaches normalizeAggregateRequest, which accepts the
+        // common synonyms, repairs the one unambiguous misuse and otherwise fails with the
+        // corrected call spelled out.
+        op: z.string().describe("统计方式：count / sum / mean / min / max / median / distinct"
+          + "（avg 等同义词也接受）。比较条件（gt/lt/eq…）不属于这里，要写进 filters"
+          + " / one of count, sum, mean, min, max, median, distinct; comparisons belong in filters"),
+        column: z.string().nullish().describe("被统计的列；count 以外必须提供 / column to aggregate; required except for count"),
+        as: z.string().nullish().describe("输出列名，缺省为 <op>_<column> / output column name, defaults to <op>_<column>"),
+        value: z.union([z.string(), z.number(), z.boolean()]).nullish()
+          .describe("不要用；只在误把过滤条件写进 aggregations 时被识别并移入 filters"
+            + " / do not use; only recognised when a filter was written here by mistake"),
+        values: z.array(z.union([z.string(), z.number(), z.boolean()])).nullish()
+          .describe("不要用，同 value / do not use, as value"),
+      })).nullish().describe("统计项，缺省为一次 count / aggregations, defaults to a single count"),
       sort: z.array(z.object({
         by: z.string().describe("输出列名（分组列或统计列）/ an output column name"),
         direction: z.enum(["asc", "desc"]).optional().describe("默认 asc / defaults to asc"),
       })).optional().describe("结果排序 / result ordering"),
-      limit: z.number().int().min(1).optional().describe("最多返回的分组行数 / maximum result rows"),
+      // nullish, not optional: a model that has no limit in mind sends `"limit": null` as often as
+      // it omits the key, and rejecting that spelling fails the whole call over a non-difference.
+      limit: z.number().int().min(1).nullish().describe("最多返回的分组行数 / maximum result rows"),
     }),
   }, async (args) => {
     const file = await requireExistingFile("path", args.path);
@@ -399,21 +414,26 @@ function registerDataTools(server: McpServer, catalog: ToolInfo[]): void {
       ...(filter.value === undefined ? {} : { value: filter.value }),
       ...(filter.values === undefined ? {} : { values: filter.values }),
     }));
-    const aggregations: AggregateSpec[] | undefined = args.aggregations?.map((aggregation) => ({
+    // Passed through as written, including a comparison in the wrong field: dataAggregate's
+    // normaliser is the one place that decides what such a call means, so that the MCP path and a
+    // direct caller get the same reading and the same warning text.
+    const aggregations: RawAggregateSpec[] | undefined = args.aggregations?.map((aggregation) => ({
       op: aggregation.op,
-      ...(aggregation.column === undefined ? {} : { column: aggregation.column }),
-      ...(aggregation.as === undefined ? {} : { as: aggregation.as }),
+      ...(aggregation.column == null ? {} : { column: aggregation.column }),
+      ...(aggregation.as == null ? {} : { as: aggregation.as }),
+      ...(aggregation.value == null ? {} : { value: aggregation.value }),
+      ...(aggregation.values == null ? {} : { values: aggregation.values }),
     }));
     const result = await dataAggregate({
       path: file,
-      ...(args.sheet === undefined ? {} : { sheet: args.sheet }),
-      ...(args.delimiter === undefined ? {} : { delimiter: args.delimiter }),
+      ...(args.sheet == null ? {} : { sheet: args.sheet }),
+      ...(args.delimiter == null ? {} : { delimiter: args.delimiter }),
       ...(filters === undefined ? {} : { filters }),
       ...(args.filterMode === undefined ? {} : { filterMode: args.filterMode }),
       ...(args.groupBy === undefined ? {} : { groupBy: args.groupBy }),
-      ...(aggregations === undefined ? {} : { aggregations }),
+      ...(aggregations == null ? {} : { aggregations }),
       ...(args.sort === undefined ? {} : { sort: args.sort }),
-      ...(args.limit === undefined ? {} : { limit: args.limit }),
+      ...(args.limit == null ? {} : { limit: args.limit }),
     });
     const dirty = result.skipped.reduce((total, entry) => total + entry.nonNumericCount, 0);
     return {
