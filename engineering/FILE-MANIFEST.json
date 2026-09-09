@@ -1,6 +1,6 @@
 {
   "contractVersion": "1.1.0",
-  "payloadFileCount": 260,
+  "payloadFileCount": 272,
   "files": [
     {
       "path": ".gitattributes",
@@ -97,8 +97,8 @@
       "path": "code/config/instructions/competition.md",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 2115,
-      "sha256": "85f31920e9a1ca98e9bc7236d9ab21e80c55cc760ac65a758131d7fd4be08339"
+      "bytes": 3913,
+      "sha256": "8e64e834159341fff1a5d4191fb4ca47c8591b5c08654294a14215872deeed3e"
     },
     {
       "path": "code/config/internal.example.json",
@@ -139,8 +139,8 @@
       "path": "code/config/SETTINGS.md",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 18389,
-      "sha256": "273023c9f12deb9371b81cf9bebc105a496acf3dbfea6f1c9d19f1b92b14155c"
+      "bytes": 26598,
+      "sha256": "66eaa04e1c76fffeba705371d033061ed4fba61b11a738f45e2d16c9b69d6c52"
     },
     {
       "path": "code/config/START-HERE.zh-CN.md",
@@ -395,6 +395,20 @@
       "sha256": "0f7954481d9af424ba4115105cee1ce08a6de9f41b1bb317dbd5c9a90218f58d"
     },
     {
+      "path": "code/src/config/capability-readiness.ts",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 3849,
+      "sha256": "b4756f214836a9455da430a1021ec95b60fba1fc416e32df2ce1861242cf130c"
+    },
+    {
+      "path": "code/src/config/effects.ts",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 5615,
+      "sha256": "b5e908c8bfc9929e162145365e43ca7253b7b1ec02bcd6d31eb464643bf3d9cc"
+    },
+    {
       "path": "code/src/config/local-env.ts",
       "owner": "共同",
       "category": "实现源码",
@@ -402,11 +416,32 @@
       "sha256": "94af32d2ce223da12b06a382421f71069f57b4853f9b0f3b8ceaf023857dd556"
     },
     {
+      "path": "code/src/config/provenance.ts",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 5942,
+      "sha256": "5a555fc60e9da897082a157322fae52295d397d37fef9060660bb269b95bf170"
+    },
+    {
+      "path": "code/src/config/routes.ts",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 6742,
+      "sha256": "57533fa598994793ca2362ceea96dac239cdb9004091d071568215a322e89e01"
+    },
+    {
+      "path": "code/src/config/service.ts",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 23875,
+      "sha256": "60bfcc5390188dbedb5b10fccf51789703852fb884a61040e26bbbaec9480de7"
+    },
+    {
       "path": "code/src/config/settings.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 27889,
-      "sha256": "cca7df67657084ed074ce79800808373f545313386c3291ae1ec4bd974c28b58"
+      "bytes": 52901,
+      "sha256": "c050ab1b976f8011ab85f3f7ac668e0123aa1b3292afbd3b6f6ef7f0240871fa"
     },
     {
       "path": "code/src/contracts/AGENTS.md",
@@ -657,15 +692,15 @@
       "path": "code/src/integration/configured/provider.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 15149,
-      "sha256": "2fe713bb7809081db7136c1dbd5846a8998ef9e01cb98725c7f39d8b4f745f79"
+      "bytes": 15772,
+      "sha256": "62c557b40083ed224c0434990a8a5294c5b890c246b53620645e483b61ef1bc1"
     },
     {
       "path": "code/src/integration/index.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 24862,
-      "sha256": "230ab3052a842438a5ed8ddf781cc2707b937c38b2ecbe3985dc8f26c913a959"
+      "bytes": 25556,
+      "sha256": "ce824e60aa8175fc10d6f0c53c4831814b47ebf4b96cb901d2c2b9f6e77aaedd"
     },
     {
       "path": "code/src/integration/internal/AGENTS.md",
@@ -888,8 +923,8 @@
       "path": "code/src/tools/office-mcp/package-file.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 4750,
-      "sha256": "66139cc8244f90d0ea94e0acb486580485fb94e6725c31ea949f52b7b4427ec0"
+      "bytes": 4780,
+      "sha256": "0b023c57e16d3cbcc499ae98996cc84c18ca232201b117146f2ece703ebd0413"
     },
     {
       "path": "code/src/tools/office-mcp/paths.ts",
@@ -923,8 +958,8 @@
       "path": "code/src/tools/office-mcp/README.md",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 10714,
-      "sha256": "dda8f3b9b28ff6c49f4cc66deac2814a2961f13384686a8bb8407da31190a45e"
+      "bytes": 13653,
+      "sha256": "926e145a9e9ff0198dbd38417713f082c1e9a2fdb7b9f9cb97916c346a9787b2"
     },
     {
       "path": "code/src/tools/office-mcp/results.ts",
@@ -937,8 +972,8 @@
       "path": "code/src/tools/office-mcp/server.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 33593,
-      "sha256": "9fbf391f4729772d7c98e3acf3759c42b05d35e339bd7d6b40a21ba1ff0fb9be"
+      "bytes": 38692,
+      "sha256": "3fba9b197bad247abc192f69708e75fcc1177a28bb4c19d81a03d0899dd44d8d"
     },
     {
       "path": "code/src/tools/office-mcp/system.ts",
@@ -948,18 +983,32 @@
       "sha256": "08aea0262aefca22e8d7e6c3c4fecbb68c59a3541601162b93979749b089fb2a"
     },
     {
+      "path": "code/src/tools/office-mcp/verify.ts",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 20422,
+      "sha256": "d16e3e4362f1adac072a2612127ce1f6f267d4d8959235f5df48c951e588dc73"
+    },
+    {
+      "path": "code/src/tools/office-mcp/xlsx-ooxml.ts",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 16987,
+      "sha256": "ef36b7d48688f69db00ca56f6b33bd0c7e92eda3c5c9f4a987e091240a997eef"
+    },
+    {
       "path": "code/src/tools/office-mcp/xlsx.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 6596,
-      "sha256": "43d7573651c9d4027ca6ef45484ff5e00ed978193700620a1d37bf08a1c14c3e"
+      "bytes": 10631,
+      "sha256": "0b2f156f67314faae0acc5824a89e2646598823db24d8437694374074b9169de"
     },
     {
       "path": "code/src/tools/office-mcp/xml.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 3986,
-      "sha256": "c4327a73fef31798e1d47ac1e0c57cf781c484b2165e2ae385fb040e4e6d4f6a"
+      "bytes": 5129,
+      "sha256": "c5bda21fab423924d8b62da0c37dc982f1d23d7419e8a25d723f4ac2bb5a857d"
     },
     {
       "path": "code/tests/adapters/acp/cancel.test.ts",
@@ -1063,8 +1112,8 @@
       "path": "code/tests/adapters/office-mcp/harness.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 9556,
-      "sha256": "673484d1ffccaf70e3f825f79a15719edf1a9c735fcd39a3d36c0610320a00fc"
+      "bytes": 10225,
+      "sha256": "bb1e91655c6d837d1f15755ab376ce1a3cca1cf5b1a1af88873c673938c34887"
     },
     {
       "path": "code/tests/adapters/office-mcp/pptx.test.ts",
@@ -1077,8 +1126,22 @@
       "path": "code/tests/adapters/office-mcp/server.test.ts",
       "owner": "共同",
       "category": "测试代码",
-      "bytes": 6473,
-      "sha256": "dc2238f1d53e5cb51cb55d1d2a6528ddd51c9aff658abef9ddd915181d442210"
+      "bytes": 6487,
+      "sha256": "6a1d1125d0fd7ff948a0d469faac1fd77a0722ede4d8d3fbdc6df3ef85fdfd5b"
+    },
+    {
+      "path": "code/tests/adapters/office-mcp/verify.test.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 18327,
+      "sha256": "ae8ee75dc4cc47c884abb7566a236a7d3bffc431060e841b0833acbe5482370d"
+    },
+    {
+      "path": "code/tests/adapters/office-mcp/xlsx-prefixed.test.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 11936,
+      "sha256": "ddb65b47bcbebc8daff97f5c3a749926bf7e2c4a5bae5d590bd9bd10936267ef"
     },
     {
       "path": "code/tests/adapters/office-mcp/xlsx.test.ts",
@@ -1249,6 +1312,20 @@
       "sha256": "43e6d90e9418c7d8e28a0b5ec61c08414153d597f272c1b3fec19008a6a7c680"
     },
     {
+      "path": "code/tests/unit/config-capability-readiness.test.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 6015,
+      "sha256": "44a625c3d3c405b72c4357a42484136fd357e25110550252842a3f5e6a8bfbda"
+    },
+    {
+      "path": "code/tests/unit/config-service.test.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 21123,
+      "sha256": "26a8aeb550287a496d92e5b154aaad6afc7ae30f29e912fe5adb3ea8b4ea1563"
+    },
+    {
       "path": "code/tests/unit/contracts.test.ts",
       "owner": "共同",
       "category": "测试代码",
@@ -1310,6 +1387,13 @@
       "category": "测试代码",
       "bytes": 19869,
       "sha256": "b7b94db146a202cc6c120667c1216a0ee9d5617ec2dccbfe6a7c510d3c8e38d6"
+    },
+    {
+      "path": "code/tests/unit/settings-capabilities.test.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 9598,
+      "sha256": "ad64af4f68d0aac154d83d205bc28a159ed6db0e5873224edb51360a7328a91b"
     },
     {
       "path": "code/tests/unit/settings.test.ts",
