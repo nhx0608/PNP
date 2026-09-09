@@ -479,9 +479,18 @@ export class GatewayCore {
               // Amortized checkpoints: a checkpoint must add a quarter of what is already stored, so a long
               // answer costs O(total) rewritten bytes instead of O(total^2). Redaction runs after this
               // decision, so it is not a second quadratic pass over the accumulated text.
+              //
+              // The floor is only what the FIRST checkpoint costs, because checkpointBytes starts at 0.
+              // At 4096 it was in practice the floor for the whole answer: anything shorter than 4 KB
+              // produced no intermediate part update at all and read as entirely non-streaming (a
+              // measured 49.8 s run emitted 5 part updates in total). 256 keeps the quarter-growth rule
+              // - and the O(total) bound comes from that ratio, not from the floor - while bounding what
+              // the lower floor admits: under ~1 KB it allows at most four extra rewrites of at most
+              // 1 KB each, and the 100 ms gate caps them at ten a second; past ~1 KB the quarter is the
+              // larger term again and the floor stops contributing anything.
               const now = Date.now();
               if (now - lastTextCheckpoint < 100) return;
-              if (rawBytes - checkpointBytes < Math.max(4096, Math.floor(checkpointBytes / 4))) return;
+              if (rawBytes - checkpointBytes < Math.max(256, Math.floor(checkpointBytes / 4))) return;
               lastTextCheckpoint = now;
               checkpointBytes = rawBytes;
               text = redactor.streamText(rawText);

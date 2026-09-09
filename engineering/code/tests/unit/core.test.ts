@@ -4,6 +4,7 @@ import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { DatabaseSync } from "node:sqlite";
 import { StateStore } from "../../src/storage/store.ts";
 import { GatewayCore } from "../../src/core/gateway-core.ts";
 import { MockPack } from "../../src/engines/mock/pack.ts";
@@ -404,4 +405,36 @@ test("an unverified stop publishes its uncertainty so an event-only client is no
     await f.store.close();
     await removeTree(f.root);
   }
+});
+
+// Schema evolution here is PRAGMA user_version and nothing else, so the v2 step has to hold for a
+// database that already exists in the field, not only for one created by this executable. The
+// per-session event read is a full scan of the journal without its index.
+test("an existing database gains the session event index instead of being rebuilt", async () => {
+  const f = await fixture();
+  await f.core.run(f.session.id, prompt);
+  const events = await f.core.journal.forSession(f.session.id, 0, 10);
+  assert.ok(events.length > 0);
+  await f.core.close();
+  await f.store.close();
+  const indexes = (database: DatabaseSync) => database.prepare(
+    "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='events'").all().map((row) => String(row.name));
+  const downgraded = new DatabaseSync(f.dbPath);
+  try {
+    assert.deepEqual(indexes(downgraded), ["events_by_session"]);
+    // Exactly the file a v1 deployment left behind: the rows are already there, the index is not.
+    downgraded.exec("DROP INDEX events_by_session; PRAGMA user_version=1;");
+  } finally { downgraded.close(); }
+  const store2 = new StateStore(f.dbPath);
+  const core2 = new GatewayCore(store2, new MockPack(), new MockIntegration(), { dataDirectory: f.directory });
+  try {
+    // The migration runs on open and keeps every row it found.
+    assert.deepEqual((await core2.journal.forSession(f.session.id, 0, 10)).map((event) => event.sequence),
+      events.map((event) => event.sequence));
+  } finally { await core2.close(); await store2.close(); }
+  const upgraded = new DatabaseSync(f.dbPath);
+  try {
+    assert.deepEqual(indexes(upgraded), ["events_by_session"]);
+    assert.equal(Number(upgraded.prepare("PRAGMA user_version").get()?.user_version), 2);
+  } finally { upgraded.close(); await removeTree(f.root); }
 });

@@ -94,3 +94,66 @@ test("a reconnect with Last-Event-ID replays the gap in order and without duplic
     await app.close(); await store.close(); await removeTree(root);
   }
 });
+
+// Reproduces the loss this endpoint used to hide: with more stored events than one resume can carry,
+// a client asking for everything received 1..REPLAY_LIMIT and then jumped straight to the live tail.
+// Its own cursor had moved past the missing range, so no later reconnect could recover it, and
+// nothing in the stream said so. The truncation itself is kept; being told about it is the fix.
+test("a resume past the replay limit announces the withheld range as server.gap", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pnp-sse-gap-"));
+  const directory = path.join(root, "data");
+  await mkdir(directory, { recursive: true });
+  const store = new StateStore(path.join(directory, "pnp.db"));
+  const core = new GatewayCore(store, new MockPack(), new MockIntegration(), { dataDirectory: directory });
+  const app = buildApp(core);
+  const controller = new AbortController();
+  try {
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address();
+    assert.ok(address && typeof address === "object");
+    const base = `http://127.0.0.1:${address.port}`;
+    const session = await core.createSession(path.join(root, "workspace"));
+    // More events than a single resume writes (REPLAY_LIMIT is 4096), committed in batches because
+    // the store refuses more than 1024 operations in flight.
+    const total = 4200;
+    for (let written = 0; written < total; written += 400) {
+      await Promise.all(Array.from({ length: Math.min(400, total - written) }, (_, offset) =>
+        core.journal.publish("test.filler", { sessionID: session.id, runID: "run-fill", index: written + offset })));
+    }
+
+    const response = await fetch(`${base}/event`, { signal: controller.signal, headers: { "Last-Event-ID": "0" } });
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let received = "";
+    const deadline = setTimeout(() => controller.abort(), 30_000);
+    try {
+      // Read until the gap frame is complete, not merely started: a chunk boundary can land inside it.
+      for (;;) {
+        const at = received.indexOf('"type":"server.gap"');
+        if (at >= 0 && received.indexOf("\n", at) >= 0) break;
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        received += decoder.decode(chunk.value, { stream: true });
+      }
+    } finally { clearTimeout(deadline); }
+
+    const at = received.indexOf('"type":"server.gap"');
+    assert.ok(at >= 0, "a truncated resume must tell the client its history is incomplete");
+    const frame = received.slice(received.lastIndexOf("data: ", at) + "data: ".length, received.indexOf("\n", at));
+    const gap = JSON.parse(frame) as { type: string; properties: { from: number; to: number | null; reason: string } };
+    assert.equal(gap.properties.reason, "replay-limit");
+    const ids = [...received.matchAll(/^id: (\d+)$/gm)].map((match) => Number(match[1]));
+    assert.equal(ids.length, 4096, "one resume still writes at most REPLAY_LIMIT events");
+    // The notice arrives before anything newer, and it is the only frame that carries no id, so the
+    // client's Last-Event-ID never advances past the range it is being told it lost.
+    assert.equal(gap.properties.from, Math.max(...ids) + 1);
+    assert.equal(gap.properties.to, null, "the upper bound is unknown while nothing newer has arrived");
+    assert.equal(received.slice(at).includes("id: "), false);
+    // Incompleteness is now decidable from the stream alone: the gap starts inside the stored range.
+    const committed = await core.journal.since(gap.properties.from - 1, 1);
+    assert.equal(committed[0]?.sequence, gap.properties.from, "the announced range really is stored history");
+  } finally {
+    controller.abort();
+    await app.close(); await store.close(); await removeTree(root);
+  }
+});

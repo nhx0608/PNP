@@ -13,6 +13,12 @@ export class EventJournal {
   async since(afterSequence: number, limit?: number): Promise<PublicEvent[]> {
     return this.store.call("eventsSince", { afterSequence, ...(limit === undefined ? {} : { limit }) });
   }
+  /** Committed events of ONE session after a sequence number, so "what happened in session X" is a
+   *  query rather than a full replay of the global journal filtered client-side. Read-only, and it
+   *  returns nothing for a session that never existed or whose rows were deleted. */
+  async forSession(sessionId: string, afterSequence: number, limit?: number): Promise<PublicEvent[]> {
+    return this.store.call("eventsForSession", { sessionId, afterSequence, ...(limit === undefined ? {} : { limit }) });
+  }
   async publish(type: string, properties: { [key: string]: Json }): Promise<void> {
     const event = await this.store.call("appendEvent", { type, properties });
     for (const listener of this.listeners) {

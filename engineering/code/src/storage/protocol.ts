@@ -24,6 +24,9 @@ export interface Operations {
   appendEvent: { input: { type: string; properties: { [key: string]: Json } }; output: PublicEvent };
   /** Replays committed events for a reconnecting subscriber; it never mutates the journal. */
   eventsSince: { input: { afterSequence: number; limit?: number }; output: PublicEvent[] };
+  /** The same page, narrowed to one session's history; also read-only. Sequences stay global, so the
+   *  results of a session are ascending but not consecutive. */
+  eventsForSession: { input: { sessionId: string; afterSequence: number; limit?: number }; output: PublicEvent[] };
   finishRun: { input: { runId: string; state: TerminalState; message: Message; quiescent: boolean; errorCode?: string; nativeStopReason?: string; taskOutcome?: "unknown" | "succeeded" | "failed"; nativeResumeRequired?: boolean }; output: Run };
   beginDelete: { input: { sessionId: string }; output: null };
   confirmStopped: { input: { sessionId: string }; output: null };

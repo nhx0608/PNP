@@ -14,8 +14,11 @@ const db = new DatabaseSync(databasePath);
 // Five seconds of busy waiting: on Windows an antivirus or sync client routinely holds the file for
 // more than a second. Durability stays at FULL; long answers are made cheap by amortized checkpoints.
 db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
+/** Schema evolution is `PRAGMA user_version` and nothing else: each step below raises it by one, and
+ *  a file already above this number belongs to a newer executable and is refused rather than guessed at. */
+const SCHEMA_VERSION = 2;
 const version = Number(db.prepare("PRAGMA user_version").get()?.user_version);
-if (version > 1) throw new Error("Database schema is newer than this executable.");
+if (version > SCHEMA_VERSION) throw new Error("Database schema is newer than this executable.");
 if (version === 0) {
   db.exec(`
     BEGIN IMMEDIATE;
@@ -57,6 +60,17 @@ if (version === 0) {
       document TEXT NOT NULL
     );
     PRAGMA user_version=1;
+    COMMIT;
+  `);
+}
+if (version < 2) {
+  // v2 serves the per-session event read (GET /session/{id}/event). Without it every such query is a
+  // full scan of the journal, which is the one table that grows without bound. Adding an index moves
+  // no rows and drops no data, so an existing v1 file is migrated in place rather than rebuilt.
+  db.exec(`
+    BEGIN IMMEDIATE;
+    CREATE INDEX IF NOT EXISTS events_by_session ON events(session_id, sequence);
+    PRAGMA user_version=2;
     COMMIT;
   `);
 }
@@ -163,6 +177,18 @@ function handle(request: WorkerRequest): unknown {
       const limit = Math.min(Math.max(Math.trunc(value.limit ?? 256), 1), 1000);
       return db.prepare("SELECT sequence,type,properties FROM events WHERE sequence>? ORDER BY sequence LIMIT ?")
         .all(Math.max(Math.trunc(value.afterSequence), 0), limit)
+        .map((row) => ({
+          sequence: Number(row.sequence), type: String(row.type),
+          properties: JSON.parse(String(row.properties)) as { [key: string]: Json },
+        }));
+    }
+    case "eventsForSession": {
+      const value = input<"eventsForSession">(request);
+      const limit = Math.min(Math.max(Math.trunc(value.limit ?? 256), 1), 1000);
+      // Same page shape as eventsSince, narrowed by the owning session. session_id is NULL for an
+      // event that belongs to no session, and `session_id=?` never matches NULL, so those stay out.
+      return db.prepare("SELECT sequence,type,properties FROM events WHERE session_id=? AND sequence>? ORDER BY sequence LIMIT ?")
+        .all(value.sessionId, Math.max(Math.trunc(value.afterSequence), 0), limit)
         .map((row) => ({
           sequence: Number(row.sequence), type: String(row.type),
           properties: JSON.parse(String(row.properties)) as { [key: string]: Json },
@@ -325,7 +351,7 @@ port.on("message", (request: WorkerRequest) => {
     const constraint = /CONSTRAINT/i.test(rawCode) || /constraint failed/i.test(rawMessage)
       || (rawErrcode !== undefined && rawErrcode % 256 === 19);
     const readOnly = new Set<keyof Operations>(["getSession", "listSessions", "findRunByKey", "messages",
-      "diagnostics", "getRun", "listInteractions", "eventsSince"]);
+      "diagnostics", "getRun", "listInteractions", "eventsSince", "eventsForSession"]);
     const diagnostic: StorageDiagnostic = {
       category: sqliteFailure ? "sqlite" : "worker",
       ...(sqliteFailure ? { code: `${rawCode || "SQLITE_ERROR"}${rawErrcode === undefined ? "" : `/${rawErrcode}`}` } : {}),
