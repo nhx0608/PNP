@@ -1,0 +1,48 @@
+#!/bin/sh
+# POSIX sibling of gateway.cmd. The competition target is Windows, so the bundled runtime this
+# looks for is win32-only and normally absent here; the PATH fallback is what CI and Linux
+# development actually use. Resolution order is kept the same as the Windows entry points so a
+# failure means the same thing on every host: nothing was prepared, rather than a silent
+# difference between platforms.
+set -e
+here="$(cd "$(dirname "$0")" && pwd)"
+bootstrap="$here/runtime/bootstrap"
+
+node_exe=""
+if [ -n "${PNP_NODE_HOME:-}" ]; then
+  if [ -x "$PNP_NODE_HOME/bin/node" ]; then node_exe="$PNP_NODE_HOME/bin/node"
+  elif [ -x "$PNP_NODE_HOME/node" ]; then node_exe="$PNP_NODE_HOME/node"
+  else
+    echo "[pnp] PNP_NODE_HOME does not contain a node executable: $PNP_NODE_HOME" >&2
+    exit 2
+  fi
+fi
+if [ -z "$node_exe" ]; then
+  for candidate in "$bootstrap"/node-v*/bin/node; do
+    [ -x "$candidate" ] && node_exe="$candidate" && break
+  done
+fi
+if [ -z "$node_exe" ] && command -v node >/dev/null 2>&1; then
+  node_exe="$(command -v node)"
+fi
+if [ -z "$node_exe" ]; then
+  echo "[pnp] No Node.js runtime found. Install Node.js 24.19 or newer, or set PNP_NODE_HOME." >&2
+  exit 2
+fi
+
+# Each Engine Pack reads only its own variables, so naming both is safe whichever engine is selected.
+if [ -z "${PNP_PI_ENTRY:-}" ]; then
+  for candidate in "$bootstrap"/engines/pi/*/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js; do
+    [ -f "$candidate" ] && PNP_PI_ENTRY="$candidate" && export PNP_PI_ENTRY && break
+  done
+fi
+if [ -n "${PNP_PI_ENTRY:-}" ] && [ -z "${PNP_PI_NODE:-}" ]; then
+  PNP_PI_NODE="$node_exe"; export PNP_PI_NODE
+fi
+
+if [ ! -f "$here/dist/main.js" ]; then
+  echo "[pnp] Missing $here/dist/main.js (the compiled gateway). Run 'npm run build' first." >&2
+  exit 2
+fi
+
+exec "$node_exe" "$here/dist/main.js" "$@"

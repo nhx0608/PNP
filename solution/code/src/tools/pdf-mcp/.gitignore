@@ -1,0 +1,4 @@
+# CPython writes these next to the source it imports, including inside _vendor/. They are a build
+# artefact of whichever interpreter last ran the server and must never be committed or delivered.
+__pycache__/
+*.py[cod]

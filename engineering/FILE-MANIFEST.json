@@ -1,6 +1,6 @@
 {
   "contractVersion": "1.1.0",
-  "payloadFileCount": 352,
+  "payloadFileCount": 356,
   "files": [
     {
       "path": ".gitattributes",
@@ -321,8 +321,8 @@
       "path": "code/scripts/package-release.mjs",
       "owner": "共同",
       "category": "执行脚本",
-      "bytes": 31307,
-      "sha256": "1b18875690a6de0cfe5d89f16ed4a28859626a2a62dada3a6df60233d661b963"
+      "bytes": 31693,
+      "sha256": "d87c5057d93174e8ff0fea6d2b8efe1fa4bba3dd4727d8db74af4e26404596b6"
     },
     {
       "path": "code/scripts/pnp-local.ps1",
@@ -906,6 +906,13 @@
       "sha256": "d5fcb262384d26370bea783a5f348a4ac5ab7ee4323753d96664a310464f5e34"
     },
     {
+      "path": "code/src/tools/office-mcp/guidance.ts",
+      "owner": "共同",
+      "category": "实现源码",
+      "bytes": 5937,
+      "sha256": "1e1c64aaf97b3f66d71d5b43b2ea3d4c096806b1ba26faaeb762255215b5e7ac"
+    },
+    {
       "path": "code/src/tools/office-mcp/main.ts",
       "owner": "共同",
       "category": "实现源码",
@@ -951,8 +958,8 @@
       "path": "code/src/tools/office-mcp/README.md",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 15022,
-      "sha256": "704c9edefb6cb9550c388935db8919cbe6ae4eeed9c036164abea5102679540c"
+      "bytes": 16040,
+      "sha256": "83b6d8a619a28b3a277a8ca7abeb5da0a889a3a66ca15cd759e0d606ce9c9b27"
     },
     {
       "path": "code/src/tools/office-mcp/results.ts",
@@ -965,8 +972,8 @@
       "path": "code/src/tools/office-mcp/server.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 39171,
-      "sha256": "23cd5c4e2ffa1b53290cdc4f9e96a06174f71bfa42511db9c5c7358b4b85e6fe"
+      "bytes": 39856,
+      "sha256": "523fd49aaf6ca084352fed9c3d01e590cd15ea2c40647edefb0401c2fb9d2ee3"
     },
     {
       "path": "code/src/tools/office-mcp/system.ts",
@@ -979,8 +986,8 @@
       "path": "code/src/tools/office-mcp/verify.ts",
       "owner": "共同",
       "category": "实现源码",
-      "bytes": 20422,
-      "sha256": "d16e3e4362f1adac072a2612127ce1f6f267d4d8959235f5df48c951e588dc73"
+      "bytes": 21016,
+      "sha256": "80ac5b2c683b4ddbc4dfb92ac4caafdfc588b29557b7e7d54703e31c11f2906d"
     },
     {
       "path": "code/src/tools/office-mcp/xlsx-ooxml.ts",
@@ -1627,6 +1634,13 @@
       "sha256": "72eae219b751741958bd694b8f021c38be7f300e0d1497545de663ba31b4915f"
     },
     {
+      "path": "code/tests/adapters/office-mcp/guidance.test.ts",
+      "owner": "共同",
+      "category": "测试代码",
+      "bytes": 11527,
+      "sha256": "76e47317c6a01d589060f9d56f834eeb3fb0a791bc5468e715b73b821c5e433b"
+    },
+    {
       "path": "code/tests/adapters/office-mcp/harness.ts",
       "owner": "共同",
       "category": "测试代码",
@@ -1984,6 +1998,13 @@
       "sha256": "7198b6fad50d73eb78f7aed6f5ff594dfb012d4e399d1ced12e5cfa4d3090431"
     },
     {
+      "path": "docs/CONFIGURATION.md",
+      "owner": "共同",
+      "category": "其他",
+      "bytes": 41056,
+      "sha256": "8295204abb1e86724c0dffba94e38394cefadd5531b83eb2590e6d0a067c5e74"
+    },
+    {
       "path": "docs/design/capability-packs.md",
       "owner": "共同",
       "category": "其他",
@@ -2024,6 +2045,13 @@
       "category": "入口与配置",
       "bytes": 42024,
       "sha256": "5ca9513ce237b2b3a5eb1049a5a6f571f278151e55e3ba342c94233289baf64f"
+    },
+    {
+      "path": "docs/INSTALL-INTRANET.md",
+      "owner": "共同",
+      "category": "其他",
+      "bytes": 6305,
+      "sha256": "953d38e8327f19e1924d71b5fce72a89926c1a607a9f8c0c37646da9de680171"
     },
     {
       "path": "docs/internal/README.md",
@@ -2183,8 +2211,8 @@
       "path": "INSTRUCTION.md",
       "owner": "共同",
       "category": "入口与配置",
-      "bytes": 14587,
-      "sha256": "00137e67a360cfd8300088c6d5f937aaa6bdf1acddf3b7088aa7ad91f3e821cd"
+      "bytes": 16407,
+      "sha256": "68eecc68eb32ab3910cc2871497b16259e7959bfb0b11212f71c4607e533c112"
     },
     {
       "path": "prompts/00-baseline-check.md",

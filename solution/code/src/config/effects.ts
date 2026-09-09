@@ -1,0 +1,112 @@
+/**
+ * What actually happens after a configuration change is saved.
+ *
+ * The answer is not one word for the whole file, and it is not a wish. `loadIntegration` runs once
+ * in `main.ts`, so the model catalogue, the permission policy, the MCP servers, the instruction
+ * *list* and the capability domains are frozen for the life of the process: changing any of them
+ * needs a restart, and the running gateway is unaffected until then. The one exception is the
+ * *content* of an instruction file that is already listed - `ConfiguredIntegration.prepare()` runs
+ * per turn and re-reads every instruction file through the asset resolver, so a new session picks
+ * up an edited file without a restart.
+ *
+ * Resident sessions are never hot-patched. An ACP session compares an integration fingerprint that
+ * includes each asset's sha256, so an edited instruction file stops that session at its next prompt
+ * with ENGINE_BINDINGS_CHANGED (409) rather than swapping the binding underneath it. A Pi session
+ * injects its instructions once at launch via --append-system-prompt and does not compare assets,
+ * so it keeps the text it started with. Neither engine's native configuration is rewritten in
+ * place, and this module never claims otherwise.
+ */
+
+export type ConfigEffect = "restart" | "new-sessions";
+
+/** How a change reaches sessions that are already open. */
+export type ResidentEffect =
+  /** The running process keeps the previous value entirely; nothing moves until a restart. */
+  | "unaffected"
+  /** The next prompt in that session is refused with ENGINE_BINDINGS_CHANGED; open a new session. */
+  | "blocked-until-new-session"
+  /** Fenced on ACP, kept from launch time on Pi. Named rather than averaged over. */
+  | "engine-dependent";
+
+export interface SectionEffect {
+  /** A settings key, or "instruction-file" for the text inside a listed instruction file. */
+  section: string;
+  effect: ConfigEffect;
+  residents: ResidentEffect;
+  note: string;
+}
+
+const RESTART_NOTE = "Read once when the process started; the running gateway keeps the previous value until it is restarted.";
+
+/** The eight settings keys plus the one thing that is not a settings key. */
+const EFFECTS: readonly SectionEffect[] = [
+  { section: "model", effect: "restart", residents: "unaffected", note: RESTART_NOTE },
+  { section: "permissions", effect: "restart", residents: "unaffected", note: RESTART_NOTE },
+  {
+    section: "instructions", effect: "restart", residents: "unaffected",
+    note: `${RESTART_NOTE} Editing the text inside a file that is already listed is the separate "instruction-file" case.`,
+  },
+  { section: "mcp", effect: "restart", residents: "unaffected", note: RESTART_NOTE },
+  { section: "skills", effect: "restart", residents: "unaffected", note: RESTART_NOTE },
+  { section: "assets", effect: "restart", residents: "unaffected", note: RESTART_NOTE },
+  { section: "packs", effect: "restart", residents: "unaffected", note: RESTART_NOTE },
+  { section: "native", effect: "restart", residents: "unaffected", note: RESTART_NOTE },
+  {
+    section: "instruction-file", effect: "new-sessions", residents: "engine-dependent",
+    note: "Every turn re-reads the file, so a new session uses the edited text. An ACP session that is"
+      + " already open stops at its next prompt with ENGINE_BINDINGS_CHANGED; a Pi session keeps the"
+      + " text it was launched with. No engine's native configuration is rewritten in place.",
+  },
+];
+
+const BY_SECTION = new Map(EFFECTS.map((entry) => [entry.section, entry]));
+
+/** The full table, for a page that wants to explain a field before anything has been edited. */
+export function configEffects(): readonly SectionEffect[] {
+  return EFFECTS;
+}
+
+export function sectionEffect(section: string): SectionEffect | undefined {
+  return BY_SECTION.get(section);
+}
+
+/** "restart" wins: a document that changed both kinds of section needs the restart. */
+export function combinedEffect(sections: readonly SectionEffect[]): ConfigEffect {
+  return sections.some((entry) => entry.effect === "restart") || sections.length === 0
+    ? "restart"
+    : "new-sessions";
+}
+
+function object(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+/**
+ * Which settings keys differ between two documents, as key names rather than as a JSON patch: the
+ * effect of a change is decided by the section it lands in, not by how deep inside it went. Keys
+ * are compared by their serialised form, so re-saving an untouched document reports nothing.
+ */export function changedSections(before: unknown, after: unknown): readonly SectionEffect[] {
+  // Keyed by [section, layer] as JSON so no separator can collide with an engine id, and compared
+  // by serialised value so re-saving an untouched section reports nothing.
+  const layers = (document: unknown): Map<string, string> => {
+    const root = object(document) ?? {};
+    const result = new Map<string, string>();
+    const record = (section: string, layer: string, value: unknown) => {
+      result.set(JSON.stringify([section, layer]), JSON.stringify(value ?? null));
+    };
+    for (const [key, value] of Object.entries(object(root.common) ?? {})) record(key, "common", value);
+    for (const [engineId, core] of Object.entries(object(root.cores) ?? {})) {
+      for (const [key, value] of Object.entries(object(core) ?? {})) record(key, engineId, value);
+    }
+    return result;
+  };
+  const left = layers(before);
+  const right = layers(after);
+  const changed = new Set<string>();
+  for (const key of new Set([...left.keys(), ...right.keys()])) {
+    if (left.get(key) !== right.get(key)) changed.add((JSON.parse(key) as [string, string])[0]);
+  }
+  return EFFECTS.filter((entry) => changed.has(entry.section));
+}

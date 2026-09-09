@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "common": {
+    "model": {
+      "default": {
+        "providerID": "competition"
+      },
+      "models": [
+        {
+          "selection": {
+            "providerID": "competition",
+            "modelID": "default"
+          },
+          "modelIDEnvironment": "PNP_MODEL_ID",
+          "endpointEnvironment": "PNP_MODEL_ENDPOINT",
+          "protocol": "openai-chat",
+          "apiKeyEnvironment": "PNP_MODEL_API_KEY",
+          "headersEnvironment": "PNP_MODEL_HEADERS",
+          "caFileEnvironment": "PNP_MODEL_CA_FILE"
+        }
+      ]
+    },
+    "permissions": {
+      "default": "allow",
+      "operations": {}
+    },
+    "instructions": [
+      "instructions/competition.md"
+    ],
+    "mcp": {
+      "servers": {
+        "office": {
+          "transport": "stdio",
+          "command": "${PNP_NODE}",
+          "args": [
+            "${PNP_CODE_ROOT}/dist/tools/office-mcp/main.js"
+          ],
+          "sideEffect": "write",
+          "enabled": true
+        },
+        "desktop": {
+          "transport": "stdio",
+          "command": "${PNP_NODE}",
+          "args": [
+            "${PNP_CODE_ROOT}/dist/tools/desktop-mcp/main.js"
+          ],
+          "sideEffect": "external",
+          "timeoutMs": 15000,
+          "enabled": true
+        },
+        "pdf": {
+          "transport": "stdio",
+          "command": "${PNP_NODE}",
+          "args": [
+            "${PNP_CODE_ROOT}/dist/tools/pdf-mcp/launch.js"
+          ],
+          "sideEffect": "read",
+          "timeoutMs": 60000,
+          "enabled": true
+        }
+      }
+    }
+  },
+  "cores": {
+    "opencode": {},
+    "pi": {},
+    "hermes": {}
+  }
+}
