@@ -1,6 +1,6 @@
 {
   "contractVersion": "1.1.0",
-  "payloadFileCount": 258,
+  "payloadFileCount": 260,
   "files": [
     {
       "path": ".gitattributes",
@@ -1352,6 +1352,20 @@
       "category": "其他",
       "bytes": 89980,
       "sha256": "03e135d1cb6658ff9e599f31b423112d35e4a9d0388ab059a28cd7826f450131"
+    },
+    {
+      "path": "docs/design/native-capability-perception.md",
+      "owner": "共同",
+      "category": "其他",
+      "bytes": 62748,
+      "sha256": "94a8e97e6819694fdf1e9be833e5fa73602bd01d240ba5b837c302ac9550fb94"
+    },
+    {
+      "path": "docs/design/product-roadmap.md",
+      "owner": "共同",
+      "category": "其他",
+      "bytes": 134444,
+      "sha256": "cb43c547601de54ec6108d42892edbe29e3693752c2c8408c1e49c79d5c27f56"
     },
     {
       "path": "docs/engines/hermes.md",
