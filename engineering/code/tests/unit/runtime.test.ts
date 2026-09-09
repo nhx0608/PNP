@@ -49,6 +49,45 @@ test("redaction covers structured secrets and raw output", () => {
     authorization: "[REDACTED]", output: "[REDACTED]",
   });
 });
+test("redaction matches whole key segments, so a token count is not read as a token", () => {
+  const redactor = new Redactor();
+  // Credential names, in the spellings a driver actually emits: solid, camelCase and snake_case.
+  for (const key of ["token", "access_token", "accessToken", "refreshToken", "API_KEY", "apiKey",
+    "Authorization", "authorization", "password", "passwd", "secret", "clientSecret", "Cookie",
+    "connectionString", "privateKey",
+    // Solid spellings, and names where a counting word does not make the value a number.
+    "apikey", "githubtoken", "clientsecret", "signInToken", "apiTokenCount"]) {
+    assert.deepEqual(redactor.json({ [key]: "value" }), { [key]: "[REDACTED]" }, key);
+  }
+  // Counters carrying "token" as a unit. The substring rule blanked every one of these.
+  for (const key of ["tokensBefore", "estimatedTokensAfter", "inputTokens", "outputTokens",
+    "tokenCount", "maxTokens", "totalTokens", "promptTokens",
+    // The counting word need not sit beside "tokens" for the key to be a count.
+    "contextWindowTokens", "cache_read_input_tokens"]) {
+    assert.deepEqual(redactor.json({ [key]: 1234 }), { [key]: 1234 }, key);
+  }
+});
+test("redaction reaches through nested objects and arrays", () => {
+  const redactor = new Redactor();
+  assert.deepEqual(redactor.json({
+    usage: { inputTokens: 900, outputTokens: 120, apiKey: "sk-live-1" },
+    attempts: [{ tokenCount: 12, secret: "s" }, { maxTokens: 8000 }],
+  }), {
+    usage: { inputTokens: 900, outputTokens: 120, apiKey: "[REDACTED]" },
+    attempts: [{ tokenCount: 12, secret: "[REDACTED]" }, { maxTokens: 8000 }],
+  });
+});
+test("a compaction payload keeps its numbers while a credential beside it is still blanked", () => {
+  // The exact shape a Pi compaction_end carries into the northbound engine.extension event.
+  const redactor = new Redactor();
+  assert.deepEqual(redactor.json({
+    reason: "threshold", tokensBefore: 12000, estimatedTokensAfter: 3000,
+    usage: { inputTokens: 900, outputTokens: 120 }, access_token: "sk-live-abcdef",
+  }), {
+    reason: "threshold", tokensBefore: 12000, estimatedTokensAfter: 3000,
+    usage: { inputTokens: 900, outputTokens: 120 }, access_token: "[REDACTED]",
+  });
+});
 test("data-directory lock rejects concurrent ownership", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "pnp-lock-"));
   try {

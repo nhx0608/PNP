@@ -694,7 +694,17 @@ export async function openAcpChannel(definition: AcpEngineDefinition, input: Eng
   try {
     const initialize = await boundedRequest(connection.agent.request(AGENT_METHODS.initialize, {
       protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+      clientCapabilities: {
+        fs: { readTextFile: false, writeTextFile: false }, terminal: false,
+        // ClientCapabilities.session.compaction (ClientSessionCapabilities in @agentclientprotocol/sdk
+        // 1.4.0, type CompactionCapabilities = { [key: string]: unknown }): "{}" advertises the complete
+        // compaction contract. A spec-compliant agent gates compaction_update and compaction_summary_chunk
+        // on this flag, so without it those updates never arrive and KNOWN_UPDATE_KINDS never sees them.
+        // Advertising carries no obligation beyond accepting the two notifications - the contract adds no
+        // client method - and the gateway only OBSERVES compaction: the engine alone decides when to
+        // compact, and nothing here ever asks it to.
+        session: { compaction: {} },
+      },
       clientInfo: { name: definition.client?.name ?? "pnp-gateway", version: definition.client?.version ?? "0.1.0" },
     }), timeouts.requestMs);
     if (!Number.isInteger(initialize.protocolVersion) || initialize.protocolVersion < 1 || initialize.protocolVersion > PROTOCOL_VERSION) {

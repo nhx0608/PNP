@@ -28,6 +28,19 @@ test("initialize negotiates the protocol version and records the agent's own ide
   }
 });
 
+test("initialize advertises the compaction capability the engine gates its compaction updates on", async () => {
+  const fixture = harness({ handlers: baseScript() });
+  const channel = await openAcpChannel(definition(), fixture.input);
+  try {
+    const request = fixture.agent.paramsOf(AGENT_METHODS.initialize) as InitializeRequest;
+    // "{}" is the whole contract in SDK 1.4.0. The gateway observes compaction and never drives it,
+    // so this only unlocks compaction_update and compaction_summary_chunk on the way northbound.
+    assert.deepEqual(request.clientCapabilities?.session?.compaction, {});
+  } finally {
+    await channel.close();
+  }
+});
+
 test("the locked Pack version stands in when the engine reports no identity", async () => {
   const fixture = harness({ handlers: baseScript() });
   const channel = await openAcpChannel(definition({ engineVersion: "1.2.3-locked" }), fixture.input);
