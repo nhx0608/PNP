@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -174,5 +174,45 @@ try {
     assert.equal(failed.completions.length, 0, `${caseName} emitted a success sentinel:\n${output}`);
     assert.match(output, diagnostic, `${caseName} did not emit its actionable diagnostic`);
     await assert.rejects(stat(failed.bootstrapRoot), { code: "ENOENT" }, `${caseName} wrote an unintended bootstrap directory`);
+  }
+});
+
+// The competition's main model is an internal deployment, and an intranet endpoint is routinely
+// plain http. `pnp.cmd config` used to only PRINT that PNP_ALLOW_HTTP_ENDPOINTS was also needed,
+// and the remedy it named was a session-only `$env:` assignment - so configuring the endpoint in
+// one window and starting the gateway in another still failed with INSECURE_MODEL_ENDPOINT. The
+// switch is now decided next to the endpoint that motivates it, and withdrawn with it.
+test("pnp.cmd config writes the plain-http switch for an intranet endpoint and clears it again", {
+  skip: process.platform !== "win32" ? "Windows PowerShell-specific launcher contract" : false,
+}, async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "pnp-local-httpswitch-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const codeRoot = fileURLToPath(new URL("../../", import.meta.url));
+  const launcher = path.join(codeRoot, "scripts", "pnp-local.ps1");
+  const envFile = path.join(root, "local.env");
+
+  const configure = (endpoint: string) => spawnSync("powershell.exe",
+    ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", launcher,
+      "-Mode", "config", "-Engine", "", "-Port", "6217", "-BindHost", "localhost",
+      "-Directory", "", "-Endpoint", endpoint, "-ModelId", "some-model", "-ApiKey", "", "-Headers", ""],
+    { encoding: "utf8", env: { ...process.env, PNP_LOCAL_ENV_FILE: envFile }, shell: false });
+  const assignments = async () => {
+    const text = await readFile(envFile, "utf8");
+    return new Map(text.split(/\r?\n/).filter((line) => line.trim() && !line.trim().startsWith("#"))
+      .map((line) => [line.slice(0, line.indexOf("=")).trim(), line.slice(line.indexOf("=") + 1).trim()] as const));
+  };
+
+  const intranet = configure("http://model.intranet.invalid/v1");
+  assert.equal(intranet.status, 0, intranet.stderr);
+  assert.equal((await assignments()).get("PNP_ALLOW_HTTP_ENDPOINTS"), "1");
+  // The value is a deployment decision, never a credential, so naming it in the output is correct.
+  assert.match(intranet.stdout, /PNP_ALLOW_HTTP_ENDPOINTS/);
+
+  // Loopback is already allowed without the switch, and https never needs it.
+  for (const endpoint of ["http://127.0.0.1:9000/v1", "https://open.bigmodel.cn/api/paas/v4"]) {
+    const result = configure(endpoint);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal((await assignments()).has("PNP_ALLOW_HTTP_ENDPOINTS"), false,
+      `${endpoint} must not leave the plain-http relaxation behind`);
   }
 });

@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { stripTypeScriptTypes } from "node:module";
 import vm from "node:vm";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { codeRoot } from "./lib.mjs";
 
 const SELF = fileURLToPath(import.meta.url);
@@ -64,7 +64,14 @@ export function checkStripOnlyLoadability(root = codeRoot) {
   return JSON.parse(result.stdout);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// `file://${process.argv[1]}` never matches on Windows: argv[1] is a backslash path
+// (D:\...\scripts\strip-only-check.mjs) while import.meta.url is a URL with forward slashes and a
+// triple slash (file:///D:/.../scripts/strip-only-check.mjs). The comparison silently failed, so
+// `node scripts/strip-only-check.mjs` - and therefore `npm run check:strip-only`, part of
+// `npm run check` - printed nothing and exited 0 without checking a single file: a green that
+// proved nothing on the one platform this project targets. pathToFileURL is the portable form.
+// (The gate itself still held, because scripts/foundation-check.mjs imports the function directly.)
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const failures = checkStripOnlyLoadability();
   if (failures.length) {
     console.error(`${failures.length} file(s) type-check but are not loadable under Node's strip-only stripper:`);

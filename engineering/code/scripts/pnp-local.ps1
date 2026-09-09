@@ -807,9 +807,15 @@ function Invoke-LiveCheck([string]$NodeExe, [string]$SelectedEngine, [int]$Selec
   return $exitCode
 }
 
-# The four variables `pnp.cmd config` owns. Every other line of the file belongs to the operator
-# and is copied through untouched.
-$ManagedModelVariables = @("PNP_MODEL_ENDPOINT", "PNP_MODEL_ID", "PNP_MODEL_API_KEY", "PNP_MODEL_HEADERS")
+# The variables `pnp.cmd config` owns. Every other line of the file belongs to the operator and is
+# copied through untouched. PNP_ALLOW_HTTP_ENDPOINTS is managed too: the competition's main model is
+# an internal deployment, and an intranet endpoint is routinely plain http. Printing the variable as
+# advice was not enough - the advice was a session-only `$env:` assignment, so an assessor who
+# configured the endpoint in one window and started the gateway in another still met
+# INSECURE_MODEL_ENDPOINT. Deciding it here writes the decision next to the endpoint that motivated
+# it, and clears it again when the endpoint goes back to https.
+$ManagedModelVariables = @("PNP_MODEL_ENDPOINT", "PNP_MODEL_ID", "PNP_MODEL_API_KEY", "PNP_MODEL_HEADERS",
+  "PNP_ALLOW_HTTP_ENDPOINTS")
 
 <#
   The active NAME=VALUE assignments of an env file, as a hashtable. A commented line is not an
@@ -1000,6 +1006,13 @@ function Invoke-Configure([string]$Path) {
     }
   }
 
+  # A plain-http endpoint outside loopback is the intranet case, and it needs the deployment switch
+  # to start at all. Set it beside the endpoint rather than telling the operator to remember a
+  # separate command; clear it when the endpoint no longer needs it, so the relaxation never
+  # outlives the reason for it.
+  $needsHttpSwitch = $endpointValue -match '^http://' -and $endpointValue -notmatch '^http://(127\.0\.0\.1|localhost|\[::1\])(:|/|$)'
+  $values["PNP_ALLOW_HTTP_ENDPOINTS"] = if ($needsHttpSwitch) { "1" } else { "" }
+
   $result = Set-LocalEnvironmentValues $Path $values
   Write-Step "Wrote $Path"
   if ($result.Written.Count -gt 0) {
@@ -1008,8 +1021,8 @@ function Invoke-Configure([string]$Path) {
   if ($result.Removed.Count -gt 0) {
     Write-Step "Variables cleared: $($result.Removed -join ', ')"
   }
-  if ($endpointValue -match '^http://' -and $endpointValue -notmatch '^http://(127\.0\.0\.1|localhost|\[::1\])(:|/|$)') {
-    Write-Step "That endpoint is plain http outside loopback, so the gateway also needs PNP_ALLOW_HTTP_ENDPOINTS=1."
+  if ($needsHttpSwitch) {
+    Write-Step "That endpoint is plain http outside loopback, so PNP_ALLOW_HTTP_ENDPOINTS=1 was written alongside it."
   }
   Write-Step "Next: 'pnp.cmd livecheck --engine opencode' verifies the whole chain against this service."
   return 0
